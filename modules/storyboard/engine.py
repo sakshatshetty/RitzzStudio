@@ -72,7 +72,7 @@ class StoryboardEngine:
 
         data = json.loads(
             path.read_text(
-                encoding="utf-8"
+                encoding="utf-8",
             )
         )
 
@@ -86,7 +86,16 @@ class StoryboardEngine:
         self,
         script: Script,
     ) -> Storyboard:
-        """Build a visual storyboard from the script."""
+        """
+        Build a visual storyboard from the script.
+
+        Editorial text is optional. The storyboard engine does
+        not force text onto every scene and does not automatically
+        convert narration into image text.
+
+        When editorial text is not intentionally assigned,
+        text_overlay remains empty.
+        """
 
         scenes: list[StoryboardScene] = []
 
@@ -176,6 +185,19 @@ class StoryboardEngine:
                     else "cut"
                 )
 
+                # Editorial text is intentionally optional.
+                #
+                # Do NOT automatically copy narration here.
+                # Do NOT force text onto every scene.
+                #
+                # Future storyboard intelligence can selectively
+                # populate this with short visual callouts such as:
+                # "THE MYSTERY"
+                # "WILD SIZE"
+                # "10× LARGER"
+                # "THE REAL REASON"
+                editorial_text = ""
+
                 scene = StoryboardScene(
                     scene_id=scene_id,
                     section_id=section.section_id,
@@ -200,7 +222,7 @@ class StoryboardEngine:
                         "the narration."
                     ),
                     props=[],
-                    text_overlay="",
+                    text_overlay=editorial_text,
                     camera_motion=camera_motion,
                     transition=transition,
                     research_sources=list(
@@ -311,7 +333,7 @@ class StoryboardEngine:
         title: str,
         narration: str,
     ) -> str:
-        """Create an image-generation prompt."""
+        """Create a basic image-generation prompt."""
 
         return (
             "Ritzz visual style: simple hand-drawn "
@@ -427,6 +449,16 @@ class StoryboardEngine:
                     f"{scene.scene_id} has no image prompt."
                 )
 
+            # Editorial text is optional.
+            # When present, Pydantic validates the maximum
+            # length through StoryboardScene.text_overlay.
+            if scene.text_overlay:
+                if not scene.text_overlay.strip():
+                    raise ValueError(
+                        f"{scene.scene_id} has invalid "
+                        "editorial text."
+                    )
+
     # ---------------------------------------------------------
     # Persistence
     # ---------------------------------------------------------
@@ -471,7 +503,7 @@ class StoryboardEngine:
 
         data = json.loads(
             path.read_text(
-                encoding="utf-8"
+                encoding="utf-8",
             )
         )
 

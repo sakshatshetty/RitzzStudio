@@ -32,8 +32,8 @@ def test_image_generation_request():
     )
 
     assert request.provider == "openai"
-    assert request.width == 1024
-    assert request.height == 1024
+    assert request.width == 1536
+    assert request.height == 864
 
 
 def test_image_generation_request_requires_prompt():
@@ -99,3 +99,26 @@ def test_invalid_status_fails():
                 "status": "invalid",
             }
         )
+
+
+def test_image_generation_request_defaults_to_16_9():
+    request = ImageGenerationRequest(
+        image_id="test_image",
+        scene_id="scene_001",
+        prompt="A simple cartoon scene.",
+        output_directory="output",
+    )
+
+    assert request.width == 1536
+    assert request.height == 864
+
+
+def test_image_generation_request_is_exactly_16_9():
+    request = ImageGenerationRequest(
+        image_id="test_image",
+        scene_id="scene_001",
+        prompt="A simple cartoon scene.",
+        output_directory="output",
+    )
+
+    assert request.width / request.height == 16 / 9

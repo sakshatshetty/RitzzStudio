@@ -58,7 +58,21 @@ class StoryboardScene(BaseModel):
         default_factory=list
     )
 
-    text_overlay: str = ""
+    # Optional editorial text intended to appear
+    # inside the generated image.
+    #
+    # This is not required for every scene and does
+    # not need to match the narration.
+    #
+    # Examples:
+    #   "THE MYSTERY"
+    #   "WILD SIZE"
+    #   "10× LARGER"
+    #   "THE REAL REASON"
+    text_overlay: str = Field(
+        default="",
+        max_length=80,
+    )
 
     camera_motion: CameraMotion = "static"
 
