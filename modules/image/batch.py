@@ -30,6 +30,7 @@ class ImageBatchEngine:
         storyboard_file: str | Path,
     ) -> Storyboard:
         """Load a storyboard JSON file."""
+
         path = Path(storyboard_file)
 
         if not path.exists():
@@ -70,6 +71,11 @@ class ImageBatchEngine:
         output_directory: str | Path,
     ) -> list[ImageAsset]:
         """Generate images for every storyboard scene."""
+
+        if not storyboard.scenes:
+            raise ValueError(
+                "Cannot generate images from an empty storyboard."
+            )
 
         requests = self.create_requests(
             storyboard=storyboard,

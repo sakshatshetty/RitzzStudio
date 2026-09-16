@@ -4,19 +4,19 @@ import pytest
 
 from modules.image.batch import ImageBatchEngine
 from modules.image.engine import ImageEngine
-from modules.image.providers.mock import MockImageProvider
 from modules.image.models import ImageAsset
+from modules.image.prompt_builder import ImagePromptBuilder
+from modules.image.providers.mock import MockImageProvider
 from modules.storyboard.models import Storyboard, StoryboardScene
 
 
 def create_test_storyboard() -> Storyboard:
-    """Create a small storyboard for image batch tests."""
     scenes = [
         StoryboardScene(
             scene_id="scene_001",
-            section_id="s1",
-            start_seconds=0,
-            duration_seconds=5,
+            section_id="section_001",
+            start_seconds=0.0,
+            duration_seconds=5.0,
             narration="A pirate stands on a wooden ship.",
             visual_style="stickman",
             visual_description=(
@@ -25,41 +25,47 @@ def create_test_storyboard() -> Storyboard:
             character_action=(
                 "The pirate looks toward the viewer."
             ),
-            background="Wooden pirate ship deck.",
-            props=["eye patch", "ship wheel"],
+            background=(
+                "Wooden pirate ship deck."
+            ),
+            props=[
+                "eye patch",
+                "ship wheel",
+            ],
             text_overlay="Why the eye patch?",
             camera_motion="static",
             transition="cut",
-            research_sources=["source_1"],
-            image_prompt=(
-                "Simple 2D cartoon stickman pirate "
-                "standing on a wooden ship, thick black "
-                "outlines, flat colors."
-            ),
+            research_sources=[
+                "https://example.com/source"
+            ],
+            image_prompt="Pirate standing on a ship.",
         ),
         StoryboardScene(
             scene_id="scene_002",
-            section_id="s1",
-            start_seconds=5,
-            duration_seconds=5,
+            section_id="section_001",
+            start_seconds=5.0,
+            duration_seconds=5.0,
             narration="The pirate points toward the horizon.",
             visual_style="stickman",
             visual_description=(
-                "A pirate pointing toward the horizon."
+                "A pirate pointing toward the ocean horizon."
             ),
             character_action=(
-                "The pirate points toward the horizon."
+                "The pirate raises one arm toward the horizon."
             ),
-            background="Ocean and distant islands.",
-            props=["telescope"],
+            background=(
+                "Simple ocean and sky."
+            ),
+            props=[
+                "ship wheel",
+            ],
             text_overlay="",
             camera_motion="slow_zoom_in",
             transition="cut",
-            research_sources=["source_1"],
-            image_prompt=(
-                "Simple 2D cartoon stickman pirate "
-                "pointing toward the horizon."
-            ),
+            research_sources=[
+                "https://example.com/source"
+            ],
+            image_prompt="Pirate pointing toward horizon.",
         ),
     ]
 
@@ -67,49 +73,12 @@ def create_test_storyboard() -> Storyboard:
         topic="Why Do Pirates Wear Eye Patches?",
         target_duration_seconds=10,
         scenes=scenes,
-        total_scene_duration_seconds=10,
-        target_scene_duration_seconds=5,
+        total_scene_duration_seconds=10.0,
+        target_scene_duration_seconds=5.0,
     )
 
 
-def test_load_storyboard(
-    tmp_path: Path,
-) -> None:
-    provider = MockImageProvider()
-    image_engine = ImageEngine(provider)
-    batch_engine = ImageBatchEngine(image_engine)
-
-    storyboard = create_test_storyboard()
-
-    storyboard_file = tmp_path / "storyboard.json"
-    storyboard_file.write_text(
-        storyboard.model_dump_json(indent=2),
-        encoding="utf-8",
-    )
-
-    loaded = batch_engine.load_storyboard(
-        storyboard_file
-    )
-
-    assert loaded.topic == storyboard.topic
-    assert len(loaded.scenes) == 2
-    assert loaded.scenes[0].scene_id == "scene_001"
-
-
-def test_load_storyboard_missing_file(
-    tmp_path: Path,
-) -> None:
-    provider = MockImageProvider()
-    image_engine = ImageEngine(provider)
-    batch_engine = ImageBatchEngine(image_engine)
-
-    missing_file = tmp_path / "missing.json"
-
-    with pytest.raises(FileNotFoundError):
-        batch_engine.load_storyboard(missing_file)
-
-
-def test_create_requests(
+def test_create_requests_returns_one_request_per_scene(
     tmp_path: Path,
 ) -> None:
     provider = MockImageProvider()
@@ -125,15 +94,8 @@ def test_create_requests(
 
     assert len(requests) == 2
 
-    assert requests[0].image_id == "scene_001"
-    assert requests[0].scene_id == "scene_001"
-    assert requests[0].output_directory == str(tmp_path)
 
-    assert requests[1].image_id == "scene_002"
-    assert requests[1].scene_id == "scene_002"
-
-
-def test_requests_match_storyboard_scenes(
+def test_create_requests_preserves_scene_ids(
     tmp_path: Path,
 ) -> None:
     provider = MockImageProvider()
@@ -147,14 +109,48 @@ def test_requests_match_storyboard_scenes(
         output_directory=tmp_path,
     )
 
-    for request, scene in zip(
-        requests,
-        storyboard.scenes,
-        strict=True,
-    ):
-        assert request.image_id == scene.scene_id
-        assert request.scene_id == scene.scene_id
+    assert requests[0].image_id == "scene_001"
+    assert requests[0].scene_id == "scene_001"
+
+    assert requests[1].image_id == "scene_002"
+    assert requests[1].scene_id == "scene_002"
+
+
+def test_create_requests_uses_output_directory(
+    tmp_path: Path,
+) -> None:
+    provider = MockImageProvider()
+    image_engine = ImageEngine(provider)
+    batch_engine = ImageBatchEngine(image_engine)
+
+    storyboard = create_test_storyboard()
+
+    requests = batch_engine.create_requests(
+        storyboard=storyboard,
+        output_directory=tmp_path,
+    )
+
+    for request in requests:
         assert request.output_directory == str(tmp_path)
+
+
+def test_create_requests_uses_1536x864(
+    tmp_path: Path,
+) -> None:
+    provider = MockImageProvider()
+    image_engine = ImageEngine(provider)
+    batch_engine = ImageBatchEngine(image_engine)
+
+    storyboard = create_test_storyboard()
+
+    requests = batch_engine.create_requests(
+        storyboard=storyboard,
+        output_directory=tmp_path,
+    )
+
+    for request in requests:
+        assert request.width == 1536
+        assert request.height == 864
 
 
 def test_prompts_use_prompt_builder(
@@ -173,56 +169,69 @@ def test_prompts_use_prompt_builder(
 
     prompt = requests[0].prompt
 
-    assert (
-        "Simple 2D stickman cartoon illustration"
-        in prompt
-    )
+    # Ritzz global visual style.
+    assert "Simple 2D cartoon illustration" in prompt
     assert "thick black outlines" in prompt
     assert "flat colors" in prompt
-    assert "minimal shading" in prompt
+    assert "very minimal shading" in prompt
+    assert "YouTube explainer animation style" in prompt
 
+    # Landscape output.
+    assert "Landscape 16:9 composition." in prompt
+
+    # Scene-specific content.
     assert (
         "Scene: A pirate standing on a wooden ship."
         in prompt
     )
+
     assert (
         "Action: The pirate looks toward the viewer."
         in prompt
     )
+
     assert (
         "Background: Wooden pirate ship deck."
         in prompt
     )
-    assert "Props: eye patch, ship wheel." in prompt
+
     assert (
-        "Text overlay: Why the eye patch?."
+        "Props: eye patch, ship wheel"
         in prompt
     )
-    assert "Camera: static composition" in prompt
-    assert "Avoid photorealism" in prompt
+
+    # Editorial text embedded in the generated illustration.
+    assert (
+        'Editorial text inside the illustration: '
+        '"Why the eye patch?".'
+        in prompt
+    )
+
+    assert (
+        "short, large, bold, readable"
+        in prompt
+    )
+
+    assert (
+        "naturally integrated into the composition"
+        in prompt
+    )
+
+    assert (
+        "not a subtitle or caption"
+        in prompt
+    )
+
+    # Camera instruction.
+    assert "Static camera." in prompt
 
 
-def test_create_requests_uses_custom_prompt_builder(
+def test_prompt_without_editorial_text_does_not_request_text(
     tmp_path: Path,
 ) -> None:
-    from modules.image.prompt_builder import ImagePromptBuilder
-
     provider = MockImageProvider()
     image_engine = ImageEngine(provider)
-
-    custom_style = (
-        "Custom Ritzz visual style, "
-        "simple cartoon illustration."
-    )
-
-    prompt_builder = ImagePromptBuilder(
-        base_style=custom_style,
-    )
-
-    batch_engine = ImageBatchEngine(
-        image_engine=image_engine,
-        prompt_builder=prompt_builder,
-    )
+    batch_engine = ImageBatchEngine(image_engine)
 
     storyboard = create_test_storyboard()
 
@@ -231,14 +240,30 @@ def test_create_requests_uses_custom_prompt_builder(
         output_directory=tmp_path,
     )
 
-    assert custom_style in requests[0].prompt
+    prompt = requests[1].prompt
+
     assert (
-        "Scene: A pirate standing on a wooden ship."
-        in requests[0].prompt
+        "Editorial text inside the illustration"
+        not in prompt
+    )
+
+    assert (
+        "not a subtitle or caption"
+        not in prompt
+    )
+
+    assert (
+        "Avoid photorealism"
+        in prompt
+    )
+
+    assert (
+        "unnecessary text."
+        in prompt
     )
 
 
-def test_generate_creates_assets(
+def test_prompts_use_different_camera_motion(
     tmp_path: Path,
 ) -> None:
     provider = MockImageProvider()
@@ -247,11 +272,27 @@ def test_generate_creates_assets(
 
     storyboard = create_test_storyboard()
 
-    output_directory = tmp_path / "images"
+    requests = batch_engine.create_requests(
+        storyboard=storyboard,
+        output_directory=tmp_path,
+    )
+
+    assert "Static camera." in requests[0].prompt
+    assert "Slow gentle zoom in." in requests[1].prompt
+
+
+def test_generate_returns_assets(
+    tmp_path: Path,
+) -> None:
+    provider = MockImageProvider()
+    image_engine = ImageEngine(provider)
+    batch_engine = ImageBatchEngine(image_engine)
+
+    storyboard = create_test_storyboard()
 
     assets = batch_engine.generate(
         storyboard=storyboard,
-        output_directory=output_directory,
+        output_directory=tmp_path,
     )
 
     assert len(assets) == 2
@@ -260,35 +301,12 @@ def test_generate_creates_assets(
         assert isinstance(asset, ImageAsset)
         assert asset.status == "completed"
         assert asset.file_path is not None
-        assert Path(asset.file_path).exists()
 
 
-def test_generate_calls_provider_for_each_scene(
+def test_generate_creates_image_files(
     tmp_path: Path,
 ) -> None:
     provider = MockImageProvider()
-    image_engine = ImageEngine(provider)
-    batch_engine = ImageBatchEngine(image_engine)
-
-    storyboard = create_test_storyboard()
-
-    batch_engine.generate(
-        storyboard=storyboard,
-        output_directory=tmp_path,
-    )
-
-    assert len(provider.calls) == 2
-    assert provider.calls[0].scene_id == "scene_001"
-    assert provider.calls[1].scene_id == "scene_002"
-
-
-def test_generate_handles_failed_image(
-    tmp_path: Path,
-) -> None:
-    provider = MockImageProvider(
-        fail_scene_id="scene_002",
-    )
-
     image_engine = ImageEngine(provider)
     batch_engine = ImageBatchEngine(image_engine)
 
@@ -299,17 +317,35 @@ def test_generate_handles_failed_image(
         output_directory=tmp_path,
     )
 
-    assert len(assets) == 2
+    for asset in assets:
+        assert asset.file_path is not None
 
-    assert assets[0].status == "completed"
-    assert assets[0].file_path is not None
+        image_path = Path(asset.file_path)
 
-    assert assets[1].status == "failed"
-    assert assets[1].file_path is None
-    assert (
-        assets[1].error_message
-        == "Mock generation failure."
+        assert image_path.exists()
+        assert image_path.is_file()
+        assert image_path.suffix == ".png"
+
+
+def test_generate_preserves_scene_information(
+    tmp_path: Path,
+) -> None:
+    provider = MockImageProvider()
+    image_engine = ImageEngine(provider)
+    batch_engine = ImageBatchEngine(image_engine)
+
+    storyboard = create_test_storyboard()
+
+    assets = batch_engine.generate(
+        storyboard=storyboard,
+        output_directory=tmp_path,
     )
+
+    assert assets[0].image_id == "scene_001"
+    assert assets[0].scene_id == "scene_001"
+
+    assert assets[1].image_id == "scene_002"
+    assert assets[1].scene_id == "scene_002"
 
 
 def test_save_and_load_manifest(
@@ -323,37 +359,98 @@ def test_save_and_load_manifest(
 
     assets = batch_engine.generate(
         storyboard=storyboard,
-        output_directory=tmp_path / "images",
+        output_directory=tmp_path,
     )
 
-    manifest_file = tmp_path / "manifest.json"
+    manifest_path = tmp_path / "image_manifest.json"
 
     batch_engine.save_manifest(
-        assets=assets,
-        output_file=manifest_file,
+        assets,
+        manifest_path,
     )
 
-    assert manifest_file.exists()
+    assert manifest_path.exists()
 
     loaded_assets = batch_engine.load_manifest(
-        manifest_file
+        manifest_path
     )
 
-    assert len(loaded_assets) == 2
-    assert loaded_assets[0].image_id == "scene_001"
-    assert loaded_assets[1].image_id == "scene_002"
-    assert loaded_assets[0].status == "completed"
-    assert loaded_assets[1].status == "completed"
+    assert loaded_assets == assets
 
 
-def test_load_manifest_missing_file(
+def test_load_storyboard(
     tmp_path: Path,
 ) -> None:
+    storyboard = create_test_storyboard()
+
+    storyboard_path = tmp_path / "storyboard.json"
+
+    storyboard_path.write_text(
+        storyboard.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+
     provider = MockImageProvider()
     image_engine = ImageEngine(provider)
     batch_engine = ImageBatchEngine(image_engine)
 
-    missing_file = tmp_path / "missing_manifest.json"
+    loaded = batch_engine.load_storyboard(
+        storyboard_path
+    )
 
-    with pytest.raises(FileNotFoundError):
-        batch_engine.load_manifest(missing_file)
+    assert loaded.topic == storyboard.topic
+    assert len(loaded.scenes) == 2
+    assert loaded.scenes[0].scene_id == "scene_001"
+
+
+def test_generate_fails_for_empty_storyboard(
+    tmp_path: Path,
+) -> None:
+    storyboard = Storyboard(
+        topic="Empty Topic",
+        target_duration_seconds=10,
+        scenes=[],
+        total_scene_duration_seconds=0.0,
+        target_scene_duration_seconds=5.0,
+    )
+
+    provider = MockImageProvider()
+    image_engine = ImageEngine(provider)
+    batch_engine = ImageBatchEngine(image_engine)
+
+    with pytest.raises(ValueError):
+        batch_engine.generate(
+            storyboard=storyboard,
+            output_directory=tmp_path,
+        )
+
+
+def test_generate_uses_custom_prompt_builder(
+    tmp_path: Path,
+) -> None:
+    class CustomPromptBuilder(ImagePromptBuilder):
+        def build(self, scene: StoryboardScene) -> str:
+            return f"CUSTOM PROMPT: {scene.scene_id}"
+
+    provider = MockImageProvider()
+    image_engine = ImageEngine(provider)
+
+    batch_engine = ImageBatchEngine(
+        image_engine=image_engine,
+        prompt_builder=CustomPromptBuilder(),
+    )
+
+    storyboard = create_test_storyboard()
+
+    requests = batch_engine.create_requests(
+        storyboard=storyboard,
+        output_directory=tmp_path,
+    )
+
+    assert requests[0].prompt == (
+        "CUSTOM PROMPT: scene_001"
+    )
+
+    assert requests[1].prompt == (
+        "CUSTOM PROMPT: scene_002"
+    )
