@@ -1,6 +1,8 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from modules.voice.text import ensure_terminal_punctuation
 
 
 VoiceModel = Literal[
@@ -34,6 +36,16 @@ class VoiceAlignment(BaseModel):
     )
 
 
+class VoiceSettings(BaseModel):
+    """Consistent ElevenLabs delivery controls for narration generation."""
+
+    stability: float = Field(default=0.72, ge=0, le=1)
+    similarity_boost: float = Field(default=0.75, ge=0, le=1)
+    style: float = Field(default=0, ge=0, le=1)
+    use_speaker_boost: bool = True
+    speed: float = Field(default=0.95, ge=0.7, le=1.2)
+
+
 class VoiceGenerationRequest(BaseModel):
     """Request to generate narration audio."""
 
@@ -56,6 +68,20 @@ class VoiceGenerationRequest(BaseModel):
     output_format: str = (
         "mp3_44100_128"
     )
+
+    voice_settings: VoiceSettings = Field(default_factory=VoiceSettings)
+
+    minimum_duration_seconds: float | None = Field(
+        default=None,
+        gt=0,
+    )
+
+    @field_validator("text")
+    @classmethod
+    def prepare_text_for_speech(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Narration text cannot be blank.")
+        return ensure_terminal_punctuation(value)
 
 
 class VoiceAsset(BaseModel):
@@ -92,6 +118,10 @@ class VoiceGenerationResult(BaseModel):
     file_path: str | None = None
 
     duration_seconds: float | None = None
+
+    actual_duration_seconds: float | None = Field(default=None, ge=0)
+
+    minimum_duration_seconds: float | None = Field(default=None, ge=0)
 
     character_count: int = 0
 

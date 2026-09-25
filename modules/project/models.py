@@ -15,6 +15,7 @@ class Project:
     steps: dict[str, bool] = field(
         default_factory=lambda: {
             "research": False,
+            "research_validation": False,
             "outline": False,
             "script": False,
             "storyboard": False,
@@ -37,11 +38,23 @@ class Project:
 
     @classmethod
     def from_dict(cls, data: dict) -> "Project":
+        steps = {
+            "research": False,
+            "research_validation": False,
+            "outline": False,
+            "script": False,
+            "storyboard": False,
+            "images": False,
+            "voice": False,
+            "video": False,
+            "thumbnail": False,
+        }
+        steps.update(data.get("steps", {}))
         return cls(
             project_id=data["project_id"],
             title=data["title"],
             slug=data["slug"],
             status=data.get("status", "created"),
             created_at=data["created_at"],
-            steps=data.get("steps", {}),
+            steps=steps,
         )

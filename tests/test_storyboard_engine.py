@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from modules.storyboard.engine import StoryboardEngine
+from modules.project.config import ProductionConfig
 
 
 PROJECT_DIR = Path(
@@ -55,6 +56,20 @@ def test_create_storyboard():
     )
 
     assert len(storyboard.scenes) > 0
+
+
+def test_storyboard_uses_configured_scene_limits(tmp_path):
+    engine = StoryboardEngine(target_scene_duration_seconds=5.0)
+    storyboard = engine.create_storyboard(
+        SCRIPT_FILE,
+        production_config=ProductionConfig(
+            target_duration_seconds=480,
+            minimum_duration_seconds=480,
+            scene_minimum_duration_seconds=4.0,
+            scene_maximum_duration_seconds=4.0,
+        ),
+    )
+    assert storyboard.target_scene_duration_seconds == 4.0
 
 
 def test_storyboard_has_expected_scene_count():

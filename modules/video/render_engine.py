@@ -463,6 +463,28 @@ class FFmpegVideoRenderer:
                 f"{clip.duration_seconds:.6f}"
             )
 
+            if instruction.motion == "static":
+                filter_expression = (
+                    f"{input_label}"
+                    f"loop=loop=-1:size=1:start=0,"
+                    f"scale="
+                    f"{assembly_plan.width}:"
+                    f"{assembly_plan.height}:"
+                    f"force_original_aspect_ratio=decrease,"
+                    f"pad="
+                    f"{assembly_plan.width}:"
+                    f"{assembly_plan.height}:"
+                    f"(ow-iw)/2:"
+                    f"(oh-ih)/2,"
+                    f"setsar=1,"
+                    f"fps={assembly_plan.fps},"
+                    f"trim=duration={duration},"
+                    f"setpts=PTS-STARTPTS"
+                    f"{output_label}"
+                )
+                filters.append(filter_expression)
+                continue
+
             filter_expression = (
                 f"{input_label}"
                 f"scale="

@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from modules.project.config import ProductionConfig
 from modules.script.models import Script
 from modules.storyboard.models import (
     CameraMotion,
@@ -33,12 +34,17 @@ class StoryboardEngine:
         self,
         script_file: str | Path,
         output_file: str | Path | None = None,
+        production_config: ProductionConfig | None = None,
     ) -> Storyboard:
         """Create a storyboard from an existing script."""
 
         script = self.load_script(script_file)
 
-        storyboard = self._build_storyboard(script)
+        config = production_config or ProductionConfig(
+            target_duration_seconds=script.target_duration_seconds,
+            minimum_duration_seconds=script.target_duration_seconds,
+        )
+        storyboard = self._build_storyboard(script, config)
 
         self._validate_storyboard(
             storyboard,
@@ -85,6 +91,7 @@ class StoryboardEngine:
     def _build_storyboard(
         self,
         script: Script,
+        production_config: ProductionConfig | None = None,
     ) -> Storyboard:
         """
         Build a visual storyboard from the script.
@@ -94,9 +101,16 @@ class StoryboardEngine:
         convert narration into image text.
 
         When editorial text is not intentionally assigned,
-        text_overlay remains empty.
         """
 
+        config = production_config or ProductionConfig(
+            target_duration_seconds=script.target_duration_seconds,
+            minimum_duration_seconds=script.target_duration_seconds,
+        )
+        target_scene_duration = max(
+            config.scene_minimum_duration_seconds,
+            min(self.target_scene_duration_seconds, config.scene_maximum_duration_seconds),
+        )
         scenes: list[StoryboardScene] = []
 
         current_time = 0.0
@@ -129,7 +143,7 @@ class StoryboardEngine:
                 1,
                 round(
                     section_duration
-                    / self.target_scene_duration_seconds
+                    / target_scene_duration
                 ),
             )
 
@@ -240,6 +254,15 @@ class StoryboardEngine:
             scene.duration_seconds
             for scene in scenes
         )
+        expected_duration = float(script.total_estimated_seconds)
+        duration_delta = round(expected_duration - total_duration, 2)
+        if scenes and duration_delta:
+            final_scene = scenes[-1]
+            adjusted_duration = round(final_scene.duration_seconds + duration_delta, 2)
+            if adjusted_duration <= 0:
+                raise ValueError("Storyboard duration correction produced an invalid final scene.")
+            scenes[-1] = final_scene.model_copy(update={"duration_seconds": adjusted_duration})
+            total_duration = sum(scene.duration_seconds for scene in scenes)
 
         return Storyboard(
             topic=script.topic,
@@ -252,7 +275,7 @@ class StoryboardEngine:
                 2,
             ),
             target_scene_duration_seconds=(
-                self.target_scene_duration_seconds
+                target_scene_duration
             ),
         )
 

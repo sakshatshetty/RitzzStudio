@@ -3,7 +3,6 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-
 # ---------------------------------------------------------
 # Project paths
 # ---------------------------------------------------------
@@ -43,3 +42,14 @@ OPENAI_MODEL = os.getenv(
     "OPENAI_MODEL",
     "gpt-5.4-mini",
 )
+
+
+# ---------------------------------------------------------
+# vidIQ MCP (optional)
+# ---------------------------------------------------------
+
+VIDIQ_MCP_URL = os.getenv(
+    "VIDIQ_MCP_URL",
+    "https://mcp.vidiq.com/mcp",
+)
+VIDIQ_MCP_API_KEY = os.getenv("VIDIQ_MCP_API_KEY")

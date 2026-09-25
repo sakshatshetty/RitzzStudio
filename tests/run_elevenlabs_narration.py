@@ -14,7 +14,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from dotenv import load_dotenv
 
 from modules.voice.elevenlabs import ElevenLabsProvider
-from modules.voice.engine import VoiceEngine
+from modules.voice.engine import NarrationTooShortError, VoiceEngine
 
 
 load_dotenv()
@@ -152,9 +152,14 @@ def main() -> None:
 
     print()
 
-    result = engine.generate(
-        request
-    )
+    # Remove stale alignment metadata so an older successful take cannot be
+    # synchronized with a newly generated short audio file.
+    RESULT_FILE.unlink(missing_ok=True)
+    try:
+        result = engine.generate(request)
+    except NarrationTooShortError as exc:
+        engine.save_result(exc.result, RESULT_FILE)
+        raise
 
     # ---------------------------------------------------------
     # Validate generation
@@ -228,7 +233,7 @@ def main() -> None:
 
     print(
         f"Duration: "
-        f"{result.duration_seconds:.2f} seconds"
+        f"{result.actual_duration_seconds:.2f} seconds"
     )
 
     print(
