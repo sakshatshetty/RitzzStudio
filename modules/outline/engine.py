@@ -5,6 +5,7 @@ from openai import OpenAI
 
 from config import OPENAI_API_KEY, OPENAI_MODEL
 from modules.outline.models import Outline
+from modules.project.config import ProductionConfig
 from modules.research.models import Research
 
 
@@ -19,6 +20,7 @@ class OutlineEngine:
         research_file: Path,
         outline_directory: Path,
         force_refresh: bool = False,
+        production_config: ProductionConfig | None = None,
     ) -> Outline:
         """
         Generate an outline from a research JSON file.
@@ -51,16 +53,17 @@ class OutlineEngine:
         # Generate outline
         # -------------------------------------------------
 
+        config = production_config or ProductionConfig()
         response = self.client.responses.parse(
             model=OPENAI_MODEL,
             input=[
                 {
                     "role": "system",
-                    "content": self._system_prompt(),
+                    "content": self._system_prompt(config),
                 },
                 {
                     "role": "user",
-                    "content": self._build_user_prompt(research),
+                    "content": self._build_user_prompt(research, config),
                 },
             ],
             text_format=Outline,
@@ -73,11 +76,15 @@ class OutlineEngine:
                 "OpenAI returned no structured outline."
             )
 
+        outline = outline.model_copy(update={
+            "target_duration_seconds": config.target_duration_seconds,
+        })
+
         # -------------------------------------------------
         # Validate duration
         # -------------------------------------------------
 
-        self._validate_duration(outline)
+        self._validate_duration(outline, config.target_duration_seconds)
 
         # -------------------------------------------------
         # Save
@@ -91,14 +98,16 @@ class OutlineEngine:
         return outline
 
     @staticmethod
-    def _system_prompt() -> str:
+    def _system_prompt(config: ProductionConfig | None = None) -> str:
         """Return the editorial system prompt."""
+
+        target = (config or ProductionConfig()).target_duration_seconds
 
         return (
             "You are the Outline Engine for Ritzz, "
             "an educational YouTube channel.\n\n"
 
-            "Create an engaging approximately 8-minute "
+            f"Create an engaging approximately {target // 60}-minute "
             "YouTube video outline from the supplied research.\n\n"
 
             "The audience is a general curious audience.\n\n"
@@ -127,18 +136,22 @@ class OutlineEngine:
             "8. Conclusion\n\n"
 
             "The final outline should target approximately "
-            "480 seconds."
+            f"{target} seconds."
         )
 
     @staticmethod
     def _build_user_prompt(
         research: Research,
+        config: ProductionConfig | None = None,
     ) -> str:
         """Build the user prompt from structured research."""
+
+        target = (config or ProductionConfig()).target_duration_seconds
 
         return (
             "Create a video outline using ONLY the research "
             "provided below.\n\n"
+            f"TARGET DURATION: {target} seconds.\n\n"
             "RESEARCH:\n"
             f"{research.model_dump_json(indent=2)}"
         )
@@ -191,6 +204,7 @@ class OutlineEngine:
     @staticmethod
     def _validate_duration(
         outline: Outline,
+        target_duration_seconds: int = 480,
     ) -> None:
         """Validate the outline's estimated duration."""
 
@@ -207,7 +221,7 @@ class OutlineEngine:
                 f"{outline.total_estimated_seconds}s."
             )
 
-        target = outline.target_duration_seconds
+        target = target_duration_seconds
 
         # Allow approximately ±15% around the target.
         minimum = int(target * 0.85)

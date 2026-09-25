@@ -1,12 +1,17 @@
+import math
+import re
 from pathlib import Path
 from typing import Protocol
 
 from modules.script.models import Script
+from modules.project.config import ProductionConfig
 from modules.voice.models import (
     VoiceGenerationRequest,
     VoiceGenerationResult,
     VoiceModel,
 )
+from modules.voice.audio import probe_audio_duration
+from modules.voice.text import ensure_terminal_punctuation
 
 
 class VoiceProvider(Protocol):
@@ -19,14 +24,24 @@ class VoiceProvider(Protocol):
         ...
 
 
+class NarrationTooShortError(ValueError):
+    """Raised when measured narration is below its requested minimum."""
+
+    def __init__(self, message: str, result: VoiceGenerationResult) -> None:
+        super().__init__(message)
+        self.result = result
+
+
 class VoiceEngine:
     """Create and manage narration audio for Ritzz scripts."""
 
     def __init__(
         self,
         provider: VoiceProvider,
+        duration_probe=None,
     ) -> None:
         self.provider = provider
+        self.duration_probe = duration_probe or probe_audio_duration
 
     def load_script(
         self,
@@ -52,18 +67,24 @@ class VoiceEngine:
         output_directory: str | Path,
         output_filename: str = "narration.mp3",
         model_id: VoiceModel = "eleven_multilingual_v2",
+        production_config: ProductionConfig | None = None,
     ) -> VoiceGenerationRequest:
         """Create a voice-generation request from a script."""
 
         text = self._build_narration(script)
 
 
+        config = production_config or ProductionConfig(
+            target_duration_seconds=script.target_duration_seconds,
+            minimum_duration_seconds=script.target_duration_seconds,
+        )
         return VoiceGenerationRequest(
             voice_id=voice_id,
             model_id=model_id,
             text=text,
             output_directory=str(output_directory),
             output_filename=output_filename,
+            minimum_duration_seconds=float(config.minimum_duration_seconds),
         )
 
     def generate(
@@ -76,8 +97,48 @@ class VoiceEngine:
 
         if result.status == "completed":
             self._validate_result(result)
+            self._validate_measured_duration(result, request)
 
         return result
+
+    def _validate_measured_duration(
+        self,
+        result: VoiceGenerationResult,
+        request: VoiceGenerationRequest,
+    ) -> None:
+        minimum = request.minimum_duration_seconds
+        if minimum is None:
+            return
+
+        audio_path = Path(result.file_path or "")
+        if not audio_path.is_file() or audio_path.stat().st_size == 0:
+            raise ValueError(
+                "Generated narration audio is missing or empty; "
+                "its minimum duration cannot be verified."
+            )
+
+        actual = float(self.duration_probe(audio_path))
+        if not math.isfinite(actual) or actual <= 0:
+            raise ValueError(
+                "Measured narration duration must be positive and finite."
+            )
+
+        result.actual_duration_seconds = actual
+        result.minimum_duration_seconds = minimum
+        if actual >= minimum:
+            return
+
+        words = len(re.findall(r"\b[\w’'-]+\b", request.text))
+        recommended_words = math.ceil(words * minimum / actual * 1.08)
+        additional_words = max(1, recommended_words - words)
+        message = (
+            f"Generated narration measured {actual:.3f}s; the required minimum "
+            f"is {minimum:.3f}s. Add approximately {additional_words} words to "
+            "the script and regenerate. This audio cannot proceed to scene timing."
+        )
+        result.status = "failed"
+        result.error_message = message
+        raise NarrationTooShortError(message, result)
 
     def create_voice(
         self,
@@ -86,6 +147,7 @@ class VoiceEngine:
         output_directory: str | Path,
         output_filename: str = "narration.mp3",
         model_id: VoiceModel = "eleven_multilingual_v2",
+        production_config: ProductionConfig | None = None,
     ) -> VoiceGenerationResult:
         """Load a script, create a request, and generate narration."""
 
@@ -97,6 +159,7 @@ class VoiceEngine:
             output_directory=output_directory,
             output_filename=output_filename,
             model_id=model_id,
+            production_config=production_config,
         )
 
         return self.generate(request)
@@ -110,7 +173,9 @@ class VoiceEngine:
         parts: list[str] = []
 
         for section in script.sections:
-            narration = section.narration.strip()
+            narration = ensure_terminal_punctuation(
+                section.narration
+            )
 
             if narration:
                 parts.append(narration)

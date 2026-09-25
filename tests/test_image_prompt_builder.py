@@ -269,6 +269,10 @@ def test_editorial_text_uses_plain_black_or_white() -> None:
         in prompt
     )
 
+    assert "Use one flat color for the lettering only" in prompt
+    assert "Keep the illustration fully colored" in prompt
+    assert "Do not make the illustration monochrome" in prompt
+
 
 def test_editorial_text_is_not_cursive() -> None:
     builder = ImagePromptBuilder()
@@ -313,7 +317,7 @@ def test_editorial_text_avoids_decorative_effects() -> None:
     )
 
     assert (
-        "no bright colors"
+        "no bright colors in the lettering"
         in prompt
     )
 

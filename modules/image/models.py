@@ -12,6 +12,7 @@ ImageStatus = Literal[
 
 ImageProvider = Literal[
     "openai",
+    "replicate",
 ]
 
 

@@ -4,6 +4,7 @@ from pathlib import Path
 from openai import OpenAI
 
 from config import OPENAI_API_KEY, OPENAI_MODEL
+from modules.project.config import ProductionConfig
 from modules.research.models import Research
 
 
@@ -18,6 +19,7 @@ class ResearchEngine:
         topic: str,
         research_directory: Path,
         force_refresh: bool = False,
+        production_config: ProductionConfig | None = None,
     ) -> Research:
         """
         Research a topic and save the structured result.
@@ -44,6 +46,7 @@ class ResearchEngine:
         # AI Research
         # -------------------------------------------------
 
+        config = production_config or ProductionConfig()
         response = self.client.responses.parse(
             model=OPENAI_MODEL,
             tools=[
@@ -54,13 +57,15 @@ class ResearchEngine:
             input=[
                 {
                     "role": "system",
-                    "content": self._system_prompt(),
+                    "content": self._system_prompt(config),
                 },
                 {
                     "role": "user",
                     "content": (
                         f"Research this topic for a Ritzz video:\n\n"
-                        f"{topic}"
+                        f"{topic}\n\n"
+                        f"Target video duration: {config.target_duration_seconds} seconds.\n"
+                        f"Production constraints: {', '.join(config.constraints) or 'none'}"
                     ),
                 },
             ],
@@ -92,8 +97,10 @@ class ResearchEngine:
         return research
 
     @staticmethod
-    def _system_prompt() -> str:
+    def _system_prompt(config: ProductionConfig | None = None) -> str:
         """Return the research system prompt."""
+
+        target = (config or ProductionConfig()).target_duration_seconds
 
         return (
             "You are the research engine for Ritzz, "
@@ -132,8 +139,8 @@ class ResearchEngine:
 
             "Prioritize accuracy over quantity.\n\n"
 
-            "The research should be useful for an approximately "
-            "8-minute educational YouTube video."
+            f"The research should be useful for an approximately {target // 60}-minute "
+            "educational YouTube video."
         )
 
     @staticmethod

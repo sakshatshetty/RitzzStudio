@@ -6,12 +6,13 @@ from modules.script.models import (
     Script,
     ScriptSection,
 )
-from modules.voice.engine import VoiceEngine
+from modules.voice.engine import NarrationTooShortError, VoiceEngine
 from modules.voice.models import (
     VoiceAlignment,
     VoiceGenerationRequest,
     VoiceGenerationResult,
 )
+from modules.project.config import ProductionConfig
 
 
 class MockVoiceProvider:
@@ -28,14 +29,16 @@ class MockVoiceProvider:
     ) -> VoiceGenerationResult:
         self.requests.append(request)
 
+        file_path = Path(request.output_directory) / request.output_filename
+        if request.minimum_duration_seconds is not None:
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_bytes(b"mock audio")
+
         return VoiceGenerationResult(
             voice_id=request.voice_id,
             model_id=request.model_id,
             status="completed",
-            file_path=str(
-                Path(request.output_directory)
-                / request.output_filename
-            ),
+            file_path=str(file_path),
             duration_seconds=480.5,
             character_count=len(request.text),
             alignment=VoiceAlignment(
@@ -145,6 +148,13 @@ def test_build_narration():
     assert "\n\n" in narration
 
 
+def test_build_narration_adds_terminal_punctuation_per_section():
+    script = make_script()
+    script.sections[0].narration = "A pirate waits below deck"
+    narration = VoiceEngine._build_narration(script)
+    assert narration.startswith("A pirate waits below deck.")
+
+
 def test_create_request():
     script = make_script()
 
@@ -179,13 +189,30 @@ def test_create_request():
         request.output_filename
         == "narration.mp3"
     )
+    assert request.voice_settings.stability == 0.72
+    assert request.minimum_duration_seconds == 480
+
+
+def test_create_request_uses_configured_minimum_duration():
+    script = make_script()
+    request = VoiceEngine(provider=MockVoiceProvider()).create_request(
+        script=script,
+        voice_id="ritzz_voice",
+        output_directory="output/voice",
+        production_config=ProductionConfig(
+            target_duration_seconds=360,
+            minimum_duration_seconds=300,
+        ),
+    )
+    assert request.minimum_duration_seconds == 300
 
 
 def test_generate():
     provider = MockVoiceProvider()
 
     engine = VoiceEngine(
-        provider=provider
+        provider=provider,
+        duration_probe=lambda _: 480.5,
     )
 
     request = VoiceGenerationRequest(
@@ -218,7 +245,8 @@ def test_create_voice(tmp_path):
     provider = MockVoiceProvider()
 
     engine = VoiceEngine(
-        provider=provider
+        provider=provider,
+        duration_probe=lambda _: 480.5,
     )
 
     result = engine.create_voice(
@@ -235,6 +263,44 @@ def test_create_voice(tmp_path):
         / "voice"
         / "narration.mp3"
     )
+    assert result.actual_duration_seconds == 480.5
+    assert result.minimum_duration_seconds == 480
+
+
+def test_generate_rejects_audio_below_requested_minimum():
+    provider = MockVoiceProvider()
+    engine = VoiceEngine(provider, duration_probe=lambda _: 179.9)
+    request = VoiceGenerationRequest(
+        voice_id="ritzz_voice",
+        text="A concise narration.",
+        output_directory="output/voice",
+        minimum_duration_seconds=180,
+    )
+
+    with pytest.raises(
+        NarrationTooShortError,
+        match="cannot proceed to scene timing",
+    ) as exc:
+        engine.generate(request)
+
+    assert exc.value.result.actual_duration_seconds == 179.9
+    assert exc.value.result.minimum_duration_seconds == 180
+
+
+def test_generate_records_duration_when_minimum_is_met(tmp_path):
+    provider = MockVoiceProvider()
+    engine = VoiceEngine(provider, duration_probe=lambda _: 180.25)
+    request = VoiceGenerationRequest(
+        voice_id="ritzz_voice",
+        text="A sufficiently long narration.",
+        output_directory=str(tmp_path),
+        minimum_duration_seconds=180,
+    )
+
+    result = engine.generate(request)
+
+    assert result.actual_duration_seconds == 180.25
+    assert result.minimum_duration_seconds == 180
 
 
 def test_save_and_load_result(tmp_path):

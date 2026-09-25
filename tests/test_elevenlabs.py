@@ -146,11 +146,18 @@ def test_generate_with_mocked_request(
             "xi-api-key"
         ] == "test-key"
 
-        assert json["text"] == "Hello"
+        assert json["text"] == "Hello."
         assert (
             json["model_id"]
             == "eleven_multilingual_v2"
         )
+        assert json["voice_settings"] == {
+            "stability": 0.72,
+            "similarity_boost": 0.75,
+            "style": 0.0,
+            "use_speaker_boost": True,
+            "speed": 0.95,
+        }
 
         return MockResponse(
             response_data
@@ -189,7 +196,7 @@ def test_generate_with_mocked_request(
 
     assert (
         result.character_count
-        == 5
+        == 6
     )
 
     assert (
@@ -206,6 +213,40 @@ def test_generate_with_mocked_request(
         output_file.read_bytes()
         == audio
     )
+
+
+def test_generate_sends_overridden_voice_settings(monkeypatch, tmp_path):
+    from modules.voice.models import VoiceSettings
+
+    audio = b"fake-mp3-audio"
+    response_data = {
+        "audio_base64": base64.b64encode(audio).decode("utf-8"),
+        "alignment": {
+            "characters": ["H"],
+            "character_start_times_seconds": [0.0],
+            "character_end_times_seconds": [0.1],
+        },
+    }
+
+    def mock_post(url, headers, json, timeout):
+        assert json["voice_settings"] == {
+            "stability": 0.72,
+            "similarity_boost": 0.75,
+            "style": 0.0,
+            "use_speaker_boost": True,
+            "speed": 0.95,
+        }
+        return MockResponse(response_data)
+
+    monkeypatch.setattr("modules.voice.elevenlabs.requests.post", mock_post)
+    request = VoiceGenerationRequest(
+        voice_id="test-voice",
+        text="Hello",
+        output_directory=str(tmp_path),
+        voice_settings=VoiceSettings(stability=0.72),
+    )
+    result = ElevenLabsProvider(api_key="test-key").generate(request)
+    assert result.status == "completed"
 
 
 def test_generate_failure_is_returned(

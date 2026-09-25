@@ -243,3 +243,9 @@ def test_word_count():
     count = ScriptEngine._count_words(text)
 
     assert count == 5
+
+
+def test_script_generation_prompts_require_speech_friendly_punctuation():
+    prompt = ScriptEngine._build_user_prompt(create_research(), create_outline())
+    assert "Punctuate every narration section" in prompt
+    assert "careful standard punctuation" in ScriptEngine._system_prompt()

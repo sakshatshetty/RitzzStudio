@@ -8,6 +8,7 @@ from config import OPENAI_API_KEY, OPENAI_MODEL
 from modules.outline.models import Outline
 from modules.research.models import Research
 from modules.script.models import Script
+from modules.project.config import ProductionConfig
 
 
 class ScriptEngine:
@@ -44,6 +45,7 @@ class ScriptEngine:
         outline_file: Path,
         script_directory: Path,
         force_refresh: bool = False,
+        production_config: ProductionConfig | None = None,
     ) -> Script:
         """Generate a narration script from research and outline."""
 
@@ -93,6 +95,8 @@ class ScriptEngine:
         # Generate script with retries
         # -------------------------------------------------
 
+        config = production_config or ProductionConfig()
+        minimum_word_count = config.minimum_word_count
         last_word_count = 0
 
         for attempt in range(
@@ -113,6 +117,7 @@ class ScriptEngine:
                 user_prompt = self._build_user_prompt(
                     research,
                     outline,
+                    config,
                 )
 
             # ---------------------------------------------
@@ -124,6 +129,7 @@ class ScriptEngine:
                     research,
                     outline,
                     last_word_count,
+                    config,
                 )
 
             # ---------------------------------------------
@@ -135,7 +141,7 @@ class ScriptEngine:
                 input=[
                     {
                         "role": "system",
-                        "content": self._system_prompt(),
+                        "content": self._system_prompt(config),
                     },
                     {
                         "role": "user",
@@ -180,6 +186,8 @@ class ScriptEngine:
 
             script = script.model_copy(
                 update={
+                    "target_duration_seconds": config.target_duration_seconds,
+                    "target_word_count": minimum_word_count,
                     "total_word_count": (
                         actual_word_count
                     ),
@@ -201,7 +209,7 @@ class ScriptEngine:
 
             if (
                 actual_word_count
-                >= self.MINIMUM_WORD_COUNT
+                >= minimum_word_count
                 and actual_duration_seconds
                 >= self.MINIMUM_DURATION_SECONDS
             ):
@@ -249,8 +257,10 @@ class ScriptEngine:
     # ---------------------------------------------------------
 
     @staticmethod
-    def _system_prompt() -> str:
+    def _system_prompt(config: ProductionConfig | None = None) -> str:
         """Return the Script Engine system prompt."""
+
+        config = config or ProductionConfig()
 
         return (
             "You are the Script Engine for Ritzz, "
@@ -260,17 +270,23 @@ class ScriptEngine:
             "and an approved video outline into a complete "
             "engaging narration script.\n\n"
 
-            "The script is intended for an approximately "
-            "8-minute YouTube video.\n\n"
+            f"The script is intended for an approximately {config.target_duration_seconds // 60}-minute YouTube video.\n\n"
 
             "The final narration MUST contain at least "
-            "1150 words of actual spoken narration.\n\n"
+            f"{config.minimum_word_count} words of actual spoken narration.\n\n"
 
             "Use approximately 140 spoken words per minute "
             "as the pacing reference.\n\n"
 
             "Write natural spoken English suitable for "
             "professional YouTube narration and text-to-speech.\n\n"
+
+            "Use careful standard punctuation to guide calm spoken delivery: "
+            "commas for natural clause pauses, periods when a thought is complete, "
+            "and question marks for genuine questions. Break paragraphs at meaningful "
+            "story transitions. Avoid run-on sentences, sentence fragments, and "
+            "repeated ellipses or exclamation marks. Do not put spoken delivery or "
+            "stage directions in the narration.\n\n"
 
             "The writing should sound like a skilled human "
             "YouTube narrator rather than an academic paper.\n\n"
@@ -326,9 +342,11 @@ class ScriptEngine:
         cls,
         research: Research,
         outline: Outline,
+        config: ProductionConfig | None = None,
     ) -> str:
         """Build the initial generation prompt."""
 
+        config = config or ProductionConfig()
         section_targets = []
 
         for section in outline.sections:
@@ -357,13 +375,18 @@ class ScriptEngine:
             "SCRIPT LENGTH REQUIREMENTS\n"
             "=================================================\n\n"
 
-            "The video MUST be at least 8 minutes long.\n\n"
+            f"The video MUST be at least {config.minimum_duration_seconds} seconds long.\n\n"
 
             "The final script MUST contain at least "
-            "1150 words of actual spoken narration.\n\n"
+            f"The final script MUST contain at least {config.minimum_word_count} words of actual spoken narration.\n\n"
 
             "Use approximately 140 spoken words per minute "
             "as the pacing reference.\n\n"
+
+            "Punctuate every narration section for natural text-to-speech: use commas "
+            "for brief clause pauses, periods for completed thoughts, and question "
+            "marks for real questions. Avoid run-on sentences, fragments, and excess "
+            "ellipses or exclamation marks.\n\n"
 
             "Do not intentionally write a short script.\n\n"
 
@@ -407,10 +430,11 @@ class ScriptEngine:
         research: Research,
         outline: Outline,
         current_word_count: int,
+        config: ProductionConfig | None = None,
     ) -> str:
         """Build a prompt for expanding an undersized script."""
 
-        required_words = cls.MINIMUM_WORD_COUNT
+        required_words = (config or ProductionConfig()).minimum_word_count
 
         additional_words = (
             required_words
@@ -466,6 +490,11 @@ class ScriptEngine:
 
             "Maintain the research source IDs associated with "
             "each section.\n\n"
+
+            "Punctuate every narration section for natural text-to-speech: use commas "
+            "for brief clause pauses, periods for completed thoughts, and question "
+            "marks for real questions. Avoid run-on sentences, fragments, and excess "
+            "ellipses or exclamation marks.\n\n"
 
             "The result must contain at least "
             f"{required_words} words of actual narration.\n\n"

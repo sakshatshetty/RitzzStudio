@@ -396,6 +396,13 @@ def test_complete_three_scene_pipeline(
     assert output_video.exists()
 
     assert output_video.stat().st_size > 0
+    state = json.loads(
+        (output_directory / "pipeline_state.json").read_text(encoding="utf-8")
+    )
+    assert state["stages"]["assembly"]["status"] == "completed"
+    assert state["stages"]["synchronization"]["status"] == "completed"
+    assert state["stages"]["motion"]["status"] == "completed"
+    assert state["stages"]["render"]["status"] == "completed"
 
 
 def test_pipeline_saves_expected_artifacts(
@@ -531,6 +538,28 @@ def test_pipeline_handles_missing_images(
     assert result.error_message is not None
 
 
+def test_pipeline_rejects_corrupt_png_before_render(
+    tmp_path: Path,
+) -> None:
+    audio_file = create_audio(tmp_path)
+    storyboard_file = create_storyboard(tmp_path, audio_file)
+    alignment_file = create_alignment(tmp_path)
+    image_directory = tmp_path / "images"
+    image_directory.mkdir()
+    for index in range(1, 4):
+        (image_directory / f"scene_{index:03d}.png").write_bytes(b"not-a-png")
+
+    output_directory = tmp_path / "output"
+    result = VideoProductionPipeline().run(
+        VideoProductionPipeline().create_request(
+            storyboard_file, image_directory, alignment_file, output_directory, audio_file
+        )
+    )
+
+    assert result.status == "failed"
+    assert "Asset validation failed" in (result.error_message or "")
+
+
 def test_pipeline_uses_custom_output_filename(
     tmp_path: Path,
 ) -> None:
@@ -582,3 +611,26 @@ def test_pipeline_uses_custom_output_filename(
     )
 
     assert custom_output.exists()
+
+
+def test_pipeline_supports_retry_from_motion_and_records_usage(tmp_path: Path) -> None:
+    image_directory = create_images(tmp_path)
+    audio_file = create_audio(tmp_path)
+    storyboard_file = create_storyboard(tmp_path, audio_file)
+    alignment_file = create_alignment(tmp_path)
+    output_directory = tmp_path / "output"
+    pipeline = VideoProductionPipeline()
+    request = pipeline.create_request(storyboard_file, image_directory, alignment_file, output_directory, audio_file)
+    assert pipeline.run(request).status == "completed"
+
+    retry = pipeline.create_request(
+        storyboard_file, image_directory, alignment_file, output_directory, audio_file,
+        retry_from_stage="motion",
+    )
+    result = pipeline.run(retry)
+
+    assert result.status == "completed"
+    state = json.loads((output_directory / "pipeline_state.json").read_text(encoding="utf-8"))
+    assert state["stages"]["motion"]["attempts"] == 2
+    usage = json.loads((output_directory / "pipeline_usage.json").read_text(encoding="utf-8"))
+    assert any(item["stage"] == "render" and "duration_seconds" in item for item in usage["stages"])

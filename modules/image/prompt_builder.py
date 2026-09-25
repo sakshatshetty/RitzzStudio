@@ -100,15 +100,16 @@ class ImagePromptBuilder:
         "at 1080p. "
         "Make it visually noticeable but still secondary "
         "to the main illustration. "
-        "Use one flat color only: plain black or plain white "
-        "depending on the background. "
+        "Use one flat color for the lettering only: plain black "
+        "or plain white depending on the background. "
+        "This one-color instruction applies only to the editorial letters. "
         "Keep the lettering simple and slightly informal. "
         "Do not use cursive writing that reduces readability. "
         "No decorative lettering, "
         "no thick outline, "
         "no 3D effects, "
         "no gradients, "
-        "no bright colors, "
+        "no bright colors in the lettering, "
         "no shadows, "
         "and no graphic text effects."
     )
@@ -124,6 +125,13 @@ class ImagePromptBuilder:
     }
 
     DEFAULT_CHARACTER_PROFILE = ""
+
+    EDITORIAL_ILLUSTRATION_COLOR_INSTRUCTION = (
+        "Keep the illustration fully colored using the normal RITZZ flat-color palette. "
+        "Use clear colors for the character, clothing, props, and background. "
+        "Only the editorial lettering is limited to solid black or white. "
+        "Do not make the illustration monochrome, grayscale, black-and-white, or single-color."
+    )
 
     def __init__(
         self,
@@ -191,6 +199,10 @@ class ImagePromptBuilder:
         )
 
         if has_editorial_text:
+            parts.append(
+                self.EDITORIAL_ILLUSTRATION_COLOR_INSTRUCTION
+            )
+
             editorial_text = scene.text_overlay.strip()
 
             parts.append(

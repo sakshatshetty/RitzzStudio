@@ -3,6 +3,15 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
+PipelineStageName = Literal[
+    "asset_validation",
+    "assembly",
+    "synchronization",
+    "motion",
+    "render",
+]
+
+
 class VideoProductionRequest(BaseModel):
     """
     Request for running the complete Ritzz video
@@ -15,6 +24,8 @@ class VideoProductionRequest(BaseModel):
     audio_file: str | None = None
     output_directory: str
     output_video_file: str | None = None
+    resume: bool = True
+    retry_from_stage: PipelineStageName | None = None
 
 
 class VideoProductionResult(BaseModel):
@@ -44,3 +55,5 @@ class VideoProductionResult(BaseModel):
     )
 
     error_message: str | None = None
+    technical_qa_status: Literal["PASS", "REVIEW", "FAIL"] | None = None
+    approval_status: Literal["PENDING", "APPROVED", "REJECTED"] = "PENDING"

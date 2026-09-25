@@ -331,6 +331,9 @@ def test_filter_script_contains_concat() -> None:
         filter_script
     )
 
+    assert "zoompan" not in filter_script
+    assert "loop=loop=-1" in filter_script
+
 
 def test_filter_script_contains_zoompan() -> None:
     renderer = FFmpegVideoRenderer()

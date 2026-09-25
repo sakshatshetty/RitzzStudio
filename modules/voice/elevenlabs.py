@@ -56,6 +56,7 @@ class ElevenLabsProvider:
             "model_id": request.model_id,
             "output_format": request.output_format,
         }
+        payload["voice_settings"] = request.voice_settings.model_dump()
 
         try:
             response = requests.post(
