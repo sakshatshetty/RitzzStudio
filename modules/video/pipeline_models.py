@@ -26,6 +26,7 @@ class VideoProductionRequest(BaseModel):
     output_video_file: str | None = None
     resume: bool = True
     retry_from_stage: PipelineStageName | None = None
+    enable_image_ai_qa: bool = False
 
 
 class VideoProductionResult(BaseModel):
@@ -56,4 +57,5 @@ class VideoProductionResult(BaseModel):
 
     error_message: str | None = None
     technical_qa_status: Literal["PASS", "REVIEW", "FAIL"] | None = None
+    image_ai_qa_status: Literal["PASS", "REVIEW", "FAIL"] | None = None
     approval_status: Literal["PENDING", "APPROVED", "REJECTED"] = "PENDING"

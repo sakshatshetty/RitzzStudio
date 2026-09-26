@@ -1,13 +1,31 @@
 ﻿# RITZZ Studio Milestones
 
-Last verified: 2026-09-24
+Last verified: 2026-09-25
 
 This file is the current status source for the project. The older roadmap in
 `docs/Milestone.md` points here.
 
-## Current milestone: Packaging: Titles, Thumbnails, and Metadata
+## Current milestone: YouTube Publishing and Scheduling
 
-**Status: vidIQ TRENDING DISCOVERY AND EDITORIAL ASSESSMENT LIVE-VALIDATED; EVERGREEN NEEDS ADAPTER VALIDATION**
+**Status: OFFLINE PROVIDER SCOPE COMPLETE; LIVE OAUTH UPLOAD VERIFICATION PENDING**
+
+M1 through M5 are complete for the current scope. M6 now has explicit approval
+and schedule artifacts, project-level publish orchestration, publish result
+persistence, and an opt-in OAuth `YouTubeProvider` with scheduled `publishAt`
+support. The offline suite passes 325 tests with one live web-search test
+deselected. The project publish wrapper now requires a separately recorded
+approved artifact and verifies that the caller's approver identity matches;
+focused publishing/provider tests pass (9).
+
+The next action is a controlled upload after configuring Google OAuth
+credentials. No client-secret/token files or YouTube/Google OAuth environment
+variables are currently configured, so no live upload was attempted.
+M7 analytics work remains blocked until the YouTube video ID, URL, schedule, and
+publish status are verified from a real upload.
+
+See [CHANGELOG.md](CHANGELOG.md) for the milestone history and
+[RITZZ Master Milestones](docs/RITZZ_Master_Milestones.md) for the long-term
+roadmap.
 
 The interactive app now offers vidIQ topic discovery or manual topic entry.
 Discovery supports TRENDING and EVERGREEN modes, uses the official vidIQ MCP
@@ -181,5 +199,4 @@ gate tests passed before that run.
   review requirements are complete.
 - Do not promote to 4K or add upload automation, thumbnails, analytics, or
   multi-channel support yet.
-
 

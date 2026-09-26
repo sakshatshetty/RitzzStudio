@@ -13,6 +13,8 @@ class SceneQAResult(BaseModel):
     narration_description: QAStatus
     editorial_context: QAStatus
     rationale: str
+    correction_prompt: str | None = None
+    suggested_editorial_scene_id: str | None = None
 
 
 class AudioImageMatchResult(BaseModel):

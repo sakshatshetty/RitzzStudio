@@ -42,6 +42,25 @@ def test_technical_qa_checks_images_and_duration(tmp_path):
     assert result.checks["duration_consistency"] == "PASS"
 
 
+def test_technical_qa_fails_when_rendered_video_duration_drifts_from_audio(tmp_path):
+    storyboard, plan, audio, _ = make_inputs(tmp_path)
+    video = tmp_path / "rendered.mp4"
+    video.write_bytes(b"video")
+
+    result = PilotVideoQA().run_technical(
+        storyboard,
+        plan,
+        audio,
+        video_file=video,
+        audio_duration=2,
+        video_duration=2.5,
+    )
+
+    assert result.status == "FAIL"
+    assert result.checks["video"] == "FAIL"
+    assert any("duration/streams do not match audio" in issue for issue in result.issues)
+
+
 def test_technical_qa_flags_corrupt_image(tmp_path):
     storyboard, plan, audio, image = make_inputs(tmp_path)
     image.write_bytes(b"not a png")

@@ -13,6 +13,8 @@ from modules.voice.models import (
     VoiceGenerationResult,
 )
 from modules.project.config import ProductionConfig
+from modules.project.manager import ProjectManager
+from modules.qa.engine import load_project_qa
 
 
 class MockVoiceProvider:
@@ -301,6 +303,30 @@ def test_generate_records_duration_when_minimum_is_met(tmp_path):
 
     assert result.actual_duration_seconds == 180.25
     assert result.minimum_duration_seconds == 180
+
+
+def test_project_voice_generation_records_duration_and_alignment_qa(tmp_path):
+    manager = ProjectManager(tmp_path / "projects")
+    project = manager.create_project("A test video")
+    project_directory = manager.get_project_path(project)
+    audio_directory = project_directory / "audio"
+    engine = VoiceEngine(
+        MockVoiceProvider(),
+        duration_probe=lambda _: 480.5,
+    )
+
+    request = VoiceGenerationRequest(
+        voice_id="ritzz_voice",
+        text="A sufficiently long narration.",
+        output_directory=str(audio_directory),
+        minimum_duration_seconds=180,
+    )
+    result = engine.generate(request)
+
+    report = load_project_qa(project_directory)
+    assert result.actual_duration_seconds == 480.5
+    assert report.stages["voice"][-1].status == "PASS"
+    assert report.stages["voice"][-1].checks["character_alignment"] == "PASS"
 
 
 def test_save_and_load_result(tmp_path):

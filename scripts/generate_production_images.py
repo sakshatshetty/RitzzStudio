@@ -10,8 +10,10 @@ if str(PROJECT_ROOT) not in sys.path:
 
 
 from modules.image.batch import ImageBatchEngine
+from modules.image.character_profile import load_character_profile
 from modules.image.engine import ImageEngine
 from modules.image.providers.openai import OpenAIImageProvider
+from modules.image.prompt_builder import ImagePromptBuilder
 from modules.storyboard.models import Storyboard
 
 
@@ -179,7 +181,12 @@ def main() -> int:
         )
 
         batch_engine = ImageBatchEngine(
-            image_engine=image_engine
+            image_engine=image_engine,
+            prompt_builder=ImagePromptBuilder(
+                character_profile=load_character_profile(
+                    PROJECT_DIRECTORY
+                )
+            ),
         )
 
         print(

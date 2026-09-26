@@ -14,7 +14,7 @@ from openai import OpenAI
 
 from modules.storyboard.models import Storyboard
 from modules.video.models import VideoAssemblyPlan
-from modules.video.qa_models import AudioImageMatchResult, PilotQAReport, SceneQAResult, TechnicalQAResult
+from modules.video.qa_models import AudioImageMatchResult, PilotQAReport, QAStatus, SceneQAResult, TechnicalQAResult
 
 load_dotenv()
 
@@ -112,8 +112,8 @@ def _mp3_duration(path: Path) -> float:
     return total_seconds
 
 
-class OpenAISemanticReviewer:
-    """Scene review using the existing OpenAI account and a vision model."""
+class OpenAIImageEditorialReviewer:
+    """Review generated image relevance and editorial-word placement only."""
 
     def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
         key = api_key or os.getenv("OPENAI_API_KEY")
@@ -122,16 +122,31 @@ class OpenAISemanticReviewer:
         self.client = OpenAI(api_key=key)
         self.model = model or os.getenv("RITZZ_EDITORIAL_MODEL", "gpt-5.4-mini")
 
-    def review(self, image_path: Path, scene: Any) -> SceneQAResult:
+    def review(
+        self,
+        image_path: Path,
+        scene: Any,
+        editorial_candidates: list[dict[str, str]] | None = None,
+    ) -> SceneQAResult:
         encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
         editorial = scene.text_overlay or "(none)"
         prompt = (
-            "Review this generated illustration for an educational video. Compare the actual image with "
-            "the narration, visual description, and embedded editorial word. Return only JSON with keys "
-            "narration_image, narration_description, editorial_context, rationale. Each status must be "
-            "PASS, REVIEW, or FAIL. Use REVIEW when uncertain; FAIL only for clear contradiction or mismatch. "
-            "Editorial word: " + editorial + "\nNarration: " + scene.narration +
-            "\nVisual description: " + scene.visual_description + "\nImage prompt: " + scene.image_prompt
+            "Review only this generated image for an educational video. Check whether the visible scene "
+            "matches the narration and whether the requested editorial word is semantically appropriate "
+            "for THIS scene, not merely a neighboring beat. Do not review research, script quality, style "
+            "preferences, or production metadata. Return JSON keys narration_image, narration_description, "
+            "editorial_context, rationale, correction_prompt, suggested_editorial_scene_id. Status values "
+            "must be PASS, REVIEW, or FAIL. Use FAIL only for a clear mismatch; use REVIEW when uncertain. "
+            "Set correction_prompt only when there is a concrete, actionable image correction; use null when "
+            "the concern is uncertain or cannot be corrected from the image prompt alone. If the image is wrong, "
+            "correction_prompt must describe a concrete image-only correction while "
+            "preserving the requested style and character. If the word belongs on another supplied scene, "
+            "set suggested_editorial_scene_id to that scene ID; otherwise use null.\n"
+            "Current scene ID: " + scene.scene_id + "\nEditorial word: " + editorial +
+            "\nNarration: " + scene.narration +
+            "\nVisual description: " + scene.visual_description +
+            "\nEditorial candidate scenes: " + json.dumps(editorial_candidates or [], ensure_ascii=False) +
+            "\nImage prompt: " + scene.image_prompt
         )
         response = self.client.responses.create(
             model=self.model,
@@ -152,7 +167,9 @@ class OpenAISemanticReviewer:
                              narration_image=result["narration_image"],
                              narration_description=result["narration_description"],
                              editorial_context=result["editorial_context"],
-                             rationale=str(result.get("rationale", "")))
+                             rationale=str(result.get("rationale", "")),
+                             correction_prompt=result.get("correction_prompt"),
+                             suggested_editorial_scene_id=result.get("suggested_editorial_scene_id"))
 
     def match_audio_image(self, image_path: Path, scene: Any, start_seconds: float,
                           end_seconds: float) -> AudioImageMatchResult:
@@ -185,6 +202,9 @@ class OpenAISemanticReviewer:
                                      rationale=str(value.get("rationale", "")))
 
 
+OpenAISemanticReviewer = OpenAIImageEditorialReviewer
+
+
 class PilotVideoQA:
     def run_audio_image_match(self, storyboard: Storyboard, plan: VideoAssemblyPlan,
                               reviewer: OpenAISemanticReviewer) -> list[AudioImageMatchResult]:
@@ -207,7 +227,7 @@ class PilotVideoQA:
                       audio_duration: float | None = None,
                       video_duration: float | None = None) -> TechnicalQAResult:
         issues: list[str] = []
-        checks: dict[str, str] = {}
+        checks: dict[str, QAStatus] = {}
         image_ok = True
         order_ok = len(storyboard.scenes) == len(plan.clips)
         no_gap = True

@@ -16,10 +16,17 @@ class ImagePromptBuilder:
     - No accidental text when editorial text is absent
     """
 
-    RITZZ_VISUAL_STYLE = (
+    RITZZ_HAND_DRAWN_STYLE = (
+        "Hand-drawn educational explainer illustration, "
+        "rough marker and pen ink drawing, "
+        "annotation-like storyboard frame, "
+        "controlled human imperfection, "
+        "organic slightly uneven shapes, "
+        "subtle natural line-weight variation, "
+        "slightly wobbly hand-drawn contours, "
         "Simple 2D cartoon illustration, "
         "simple stickman-style characters, "
-        "thick black outlines, "
+        "thick black outlines, confident marker line quality, "
         "flat colors, "
         "very minimal shading, "
         "large clear shapes, "
@@ -27,9 +34,13 @@ class ImagePromptBuilder:
         "clean uncluttered composition, "
         "generous negative space, "
         "minimal visual detail, "
+        "simple illustrated backgrounds with occasional uneven drawn details, "
+        "clean and readable rather than messy or unfinished, "
         "easy to understand at a glance, "
         "simple YouTube explainer animation style."
     )
+
+    RITZZ_VISUAL_STYLE = RITZZ_HAND_DRAWN_STYLE
 
     RITZZ_NEGATIVE_STYLE = (
         "Avoid photorealism, "
@@ -141,7 +152,7 @@ class ImagePromptBuilder:
         self.base_style = (
             base_style.strip()
             if base_style
-            else self.RITZZ_VISUAL_STYLE
+            else self.RITZZ_HAND_DRAWN_STYLE
         )
 
         self.character_profile = (

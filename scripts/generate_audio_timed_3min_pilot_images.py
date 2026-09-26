@@ -6,8 +6,10 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from modules.image.batch import ImageBatchEngine
+from modules.image.character_profile import load_character_profile
 from modules.image.engine import ImageEngine
 from modules.image.providers.openai import OpenAIImageProvider
+from modules.image.prompt_builder import ImagePromptBuilder
 from modules.storyboard.models import Storyboard
 
 PILOT_DIRECTORY = PROJECT_ROOT / "projects" / "20260820_001_why_do_pirates_wear_eye_patches" / "pilot_3min"
@@ -22,7 +24,12 @@ def main() -> int:
         raise ValueError("Audio-timed storyboard has no scenes.")
     if any(scene.duration_seconds <= 0 for scene in storyboard.scenes):
         raise ValueError("Audio-timed storyboard contains an invalid scene duration.")
-    engine = ImageBatchEngine(ImageEngine(OpenAIImageProvider()))
+    engine = ImageBatchEngine(
+        ImageEngine(OpenAIImageProvider()),
+        prompt_builder=ImagePromptBuilder(
+            character_profile=load_character_profile(PILOT_DIRECTORY.parent)
+        ),
+    )
     assets = engine.generate(storyboard, IMAGE_DIRECTORY)
     engine.save_manifest(assets, MANIFEST_FILE)
     failed = [asset for asset in assets if asset.status != "completed"]

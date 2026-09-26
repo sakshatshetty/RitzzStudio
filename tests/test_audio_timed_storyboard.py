@@ -1,6 +1,7 @@
 from modules.storyboard.models import Storyboard, StoryboardScene
 from modules.video.audio_timed_storyboard import AudioTimedStoryboardEngine
 from modules.video.sync_models import NarrationAlignment
+from modules.qa.engine import load_project_qa
 
 
 def make_storyboard(lines, descriptions):
@@ -54,3 +55,19 @@ def test_same_narrative_is_split_only_after_three_seconds():
     assert len(timed.scenes) == 2
     assert timed.scenes[0].duration_seconds >= 3
     assert timed.scenes[1].duration_seconds >= 3
+
+
+def test_audio_timed_storyboard_save_records_callout_review(tmp_path):
+    storyboard = make_storyboard(["The pirate waits."], ["A pirate on deck"])
+    storyboard.scenes[0].duration_seconds = 2
+    storyboard.scenes[0].text_overlay = "THE MYTH"
+    storyboard.total_scene_duration_seconds = 2
+    output = tmp_path / "storyboard" / "storyboard_audio_timed.json"
+
+    AudioTimedStoryboardEngine.save_storyboard(storyboard, output)
+
+    result = load_project_qa(tmp_path).stages["storyboard"][-1]
+    assert result.status == "REVIEW"
+    assert result.checks["timeline_coverage"] == "PASS"
+    assert result.checks["editorial_format"] == "REVIEW"
+    assert "single uppercase word" in result.findings[0]

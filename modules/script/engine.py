@@ -19,6 +19,7 @@ class ScriptEngine:
     # ---------------------------------------------------------
 
     WORDS_PER_MINUTE = 140
+    TEN_SECOND_HOOK_WORDS = 25
 
     MINIMUM_DURATION_SECONDS = 480
 
@@ -97,6 +98,9 @@ class ScriptEngine:
 
         config = production_config or ProductionConfig()
         minimum_word_count = config.minimum_word_count
+        maximum_duration_seconds = int(
+            config.target_duration_seconds * 1.15
+        )
         last_word_count = 0
 
         for attempt in range(
@@ -121,9 +125,18 @@ class ScriptEngine:
                 )
 
             # ---------------------------------------------
-            # Expansion generation
+            # Corrective generation
             # ---------------------------------------------
 
+            elif last_word_count and self._calculate_duration_seconds(
+                last_word_count
+            ) > maximum_duration_seconds:
+                user_prompt = self._build_contraction_prompt(
+                    research,
+                    outline,
+                    last_word_count,
+                    config,
+                )
             else:
                 user_prompt = self._build_expansion_prompt(
                     research,
@@ -211,7 +224,9 @@ class ScriptEngine:
                 actual_word_count
                 >= minimum_word_count
                 and actual_duration_seconds
-                >= self.MINIMUM_DURATION_SECONDS
+                >= config.minimum_duration_seconds
+                and actual_duration_seconds
+                <= maximum_duration_seconds
             ):
                 # -----------------------------------------
                 # Full validation
@@ -221,6 +236,10 @@ class ScriptEngine:
                     script,
                     research,
                     outline,
+                    minimum_word_count=minimum_word_count,
+                    minimum_duration_seconds=(
+                        config.minimum_duration_seconds
+                    ),
                 )
 
                 # -----------------------------------------
@@ -234,18 +253,14 @@ class ScriptEngine:
 
                 return script
 
-            print(
-                "Script is below the minimum "
-                "8-minute requirement. "
-                "Expanding and retrying..."
-            )
+            print("Script duration is outside configured limits. Retrying...")
 
         # -------------------------------------------------
         # All attempts failed
         # -------------------------------------------------
 
         raise ValueError(
-            "Unable to generate an 8-minute script "
+            "Unable to generate a script within configured duration limits "
             f"after {self.MAX_GENERATION_ATTEMPTS} "
             f"attempts. "
             f"Last result contained "
@@ -261,6 +276,17 @@ class ScriptEngine:
         """Return the Script Engine system prompt."""
 
         config = config or ProductionConfig()
+        target_words = round(
+            config.target_duration_seconds
+            * ScriptEngine.WORDS_PER_MINUTE
+            / 60
+        )
+        maximum_words = round(
+            config.target_duration_seconds
+            * 1.15
+            * ScriptEngine.WORDS_PER_MINUTE
+            / 60
+        )
 
         return (
             "You are the Script Engine for Ritzz, "
@@ -271,6 +297,10 @@ class ScriptEngine:
             "engaging narration script.\n\n"
 
             f"The script is intended for an approximately {config.target_duration_seconds // 60}-minute YouTube video.\n\n"
+
+            f"Aim for about {target_words} spoken words and do not exceed {maximum_words} words unless the approved research cannot be explained accurately within that length.\n\n"
+
+            f"The first spoken words of the first hook section must be a compelling hook of about {ScriptEngine.TEN_SECOND_HOOK_WORDS} words (roughly 10 seconds). Start with a vivid question, surprising contrast, or specific curiosity gap that is supported by the research. Build interest without giving away the full answer. Avoid greetings, channel introductions, generic setup, and unsupported or exaggerated claims. The Script.hook field must match this opening text; the voice reads the section narration, so do not repeat the hook later.\n\n"
 
             "The final narration MUST contain at least "
             f"{config.minimum_word_count} words of actual spoken narration.\n\n"
@@ -347,6 +377,17 @@ class ScriptEngine:
         """Build the initial generation prompt."""
 
         config = config or ProductionConfig()
+        target_words = round(
+            config.target_duration_seconds
+            * cls.WORDS_PER_MINUTE
+            / 60
+        )
+        maximum_words = round(
+            config.target_duration_seconds
+            * 1.15
+            * cls.WORDS_PER_MINUTE
+            / 60
+        )
         section_targets = []
 
         for section in outline.sections:
@@ -375,10 +416,11 @@ class ScriptEngine:
             "SCRIPT LENGTH REQUIREMENTS\n"
             "=================================================\n\n"
 
-            f"The video MUST be at least {config.minimum_duration_seconds} seconds long.\n\n"
+            f"TARGET: approximately {target_words} spoken words ({config.target_duration_seconds} seconds).\n"
+            f"HARD UPPER LIMIT: {maximum_words} words ({int(config.target_duration_seconds * 1.15)} seconds).\n"
+            f"The narration must meet the configured minimum of {config.minimum_word_count} words.\n\n"
 
-            "The final script MUST contain at least "
-            f"The final script MUST contain at least {config.minimum_word_count} words of actual spoken narration.\n\n"
+            f"OPENING HOOK: The first spoken words of the first hook section must be a compelling, fact-grounded hook of about {cls.TEN_SECOND_HOOK_WORDS} spoken words (roughly 10 seconds). Use a specific curiosity gap, surprising contrast, or question; do not give away the full answer. No greeting, channel introduction, generic setup, or unsupported/exaggerated claim. The Script.hook field must match this opening text exactly; narration speaks it once, so do not repeat the hook later.\n\n"
 
             "Use approximately 140 spoken words per minute "
             "as the pacing reference.\n\n"
@@ -417,6 +459,35 @@ class ScriptEngine:
             "APPROVED OUTLINE\n"
             "=================================================\n\n"
 
+            f"{outline.model_dump_json(indent=2)}"
+        )
+
+    @classmethod
+    def _build_contraction_prompt(
+        cls,
+        research: Research,
+        outline: Outline,
+        current_word_count: int,
+        config: ProductionConfig,
+    ) -> str:
+        maximum_words = round(
+            config.target_duration_seconds
+            * 1.15
+            * cls.WORDS_PER_MINUTE
+            / 60
+        )
+        return (
+            "The previous script exceeded the configured video duration.\n\n"
+            f"It contained {current_word_count} words. Rewrite the COMPLETE script "
+            f"to contain approximately {config.minimum_word_count} words and no more "
+            f"than {maximum_words} words. Keep every outline section, preserve source "
+            "IDs, and retain all important supported facts. Remove repetition, "
+            "redundant transitions, and nonessential detail; do not invent facts.\n\n"
+            f"Preserve a compelling, fact-grounded opening hook of about {cls.TEN_SECOND_HOOK_WORDS} words at the beginning of the first hook section. Keep Script.hook exactly matched to those first spoken words; do not repeat the hook later.\n\n"
+            "Use only the approved research and follow the approved outline.\n\n"
+            "APPROVED RESEARCH:\n"
+            f"{research.model_dump_json(indent=2)}\n\n"
+            "APPROVED OUTLINE:\n"
             f"{outline.model_dump_json(indent=2)}"
         )
 
@@ -465,6 +536,8 @@ class ScriptEngine:
             "IMPORTANT:\n"
             "Generate the COMPLETE script again. "
             "Do not return only the additional paragraphs.\n\n"
+
+            f"Preserve the compelling, fact-grounded opening hook of about {cls.TEN_SECOND_HOOK_WORDS} words at the beginning of the first hook section. Keep Script.hook exactly matched to those first spoken words; do not repeat the hook later.\n\n"
 
             "Fully preserve all existing sections.\n\n"
 
@@ -664,8 +737,21 @@ class ScriptEngine:
         script: Script,
         research: Research,
         outline: Outline,
+        minimum_word_count: int | None = None,
+        minimum_duration_seconds: int | None = None,
     ) -> None:
         """Validate the generated script."""
+
+        required_word_count = (
+            minimum_word_count
+            if minimum_word_count is not None
+            else cls.MINIMUM_WORD_COUNT
+        )
+        required_duration_seconds = (
+            minimum_duration_seconds
+            if minimum_duration_seconds is not None
+            else cls.MINIMUM_DURATION_SECONDS
+        )
 
         # -------------------------------------------------
         # Topic validation
@@ -755,14 +841,12 @@ class ScriptEngine:
         # Minimum word count
         # -------------------------------------------------
 
-        if calculated_words < (
-            cls.MINIMUM_WORD_COUNT
-        ):
+        if calculated_words < required_word_count:
             raise ValueError(
                 "Script is too short: "
                 f"{calculated_words} words generated, "
                 f"but at least "
-                f"{cls.MINIMUM_WORD_COUNT} words "
+                f"{required_word_count} words "
                 "are required."
             )
 
@@ -790,14 +874,12 @@ class ScriptEngine:
         # Minimum duration
         # -------------------------------------------------
 
-        if calculated_duration < (
-            cls.MINIMUM_DURATION_SECONDS
-        ):
+        if calculated_duration < required_duration_seconds:
             raise ValueError(
                 "Script is too short: "
                 f"calculated duration is "
                 f"{calculated_duration}s, "
                 f"but at least "
-                f"{cls.MINIMUM_DURATION_SECONDS}s "
+                f"{required_duration_seconds}s "
                 "is required."
             )

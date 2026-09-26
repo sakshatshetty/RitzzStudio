@@ -1,7 +1,7 @@
 ﻿# Topic Intelligence / Opportunity Engine — Design
 
-**Status:** Implementation complete; TRENDING and editorial scoring live-validated; EVERGREEN adapter validation remains  
-**Scope:** Discover, evaluate, and present video topic opportunities; let the user select one; hand the selected or manually entered topic to Research → Outline → Script.  
+**Status:** Implementation complete; TRENDING and editorial scoring live-validated; EVERGREEN adapter validation remains
+**Scope:** Discover, evaluate, and present video topic opportunities; let the user select one; hand the selected or manually entered topic to Research → Outline → Script.
 **Out of scope:** Automatic publishing or topic approval, downstream video production changes, full 8-minute image generation, and fabricated provider metrics.
 
 ## 1. Goal

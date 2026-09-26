@@ -69,6 +69,63 @@ class AudioTimedStoryboardEngine:
         path = Path(output_file)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(storyboard.model_dump_json(indent=2), encoding="utf-8")
+
+        timeline_valid = True
+        try:
+            AudioTimedStoryboardEngine._validate_timeline(
+                storyboard,
+                storyboard.total_scene_duration_seconds,
+            )
+        except ValueError:
+            timeline_valid = False
+
+        prompts_valid = bool(storyboard.scenes) and all(
+            scene.image_prompt.strip() for scene in storyboard.scenes
+        )
+        static_camera = all(scene.camera_motion == "static" for scene in storyboard.scenes)
+        hard_cuts = all(scene.transition == "cut" for scene in storyboard.scenes)
+        editorial_valid = all(
+            not scene.text_overlay
+            or (
+                len(scene.text_overlay.split()) == 1
+                and scene.text_overlay.isupper()
+                and len(scene.text_overlay) <= 20
+            )
+            for scene in storyboard.scenes
+        )
+        findings = []
+        if not timeline_valid:
+            findings.append("Storyboard timing has gaps, overlaps, or incomplete coverage.")
+        if not prompts_valid:
+            findings.append("One or more scenes have no production image prompt.")
+        if not static_camera:
+            findings.append("One or more production scenes are not static-camera.")
+        if not hard_cuts:
+            findings.append("One or more production scenes do not use hard cuts.")
+        if not editorial_valid:
+            findings.append("One or more editorial callouts are not a single uppercase word of at most 20 characters.")
+
+        from modules.qa.engine import record_stage_qa
+        from modules.qa.models import QAStageResult
+
+        project_directory = path.parent.parent if path.parent.name == "storyboard" else path.parent
+        hard_checks_pass = timeline_valid and prompts_valid and static_camera and hard_cuts
+        record_stage_qa(
+            project_directory,
+            QAStageResult(
+                stage="storyboard",
+                status="FAIL" if not hard_checks_pass else "REVIEW" if not editorial_valid else "PASS",
+                checks={
+                    "timeline_coverage": "PASS" if timeline_valid else "FAIL",
+                    "scene_prompts": "PASS" if prompts_valid else "FAIL",
+                    "static_camera": "PASS" if static_camera else "FAIL",
+                    "hard_cuts": "PASS" if hard_cuts else "FAIL",
+                    "editorial_format": "PASS" if editorial_valid else "REVIEW",
+                },
+                findings=findings,
+                recommendations=["Correct the flagged storyboard scenes before image generation."] if findings else [],
+            ),
+        )
         return path
 
     def _group_short_beats(self, aligned: list[_AlignedScene], audio_duration: float) -> list[list[_AlignedScene]]:

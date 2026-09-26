@@ -176,6 +176,7 @@ def main() -> None:
     print(f"Project path: {result.project_path}")
     print(f"Status: {result.project.status}")
     print("Completed: Research → Outline → Script")
+    print(f"QA report: {result.project_path / 'qa' / 'qa_report.json'}")
 
 
 if __name__ == "__main__":

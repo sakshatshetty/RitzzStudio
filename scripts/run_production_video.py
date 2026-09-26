@@ -116,6 +116,9 @@ def main() -> int:
     )
 
     pipeline = VideoProductionPipeline()
+    enable_image_ai_qa = input(
+        "Review generated images and editorial-word placement with AI before render? This uses one OpenAI vision review per scene [y/N]: "
+    ).strip().casefold() in {"y", "yes"}
 
     request = pipeline.create_request(
         storyboard_file=STORYBOARD_FILE,
@@ -126,6 +129,7 @@ def main() -> int:
         audio_file=AUDIO_FILE,
         output_directory=OUTPUT_DIRECTORY,
         output_video_file=OUTPUT_VIDEO_FILE,
+        enable_image_ai_qa=enable_image_ai_qa,
     )
 
     print()

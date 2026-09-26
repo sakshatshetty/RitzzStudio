@@ -3,6 +3,8 @@ import json
 import pytest
 
 from modules.content_workflow.engine import ContentWorkflow
+from modules.qa.engine import load_project_qa
+from modules.qa.models import QAStageResult
 from modules.research.models import KeyFact, Research, Source
 from modules.project.config import ProductionConfig
 from modules.topic_intelligence.models import (
@@ -207,3 +209,58 @@ def test_failed_research_validation_stops_before_outline(tmp_path):
     assert events == ["research"]
     project_path = next((tmp_path / "projects").iterdir())
     assert (project_path / "research" / "research_validation.json").exists()
+    qa_report = json.loads((project_path / "qa" / "qa_report.json").read_text())
+    assert qa_report["stages"]["research"][0]["status"] == "FAIL"
+
+
+def test_content_workflow_writes_packaging_artifact_after_script(tmp_path):
+    result = workflow(tmp_path, []).run("Why do pirates wear eye patches?")
+    assert result.project.steps["packaging"] is True
+    assert (result.project_path / "packaging.json").exists()
+    payload = json.loads((result.project_path / "packaging.json").read_text())
+    assert payload["selected_title"]
+    assert payload["metadata"]["description"]
+    assert payload["metadata"]["tags"]
+    qa_report = json.loads((result.project_path / "qa" / "qa_report.json").read_text())
+    assert qa_report["stages"]["packaging"][0]["status"] == "PASS"
+
+
+def test_ai_qa_failure_gets_one_feedback_guided_retry(tmp_path):
+    calls = []
+
+    class Reviewer:
+        def __init__(self):
+            self.calls = 0
+
+        def review(self, stage, evidence, artifact):
+            self.calls += 1
+            return QAStageResult(
+                stage=f"{stage}_ai",
+                status="FAIL" if self.calls == 1 else "PASS",
+                findings=["Opening hook does not match its narration."] if self.calls == 1 else [],
+                recommendations=["Rewrite the first spoken lines to match the hook."] if self.calls == 1 else [],
+            )
+
+    def generate(*, force_refresh=False, qa_feedback=None):
+        calls.append((force_refresh, qa_feedback))
+        return {"script": "draft" if len(calls) == 1 else "corrected"}
+
+    app = workflow(tmp_path, [])
+    reviewer = Reviewer()
+    result = app._run_ai_reviewed(
+        "script",
+        generate,
+        (),
+        {"force_refresh": False},
+        {"research": "evidence"},
+        tmp_path,
+        reviewer,
+    )
+
+    assert result == {"script": "corrected"}
+    assert len(calls) == 2
+    assert calls[0] == (False, None)
+    assert calls[1][0] is True
+    assert "Rewrite the first spoken lines" in calls[1][1]
+    attempts = load_project_qa(tmp_path).stages["script_ai"]
+    assert [item.status for item in attempts] == ["FAIL", "PASS"]

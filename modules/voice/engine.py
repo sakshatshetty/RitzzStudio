@@ -125,6 +125,7 @@ class VoiceEngine:
 
         result.actual_duration_seconds = actual
         result.minimum_duration_seconds = minimum
+        self._record_project_voice_qa(request, result, actual >= minimum)
         if actual >= minimum:
             return
 
@@ -139,6 +140,72 @@ class VoiceEngine:
         result.status = "failed"
         result.error_message = message
         raise NarrationTooShortError(message, result)
+
+    @staticmethod
+    def _record_project_voice_qa(
+        request: VoiceGenerationRequest,
+        result: VoiceGenerationResult,
+        duration_passed: bool,
+    ) -> None:
+        project_directory = Path(request.output_directory).parent
+        if not (project_directory / "project.json").is_file():
+            return
+
+        from modules.qa.engine import record_stage_qa
+        from modules.qa.models import QAStageResult
+
+        alignment = result.alignment
+        alignment_complete = bool(
+            alignment
+            and alignment.characters
+            and len(alignment.characters)
+            == len(alignment.character_start_times_seconds)
+            == len(alignment.character_end_times_seconds)
+        )
+        timestamps_valid = bool(
+            alignment_complete
+            and all(
+                math.isfinite(start)
+                and math.isfinite(end)
+                and 0 <= start <= end
+                for start, end in zip(
+                    alignment.character_start_times_seconds,
+                    alignment.character_end_times_seconds,
+                )
+            )
+            and all(
+                current >= previous
+                for previous, current in zip(
+                    alignment.character_start_times_seconds,
+                    alignment.character_start_times_seconds[1:],
+                )
+            )
+        )
+        findings = []
+        recommendations = []
+        if not alignment_complete or not timestamps_valid:
+            findings.append("Character-level voice alignment is missing or invalid.")
+            recommendations.append("Retry narration generation before scene timing.")
+        if not duration_passed:
+            findings.append(
+                f"Narration is {result.actual_duration_seconds:.3f}s; minimum is {request.minimum_duration_seconds:.3f}s."
+            )
+            recommendations.append("Expand the script and regenerate narration; do not stretch the audio.")
+        status = "FAIL" if not duration_passed else "PASS" if timestamps_valid else "REVIEW"
+        record_stage_qa(
+            project_directory,
+            QAStageResult(
+                stage="voice",
+                status=status,
+                checks={
+                    "minimum_duration": "PASS" if duration_passed else "FAIL",
+                    "character_alignment": "PASS" if alignment_complete else "FAIL",
+                    "timestamp_order": "PASS" if timestamps_valid else "FAIL",
+                },
+                findings=findings,
+                recommendations=recommendations,
+            ),
+        )
 
     def create_voice(
         self,

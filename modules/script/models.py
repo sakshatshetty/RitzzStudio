@@ -46,7 +46,7 @@ class Script(BaseModel):
     target_duration_seconds: int = 480
 
     target_word_count: int = Field(
-        ge=500,
+        ge=1,
         le=2000,
     )
 

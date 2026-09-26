@@ -23,6 +23,7 @@ class Project:
             "voice": False,
             "video": False,
             "thumbnail": False,
+            "packaging": False,
         }
     )
 
@@ -48,6 +49,7 @@ class Project:
             "voice": False,
             "video": False,
             "thumbnail": False,
+            "packaging": False,
         }
         steps.update(data.get("steps", {}))
         return cls(
