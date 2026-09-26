@@ -4,7 +4,8 @@
 **Channel:** One faceless English-language YouTube channel
 **Niche:** Mixed Curiosity
 **Status source:** This document records the long-term roadmap. `milestone.md` records the current verified checkpoint.
-**Last updated:** 2026-09-24
+**Last updated:** 2026-09-26
+**Change log:** [CHANGELOG.md](../CHANGELOG.md)
 
 ## Eventual Goal
 
@@ -55,12 +56,12 @@ The pipeline must preserve intermediate artifacts, support retry and resume, kee
 | Milestone | Area | Status |
 | --- | --- | --- |
 | M0 | Repository foundation and core engines | Substantially complete |
-| M1 | Topic decision system and content inventory | In progress |
-| M2 | Research validation and fact checking | In progress |
+| M1 | Topic decision system and content inventory | Complete for current scope |
+| M2 | Research validation and fact checking | Complete for current scope |
 | M3 | Configurable content brain | Complete for current scope |
 | M4 | Resumable end-to-end production orchestration | Complete for current scope |
-| M5 | Packaging: titles, thumbnails, and metadata | Planned |
-| M6 | YouTube publishing and scheduling | Planned |
+| M5 | Packaging: titles, thumbnails, and metadata | Complete for current scope |
+| M6 | YouTube publishing and scheduling | Offline/provider scope complete; live OAuth verification pending |
 | M7 | Inventory completion and analytics learning loop | Planned |
 
 A milestone is complete only when its acceptance criteria, focused tests, artifacts, and human approval requirements are satisfied.
@@ -95,7 +96,9 @@ Project: `20260820_001_why_do_pirates_wear_eye_patches`
 - 54 audio-timed images were generated.
 - The pilot confirms the intended order: narration audio and character timestamps are generated first, then scene timing is derived from the audio, then images are generated for those timed scenes.
 - Technical QA is PASS.
-- Semantic QA remains REVIEW because complete scene-by-scene human or approved vision review is unfinished.
+- The current `pilot_3min/revision_v2` technical QA report is PASS for all 54 scenes: audio is 225.326440 seconds, rendered video is 225.333333 seconds, duration difference is 0.006893 seconds, and maximum timeline drift is zero.
+- Semantic QA remains REVIEW: local visual review covered 14 editorial frames, but complete narration-to-image review is unfinished. The existing review artifact says the external automated image/narration review was blocked by its approval reviewer.
+- Opt-in OpenAI image/editorial review and a single targeted repair attempt are implemented in the production pipeline, but have not yet been run on this pilot. Review remains a cost-bearing step; any generated replacement preserves the original image for comparison.
 - Full eight-minute production is not approved yet.
 
 ## M1 - Topic Decision System and Content Inventory
@@ -307,6 +310,12 @@ stops before outlining when a high-importance claim has no usable evidence.
 - Competitor patterns inform but do not duplicate another creator's work.
 - Packaging artifacts are linked to the project.
 
+### Current status
+
+M5 is complete for the current scope. Packaging is integrated into the content
+workflow and persists title options, selected title, thumbnail brief, and
+metadata. Focused packaging and workflow tests pass.
+
 ## M6 - YouTube Publishing and Scheduling
 
 **Goal:** Upload and schedule only after explicit human approval.
@@ -328,6 +337,27 @@ stops before outlining when a high-importance claim has no usable evidence.
 - Upload failure preserves all local assets and supports retry.
 - Successful publishing stores the YouTube identifiers and schedule.
 - Credentials remain outside source code.
+
+### Current status
+
+The offline/provider contract is complete and tested. Publishing now has
+explicit approval and schedule artifacts, a project-level orchestration call,
+result persistence, a fake provider for offline tests, and an opt-in OAuth
+`YouTubeProvider` with scheduled `publishAt` support. The focused publishing
+tests pass and the full offline suite passes 325 tests with one live test
+deselected.
+
+The project-level publish orchestration now requires an approved artifact
+created as a separate step and verifies that the supplied approver matches the
+saved approval identity. It cannot implicitly approve and publish in one call.
+Focused publishing/provider tests pass (9).
+
+Remaining M6 work is a controlled live upload verification. No Google OAuth
+client-secret/token files or YouTube/Google OAuth environment variables are
+currently configured, so no live upload was attempted. Configure credentials,
+review and explicitly approve a final video and packaging, then verify the
+stored YouTube video ID, URL, schedule, and publish status. Do not begin M7
+analytics integration until that verification is complete.
 
 ## M7 - Inventory Completion and Analytics Learning Loop
 
@@ -383,11 +413,13 @@ Every new milestone must:
 
 ## Current Next Milestone
 
-**M5 - Packaging: Titles, Thumbnails, and Metadata**
+**M6 - YouTube Publishing and Scheduling**
 
-M4 is complete for the current scope. M5 is the next implementation milestone:
-research and generate titles, thumbnails, and accurate metadata. Publishing and
-analytics remain deferred.
+M5 is complete for the current scope. M6 is implemented through the offline
+provider contract and OAuth provider layer. The immediate next step is one
+controlled live upload using configured Google OAuth credentials. M7 analytics
+remains deferred until the YouTube video ID, URL, schedule, and publish status
+are verified from that upload.
 
 ## Change Log
 
@@ -401,3 +433,6 @@ analytics remain deferred.
 - 2026-09-25: M4 QA slice completed: added stage-specific failure persistence, post-render technical QA status, and explicit pending human approval in `VideoProductionResult`. Full offline suite remains 313 passed, one live test deselected.
 - 2026-09-25: M4 remaining work clarified: cost/usage logging, explicit retry-from-stage control, and broader failed-stage/QA integration coverage remain before M4 completion.
 - 2026-09-25: M4 completed for the current scope: added `retry_from_stage`, downstream artifact invalidation, per-stage attempts, `pipeline_usage.json` timing/error records, and retry integration coverage. Focused pipeline tests passed (8); full offline suite passed (314, one live test deselected). M5 is now the next milestone.
+- 2026-09-25: M5 completed for the current scope: added packaging artifacts for title options, selected title, thumbnail brief, description, tags, category, and workflow integration. Focused packaging and workflow tests passed.
+- 2026-09-25: M6 offline/provider scope completed: added approval and schedule gates, project-level publish orchestration, persisted publish results, `FakeYouTubeProvider`, and opt-in OAuth `YouTubeProvider` support with scheduled `publishAt` mapping. Focused publishing tests passed (6); full offline suite passed (325, one live test deselected). Live OAuth upload verification remains pending before M7.
+- 2026-09-26: M6 approval gate hardened: `publish_project` now requires an existing approved artifact and a matching approver identity instead of creating approval itself. Focused publishing/provider tests passed (9). Live upload remains pending because OAuth credentials are not configured.

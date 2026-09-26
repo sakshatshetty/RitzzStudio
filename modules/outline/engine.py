@@ -102,6 +102,8 @@ class OutlineEngine:
         """Return the editorial system prompt."""
 
         target = (config or ProductionConfig()).target_duration_seconds
+        minimum = int(target * 0.85)
+        maximum = int(target * 1.15)
 
         return (
             "You are the Outline Engine for Ritzz, "
@@ -136,7 +138,8 @@ class OutlineEngine:
             "8. Conclusion\n\n"
 
             "The final outline should target approximately "
-            f"{target} seconds."
+            f"{target} seconds. The sum of all section durations "
+            f"must be between {minimum} and {maximum} seconds."
         )
 
     @staticmethod
@@ -147,11 +150,17 @@ class OutlineEngine:
         """Build the user prompt from structured research."""
 
         target = (config or ProductionConfig()).target_duration_seconds
+        minimum = int(target * 0.85)
+        maximum = int(target * 1.15)
 
         return (
             "Create a video outline using ONLY the research "
             "provided below.\n\n"
-            f"TARGET DURATION: {target} seconds.\n\n"
+            f"TARGET DURATION: exactly {target} seconds.\n"
+            f"The estimated_seconds values for all sections MUST sum to "
+            f"exactly {target} seconds and remain between {minimum} and "
+            f"{maximum} seconds. Set total_estimated_seconds to the same "
+            "section sum. Treat these duration requirements as hard constraints.\n\n"
             "RESEARCH:\n"
             f"{research.model_dump_json(indent=2)}"
         )

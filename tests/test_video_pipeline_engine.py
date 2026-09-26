@@ -14,6 +14,10 @@ from modules.video.pipeline_models import (
     VideoProductionRequest,
     VideoProductionResult,
 )
+from modules.video.qa_models import SceneQAResult, TechnicalQAResult
+from modules.qa.engine import load_project_qa
+from modules.image.models import ImageGenerationResult
+from modules.storyboard.engine import StoryboardEngine
 
 
 FFMPEG_AVAILABLE = (
@@ -403,6 +407,163 @@ def test_complete_three_scene_pipeline(
     assert state["stages"]["synchronization"]["status"] == "completed"
     assert state["stages"]["motion"]["status"] == "completed"
     assert state["stages"]["render"]["status"] == "completed"
+
+
+def test_image_ai_qa_moves_editorial_and_repairs_impacted_images(tmp_path: Path) -> None:
+    image_directory = create_images(tmp_path)
+    audio_file = create_audio(tmp_path)
+    storyboard_file = create_storyboard(tmp_path, audio_file)
+    alignment_file = create_alignment(tmp_path)
+    storyboard = StoryboardEngine.load_storyboard(storyboard_file)
+    storyboard.scenes[0].text_overlay = "ICONIC"
+    StoryboardEngine.save_storyboard(storyboard, storyboard_file)
+    review_attempts: dict[str, int] = {}
+
+    class Reviewer:
+        def review(self, image_path, scene, editorial_candidates=None):
+            assert image_path.is_file()
+            assert editorial_candidates is not None
+            assert any(candidate["scene_id"] == scene.scene_id for candidate in editorial_candidates)
+            review_attempts[scene.scene_id] = review_attempts.get(scene.scene_id, 0) + 1
+            if scene.scene_id == "scene_001" and review_attempts[scene.scene_id] == 1:
+                return SceneQAResult(
+                    scene_id=scene.scene_id,
+                    status="FAIL",
+                    narration_image="PASS",
+                    narration_description="PASS",
+                    editorial_context="FAIL",
+                    rationale="The callout better fits the next scene.",
+                    suggested_editorial_scene_id="scene_002",
+                )
+            if scene.scene_id == "scene_003" and review_attempts[scene.scene_id] == 1:
+                return SceneQAResult(
+                    scene_id=scene.scene_id,
+                    status="REVIEW",
+                    narration_image="REVIEW",
+                    narration_description="PASS",
+                    editorial_context="PASS",
+                    rationale="The pirate's pose is unclear.",
+                    correction_prompt="Make the pirate's surprised expression and pointing gesture unmistakable.",
+                )
+            return SceneQAResult(
+                scene_id=scene.scene_id,
+                status="PASS",
+                narration_image="PASS",
+                narration_description="PASS",
+                editorial_context="PASS",
+                rationale="The image and callout match this scene.",
+            )
+
+    class ImageProvider:
+        def __init__(self):
+            self.generated_scenes: list[str] = []
+
+        def generate(self, request):
+            output = Path(request.output_directory) / f"{request.image_id}.png"
+            shutil.copyfile(image_directory / "scene_003.png", output)
+            self.generated_scenes.append(request.scene_id)
+            return ImageGenerationResult(
+                image_id=request.image_id,
+                scene_id=request.scene_id,
+                provider="openai",
+                status="completed",
+                file_path=str(output),
+            )
+
+    provider = ImageProvider()
+    pipeline = VideoProductionPipeline(image_reviewer=Reviewer(), image_provider=provider)
+    request = pipeline.create_request(
+        storyboard_file=storyboard_file,
+        image_directory=image_directory,
+        narration_result_file=alignment_file,
+        audio_file=audio_file,
+        output_directory=tmp_path / "output",
+        enable_image_ai_qa=True,
+    )
+
+    status = pipeline._review_and_repair_images(request, tmp_path)
+    updated_storyboard = StoryboardEngine.load_storyboard(storyboard_file)
+    report = load_project_qa(tmp_path)
+    assert status == "PASS"
+    assert [scene.text_overlay for scene in updated_storyboard.scenes] == ["", "ICONIC", ""]
+    assert provider.generated_scenes == ["scene_001", "scene_002", "scene_003"]
+    assert (tmp_path / "qa" / "image_repair" / "attempt_1" / "originals" / "scene_001.png").is_file()
+    assert (tmp_path / "qa" / "image_repair" / "attempt_1" / "originals" / "scene_003.png").is_file()
+    image_checks = report.stages["image_editorial_qa"][-1]
+    assert image_checks.status == "PASS"
+    assert "scene_002.editorial_context" in image_checks.checks
+    assert "scene_002.narration_description" in image_checks.checks
+    assert [attempt.status for attempt in report.stages["image_editorial_qa"]] == ["FAIL", "PASS"]
+
+
+def test_pipeline_requests_bounded_sync_repair_for_timeline_drift_review() -> None:
+    assert VideoProductionPipeline._has_sync_failures({"timeline_drift": "REVIEW"})
+    assert not VideoProductionPipeline._has_sync_failures({"images": "REVIEW"})
+
+
+def test_pipeline_resynchronizes_and_renders_again_on_timeline_drift_review(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    image_directory = create_images(tmp_path)
+    audio_file = create_audio(tmp_path)
+    storyboard_file = create_storyboard(tmp_path, audio_file)
+    alignment_file = create_alignment(tmp_path)
+    technical_attempts = 0
+    render_attempts = 0
+
+    def run_technical(self, storyboard, plan, audio, video):
+        nonlocal technical_attempts
+        technical_attempts += 1
+        status = "REVIEW" if technical_attempts == 1 else "PASS"
+        checks = {
+            "images": "PASS",
+            "audio": "PASS",
+            "scene_order": "PASS",
+            "timestamps_monotonic": "PASS",
+            "no_gaps_or_overlaps": "PASS",
+            "scene_durations": "PASS",
+            "duration_consistency": "PASS",
+            "video": "PASS",
+            "timestamp_coverage": "PASS",
+            "timeline_drift": "REVIEW" if status == "REVIEW" else "PASS",
+        }
+        return TechnicalQAResult(
+            status=status,
+            checks=checks,
+            issues=["Timeline drift needs synchronization."] if status == "REVIEW" else [],
+            scene_count=len(plan.clips),
+            audio_duration_seconds=3.0,
+            video_duration_seconds=3.0,
+            maximum_timeline_drift_seconds=1.0 if status == "REVIEW" else 0.0,
+        )
+
+    monkeypatch.setattr("modules.video.pipeline_engine.PilotVideoQA.run_technical", run_technical)
+    pipeline = VideoProductionPipeline()
+    original_render = pipeline.renderer.render
+
+    def count_render(*args, **kwargs):
+        nonlocal render_attempts
+        render_attempts += 1
+        return original_render(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline.renderer, "render", count_render)
+    request = pipeline.create_request(
+        storyboard_file,
+        image_directory,
+        alignment_file,
+        tmp_path / "output",
+        audio_file,
+    )
+
+    result = pipeline.run(request)
+
+    assert result.status == "completed"
+    assert result.technical_qa_status == "PASS"
+    assert technical_attempts == 2
+    assert render_attempts == 2
+    qa_report = load_project_qa(tmp_path)
+    assert qa_report.stages["sync_repair"][-1].status == "PASS"
 
 
 def test_pipeline_saves_expected_artifacts(

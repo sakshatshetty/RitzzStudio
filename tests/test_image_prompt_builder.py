@@ -66,6 +66,14 @@ def test_default_style_is_used() -> None:
         in prompt
     )
 
+    assert "Hand-drawn educational explainer illustration" in prompt
+    assert "rough marker and pen ink drawing" in prompt
+    assert "annotation-like storyboard frame" in prompt
+    assert "controlled human imperfection" in prompt
+    assert "subtle natural line-weight variation" in prompt
+    assert "organic slightly uneven shapes" in prompt
+    assert "clean and readable rather than messy or unfinished" in prompt
+
 
 def test_prompt_contains_landscape_composition() -> None:
     builder = ImagePromptBuilder()

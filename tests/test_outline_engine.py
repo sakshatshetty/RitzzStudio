@@ -2,6 +2,8 @@ import json
 
 from modules.outline.engine import OutlineEngine
 from modules.outline.models import Outline, OutlineSection
+from modules.project.config import ProductionConfig
+from modules.research.models import Research
 
 
 def test_save_and_load_outline(tmp_path):
@@ -79,6 +81,27 @@ def test_outline_duration_validation():
     )
 
     engine._validate_duration(outline)
+
+
+def test_outline_prompt_includes_accepted_duration_range():
+    config = ProductionConfig(
+        target_duration_seconds=120,
+        minimum_duration_seconds=120,
+    )
+    system_prompt = OutlineEngine._system_prompt(config)
+    user_prompt = OutlineEngine._build_user_prompt(
+        Research(
+            topic="Test topic",
+            category="Education",
+            core_question="What is the answer?",
+            short_answer="A short answer.",
+        ),
+        config,
+    )
+
+    assert "between 102 and 138 seconds" in system_prompt
+    assert "exactly 120 seconds" in user_prompt
+    assert "estimated_seconds values for all sections MUST sum" in user_prompt
 
 
 def test_outline_duration_mismatch():
