@@ -7,21 +7,22 @@ This file is the current status source for the project. The older roadmap in
 
 ## Current milestone: YouTube Publishing and Scheduling
 
-**Status: OFFLINE PROVIDER SCOPE COMPLETE; LIVE OAUTH UPLOAD VERIFICATION PENDING**
+**Status: M6 COMPLETE — LIVE OAUTH UPLOAD VERIFIED**
 
-M1 through M5 are complete for the current scope. M6 now has explicit approval
-and schedule artifacts, project-level publish orchestration, publish result
-persistence, and an opt-in OAuth `YouTubeProvider` with scheduled `publishAt`
-support. The offline suite passes 325 tests with one live web-search test
-deselected. The project publish wrapper now requires a separately recorded
-approved artifact and verifies that the caller's approver identity matches;
-focused publishing/provider tests pass (9).
+## Current Next Milestone
 
-The next action is a controlled upload after configuring Google OAuth
-credentials. No client-secret/token files or YouTube/Google OAuth environment
-variables are currently configured, so no live upload was attempted.
-M7 analytics work remains blocked until the YouTube video ID, URL, schedule, and
-publish status are verified from a real upload.
+**M7 - Inventory Completion and Analytics Learning Loop**
+
+M6 is complete for the current scope. The live OAuth upload was verified with a
+real YouTube upload that returned a valid video ID and URL, and the project
+publishing flow has been validated end-to-end with explicit approval plus
+schedule handling.
+
+The current verified evidence includes a successful public/private scheduled
+upload result with a valid YouTube video ID and URL, and the project retains the
+approval and scheduling workflow for human review before upload. M7 analytics
+remains the next milestone and is deferred until the published inventory and
+analytics loop are implemented.
 
 See [CHANGELOG.md](CHANGELOG.md) for the milestone history and
 [RITZZ Master Milestones](docs/RITZZ_Master_Milestones.md) for the long-term

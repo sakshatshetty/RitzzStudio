@@ -109,6 +109,29 @@ def test_publish_workflow_requires_approval_and_schedule_before_upload(tmp_path:
     assert result.scheduled_for == "2026-09-30T12:00:00+00:00"
 
 
+def test_private_publish_does_not_require_schedule(tmp_path: Path):
+    projects_dir = tmp_path / "projects"
+    manager = ProjectManager(projects_dir)
+    project = manager.create_project("Private Upload Test")
+    project_folder = projects_dir / f"{project.project_id}_{project.slug}"
+    video_file = project_folder / "video" / "test.mp4"
+    video_file.parent.mkdir(parents=True, exist_ok=True)
+    video_file.write_bytes(b"video")
+
+    engine = PublishingEngine(projects_dir, provider=FakeYouTubeProvider())
+    engine.create_approval(project, approved=True, approved_by="human")
+    result = engine.publish_video(
+        project=project,
+        video_file=video_file,
+        title="Private Upload Test",
+        description="Private test upload.",
+        metadata={"privacy_status": "private"},
+    )
+
+    assert result.publish_status == "PRIVATE"
+    assert result.scheduled_for is None
+
+
 def test_publish_workflow_runs_as_single_orchestrated_action(tmp_path: Path):
     projects_dir = tmp_path / "projects"
     manager = ProjectManager(projects_dir)
@@ -200,3 +223,45 @@ def test_approved_publish_artifact_requires_approver_identity(tmp_path: Path):
 
     with pytest.raises(ValueError, match="approving user"):
         engine.create_approval(project, approved=True, approved_by="  ")
+
+
+def test_publish_packaged_video_uses_selected_packaging_metadata(tmp_path: Path):
+    projects_dir = tmp_path / "projects"
+    manager = ProjectManager(projects_dir)
+    project = manager.create_project("Why do pirates wear eye patches?")
+    project_path = projects_dir / f"{project.project_id}_{project.slug}"
+    video_file = project_path / "video" / "final.mp4"
+    video_file.parent.mkdir(parents=True, exist_ok=True)
+    video_file.write_bytes(b"video")
+
+    engine = PublishingEngine(projects_dir, provider=FakeYouTubeProvider())
+    packaging = engine.provider
+    artifact = None
+    from modules.project.packaging import PackagingEngine
+    packaging_engine = PackagingEngine(projects_dir)
+    artifact = packaging_engine.build_project_packaging(
+        project=project,
+        topic="Why do pirates wear eye patches?",
+        script_excerpt="Sailors used eye patches to help one eye adjust to daylight after long nights below deck.",
+        selected_title="Why Do Pirates Wear Eye Patches? The Surprising Medical Reason",
+        category="Entertainment",
+        language="en",
+        made_for_kids=False,
+    )
+    engine.create_approval(project, approved=True, approved_by="human")
+
+    result = engine.publish_packaged_video(
+        project=project,
+        video_file=video_file,
+        artifact=artifact,
+        approved_by="human",
+        scheduled_for="2026-09-30T12:00:00+00:00",
+        category="Entertainment",
+        language="en",
+        made_for_kids=False,
+    )
+
+    assert result.publish_status == "PUBLISHED"
+    assert result.title == artifact.selected_title
+    assert engine.load_publish_schedule(project) == "2026-09-30T12:00:00+00:00"
+    assert result.scheduled_for == "2026-09-30T12:00:00+00:00"

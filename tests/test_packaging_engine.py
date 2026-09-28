@@ -86,3 +86,28 @@ def test_validate_packaging_metadata_requires_topic_accuracy(tmp_path: Path):
             description="This video explains a banana mystery.",
             tags=["bananas", "science"],
         )
+
+
+def test_build_upload_metadata_uses_entertainment_category_and_language_defaults(tmp_path: Path):
+    manager = ProjectManager(tmp_path)
+    project = manager.create_project("Why do pirates wear eye patches?")
+    engine = PackagingEngine(tmp_path)
+
+    artifact = engine.build_project_packaging(
+        project=project,
+        topic="Why do pirates wear eye patches?",
+        script_excerpt="Sailors used eye patches to help one eye adjust to daylight after long nights below deck.",
+        selected_title="Why Do Pirates Wear Eye Patches? The Surprising Medical Reason",
+        category="Entertainment",
+        language="en",
+        made_for_kids=False,
+    )
+
+    payload = engine.build_upload_metadata(artifact, category="Entertainment", language="en", made_for_kids=False)
+    assert payload["title"] == artifact.selected_title
+    assert payload["tags"] == artifact.metadata.tags
+    assert payload["description"] == artifact.metadata.description
+    assert payload["category_id"] == "24"
+    assert payload["language"] == "en"
+    assert payload["made_for_kids"] is False
+    assert len(artifact.title_options) >= 3

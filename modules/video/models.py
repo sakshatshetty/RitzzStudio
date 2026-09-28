@@ -32,11 +32,11 @@ class VideoAssemblyPlan(BaseModel):
 
     topic: str
     width: int = Field(
-        default=1536,
+        default=1920,
         gt=0,
     )
     height: int = Field(
-        default=864,
+        default=1080,
         gt=0,
     )
     fps: int = Field(
@@ -62,11 +62,11 @@ class VideoAssemblyRequest(BaseModel):
     audio_file: str | None = None
 
     width: int = Field(
-        default=1536,
+        default=1920,
         gt=0,
     )
     height: int = Field(
-        default=864,
+        default=1080,
         gt=0,
     )
     fps: int = Field(
