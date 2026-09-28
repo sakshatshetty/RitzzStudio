@@ -85,8 +85,8 @@ def create_storyboard() -> Storyboard:
 def create_assembly_plan() -> VideoAssemblyPlan:
     return VideoAssemblyPlan(
         topic="Why Do Pirates Wear Eye Patches?",
-        width=1536,
-        height=864,
+        width=1920,
+        height=1080,
         fps=30,
         clips=[
             VideoClip(
@@ -352,8 +352,8 @@ def test_plan_preserves_video_settings() -> None:
         alignment,
     )
 
-    assert plan.width == 1536
-    assert plan.height == 864
+    assert plan.width == 1920
+    assert plan.height == 1080
     assert plan.fps == 30
 
 

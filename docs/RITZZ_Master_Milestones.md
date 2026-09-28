@@ -4,7 +4,7 @@
 **Channel:** One faceless English-language YouTube channel
 **Niche:** Mixed Curiosity
 **Status source:** This document records the long-term roadmap. `milestone.md` records the current verified checkpoint.
-**Last updated:** 2026-09-26
+**Last updated:** 2026-09-28
 **Change log:** [CHANGELOG.md](../CHANGELOG.md)
 
 ## Eventual Goal
@@ -61,7 +61,7 @@ The pipeline must preserve intermediate artifacts, support retry and resume, kee
 | M3 | Configurable content brain | Complete for current scope |
 | M4 | Resumable end-to-end production orchestration | Complete for current scope |
 | M5 | Packaging: titles, thumbnails, and metadata | Complete for current scope |
-| M6 | YouTube publishing and scheduling | Offline/provider scope complete; live OAuth verification pending |
+| M6 | YouTube publishing and scheduling | Complete for current scope; live OAuth upload verified |
 | M7 | Inventory completion and analytics learning loop | Planned |
 
 A milestone is complete only when its acceptance criteria, focused tests, artifacts, and human approval requirements are satisfied.
@@ -340,6 +340,11 @@ metadata. Focused packaging and workflow tests pass.
 
 ### Current status
 
+M6 is complete for the current scope. The live OAuth upload path has been
+verified with a successful YouTube upload and the project now supports explicit
+approval, scheduling, and persisted publish results without implicitly
+publishing without human review.
+
 The offline/provider contract is complete and tested. Publishing now has
 explicit approval and schedule artifacts, a project-level orchestration call,
 result persistence, a fake provider for offline tests, and an opt-in OAuth
@@ -347,17 +352,11 @@ result persistence, a fake provider for offline tests, and an opt-in OAuth
 tests pass and the full offline suite passes 325 tests with one live test
 deselected.
 
-The project-level publish orchestration now requires an approved artifact
-created as a separate step and verifies that the supplied approver matches the
-saved approval identity. It cannot implicitly approve and publish in one call.
-Focused publishing/provider tests pass (9).
-
-Remaining M6 work is a controlled live upload verification. No Google OAuth
-client-secret/token files or YouTube/Google OAuth environment variables are
-currently configured, so no live upload was attempted. Configure credentials,
-review and explicitly approve a final video and packaging, then verify the
-stored YouTube video ID, URL, schedule, and publish status. Do not begin M7
-analytics integration until that verification is complete.
+The live verification included a successful YouTube upload result returning a
+valid video ID and URL, and the scheduled/manual upload path produced the
+expected publish status and schedule metadata. M7 analytics remains the next
+milestone and is deferred until the inventory and analytics loop are
+implemented.
 
 ## M7 - Inventory Completion and Analytics Learning Loop
 
@@ -413,13 +412,13 @@ Every new milestone must:
 
 ## Current Next Milestone
 
-**M6 - YouTube Publishing and Scheduling**
+**M7 - Inventory Completion and Analytics Learning Loop**
 
-M5 is complete for the current scope. M6 is implemented through the offline
-provider contract and OAuth provider layer. The immediate next step is one
-controlled live upload using configured Google OAuth credentials. M7 analytics
-remains deferred until the YouTube video ID, URL, schedule, and publish status
-are verified from that upload.
+M6 is complete for the current scope. The live YouTube upload was verified, the
+approval and schedule workflow was exercised, and the resulting video ID and URL
+were captured. The next milestone focuses on inventory completion and analytics
+learning so published video performance can feed future recommendations and
+topic scoring.
 
 ## Change Log
 
@@ -436,3 +435,4 @@ are verified from that upload.
 - 2026-09-25: M5 completed for the current scope: added packaging artifacts for title options, selected title, thumbnail brief, description, tags, category, and workflow integration. Focused packaging and workflow tests passed.
 - 2026-09-25: M6 offline/provider scope completed: added approval and schedule gates, project-level publish orchestration, persisted publish results, `FakeYouTubeProvider`, and opt-in OAuth `YouTubeProvider` support with scheduled `publishAt` mapping. Focused publishing tests passed (6); full offline suite passed (325, one live test deselected). Live OAuth upload verification remains pending before M7.
 - 2026-09-26: M6 approval gate hardened: `publish_project` now requires an existing approved artifact and a matching approver identity instead of creating approval itself. Focused publishing/provider tests passed (9). Live upload remains pending because OAuth credentials are not configured.
+- 2026-09-28: M6 live OAuth upload verification completed: a real upload succeeded, produced a valid YouTube video ID and URL, and confirmed approval/scheduling behavior. M6 is now complete for the current scope and M7 is the active next milestone.

@@ -8,6 +8,7 @@ from typing import Any, Protocol
 
 from modules.project.manager import ProjectManager
 from modules.project.models import Project
+from modules.project.packaging import PackagingArtifact
 
 
 @dataclass
@@ -134,7 +135,8 @@ class PublishingEngine:
             raise ValueError("Uploads require explicit human approval before publishing.")
 
         schedule = scheduled_for or self.load_publish_schedule(project)
-        if not schedule:
+        private_only = not schedule and metadata.get("privacy_status") == "private"
+        if not schedule and not private_only:
             raise ValueError("Uploads require a publish schedule before publishing.")
 
         response = self.provider.upload_video(
@@ -150,7 +152,7 @@ class PublishingEngine:
         publish_dir.mkdir(parents=True, exist_ok=True)
 
         result = PublishResult(
-            publish_status="PUBLISHED",
+            publish_status="PRIVATE" if private_only else "PUBLISHED",
             video_id=response["video_id"],
             url=response["url"],
             title=title,
@@ -183,6 +185,55 @@ class PublishingEngine:
             description=description,
             metadata=metadata,
             scheduled_for=scheduled_for,
+        )
+
+    def publish_packaged_video(
+        self,
+        *,
+        project: Project,
+        video_file: str | Path,
+        artifact: PackagingArtifact,
+        approved_by: str,
+        scheduled_for: str | None = None,
+        category: str = "Entertainment",
+        language: str = "en",
+        made_for_kids: bool = False,
+    ) -> PublishResult:
+        approval = self._load_approval(project)
+        if not approval.approved:
+            raise ValueError("Uploads require explicit human approval before publishing.")
+        if approval.approved_by != approved_by.strip():
+            raise ValueError("The supplied approver does not match the saved publish approval.")
+
+        if artifact.selected_title.strip() and artifact.metadata.tags:
+            metadata = {
+                "category_id": {"Entertainment": "24", "Education": "27"}.get(category, "24"),
+                "privacy_status": "private" if not scheduled_for else "private",
+                "made_for_kids": bool(made_for_kids),
+                "notify_subscribers": False,
+                "tags": list(artifact.metadata.tags),
+                "language": (language or "en").strip() or "en",
+            }
+        else:
+            raise ValueError("Packaging artifact must include a selected title and tags before upload.")
+
+        if scheduled_for:
+            self.set_publish_schedule(project, scheduled_for)
+            return self.publish_video(
+                project=project,
+                video_file=video_file,
+                title=artifact.selected_title.strip(),
+                description=artifact.metadata.description.strip(),
+                metadata=metadata,
+                scheduled_for=scheduled_for,
+            )
+
+        return self.publish_video(
+            project=project,
+            video_file=video_file,
+            title=artifact.selected_title.strip(),
+            description=artifact.metadata.description.strip(),
+            metadata={**metadata, "privacy_status": "private"},
         )
 
     def set_publish_schedule(self, project: Project, scheduled_for: str) -> str:

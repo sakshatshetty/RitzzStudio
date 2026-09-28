@@ -117,8 +117,8 @@ def test_create_plan(
         "Why Do Pirates Wear Eye Patches?"
     )
 
-    assert plan.width == 1536
-    assert plan.height == 864
+    assert plan.width == 1920
+    assert plan.height == 1080
     assert plan.fps == 30
     assert len(plan.clips) == 3
     assert plan.total_duration_seconds == 15.0
@@ -425,8 +425,8 @@ def test_create_request(
         image_directory
     )
 
-    assert request.width == 1536
-    assert request.height == 864
+    assert request.width == 1920
+    assert request.height == 1080
     assert request.fps == 30
 
 

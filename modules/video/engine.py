@@ -18,8 +18,8 @@ class VideoAssemblyEngine:
     This engine does not render the final video yet.
     """
 
-    DEFAULT_WIDTH = 1536
-    DEFAULT_HEIGHT = 864
+    DEFAULT_WIDTH = 1920
+    DEFAULT_HEIGHT = 1080
     DEFAULT_FPS = 30
 
     def __init__(

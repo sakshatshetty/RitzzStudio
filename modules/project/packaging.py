@@ -105,6 +105,156 @@ class PackagingArtifact:
         )
 
 
+@dataclass
+class ThumbnailVariant:
+    variant_name: str
+    prompt: str
+    text: str
+    notes: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "variant_name": self.variant_name,
+            "prompt": self.prompt,
+            "text": self.text,
+            "notes": self.notes,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ThumbnailVariant":
+        return cls(
+            variant_name=data.get("variant_name", "A"),
+            prompt=data.get("prompt", ""),
+            text=data.get("text", ""),
+            notes=data.get("notes", ""),
+        )
+
+
+@dataclass
+class UploadPackage:
+    final_video: str = ""
+    title_variants: list[TitleOption] = field(default_factory=list)
+    thumbnail_variants: list[ThumbnailVariant] = field(default_factory=list)
+    description: str = ""
+    tags: list[str] = field(default_factory=list)
+    category: str = "Education"
+    language: str = "en"
+    audience: dict[str, Any] = field(default_factory=lambda: {"made_for_kids": False})
+    altered_synthetic_content: dict[str, Any] = field(default_factory=lambda: {
+        "status": "determine_per_video",
+        "disclosure": "",
+        "never_blindly_mark_true": True,
+    })
+    chapters: dict[str, Any] = field(default_factory=lambda: {
+        "allow_automatic_chapters": True,
+        "generate_manual_chapters": True,
+        "manual_chapters": [],
+    })
+    playlist: str | None = None
+    end_screen_plan: dict[str, Any] = field(default_factory=dict)
+    cards_plan: dict[str, Any] = field(default_factory=dict)
+    comment_settings: dict[str, Any] = field(default_factory=lambda: {
+        "allow_comments": True,
+        "hold_potentially_inappropriate_comments": True,
+        "show_like_count": True,
+    })
+    monetization_settings: dict[str, Any] = field(default_factory=lambda: {
+        "monetized": True,
+        "ad_compatibility": "standard",
+    })
+    upload_checklist: list[str] = field(default_factory=lambda: [
+        "final video ready",
+        "title approved",
+        "thumbnail approved",
+        "description reviewed",
+        "tags reviewed",
+        "category confirmed",
+        "language confirmed",
+        "audience confirmed",
+        "synthetic content review complete",
+        "manual schedule set",
+        "final review complete",
+    ])
+    manual_review: dict[str, Any] = field(default_factory=lambda: {
+        "workflow": "MANUAL UPLOAD / REVIEW / SCHEDULE",
+        "upload_status": "private",
+        "scheduling": "MANUAL",
+        "ab_test": "MANUALLY START/CONFIRM A/B TEST",
+    })
+    visibility: dict[str, Any] = field(default_factory=lambda: {
+        "upload_status": "private",
+        "scheduling": "MANUAL",
+        "embeddable": True,
+        "public_statistics": True,
+    })
+    subtitles: dict[str, Any] = field(default_factory=lambda: {
+        "generate_english_subtitles": True,
+        "language": "en",
+        "file": "subtitle_en.vtt",
+    })
+    license: str = "Standard YouTube License"
+    ab_test: dict[str, Any] = field(default_factory=lambda: {
+        "enabled": True,
+        "variant_count": 3,
+        "winner_required": True,
+        "winner": None,
+    })
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "final_video": self.final_video,
+            "title_variants": [option.to_dict() for option in self.title_variants],
+            "thumbnail_variants": [variant.to_dict() for variant in self.thumbnail_variants],
+            "description": self.description,
+            "tags": list(self.tags),
+            "category": self.category,
+            "language": self.language,
+            "audience": dict(self.audience),
+            "altered_synthetic_content": dict(self.altered_synthetic_content),
+            "chapters": dict(self.chapters),
+            "playlist": self.playlist,
+            "end_screen_plan": dict(self.end_screen_plan),
+            "cards_plan": dict(self.cards_plan),
+            "comment_settings": dict(self.comment_settings),
+            "monetization_settings": dict(self.monetization_settings),
+            "upload_checklist": list(self.upload_checklist),
+            "manual_review": dict(self.manual_review),
+            "visibility": dict(self.visibility),
+            "subtitles": dict(self.subtitles),
+            "license": self.license,
+            "ab_test": dict(self.ab_test),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "UploadPackage":
+        return cls(
+            final_video=data.get("final_video", ""),
+            title_variants=[TitleOption.from_dict(item) for item in data.get("title_variants", [])],
+            thumbnail_variants=[ThumbnailVariant.from_dict(item) for item in data.get("thumbnail_variants", [])],
+            description=data.get("description", ""),
+            tags=list(data.get("tags", [])),
+            category=data.get("category", "Education"),
+            language=data.get("language", "en"),
+            audience=dict(data.get("audience", {"made_for_kids": False})),
+            altered_synthetic_content=dict(data.get("altered_synthetic_content", {
+                "status": "determine_per_video",
+                "never_blindly_mark_true": True,
+            })),
+            chapters=dict(data.get("chapters", {"allow_automatic_chapters": True, "generate_manual_chapters": True, "manual_chapters": []})),
+            playlist=data.get("playlist"),
+            end_screen_plan=dict(data.get("end_screen_plan", {})),
+            cards_plan=dict(data.get("cards_plan", {})),
+            comment_settings=dict(data.get("comment_settings", {"allow_comments": True, "hold_potentially_inappropriate_comments": True, "show_like_count": True})),
+            monetization_settings=dict(data.get("monetization_settings", {"monetized": True, "ad_compatibility": "standard"})),
+            upload_checklist=list(data.get("upload_checklist", [])),
+            manual_review=dict(data.get("manual_review", {"workflow": "MANUAL UPLOAD / REVIEW / SCHEDULE", "upload_status": "private", "scheduling": "MANUAL"})),
+            visibility=dict(data.get("visibility", {"upload_status": "private", "scheduling": "MANUAL", "embeddable": True, "public_statistics": True})),
+            subtitles=dict(data.get("subtitles", {"generate_english_subtitles": True, "language": "en", "file": "subtitle_en.vtt"})),
+            license=data.get("license", "Standard YouTube License"),
+            ab_test=dict(data.get("ab_test", {"enabled": True, "variant_count": 3, "winner_required": True, "winner": None})),
+        )
+
+
 class PackagingEngine:
     """Generate and persist title, thumbnail, and metadata packaging artifacts."""
 
@@ -281,6 +431,10 @@ class PackagingEngine:
         topic: str,
         script_excerpt: str,
         selected_title: str | None = None,
+        *,
+        category: str = "Education",
+        language: str = "en",
+        made_for_kids: bool = False,
     ) -> PackagingArtifact:
         project_path = Path(self.projects_dir) / f"{project.project_id}_{project.slug}"
         title_options = self.generate_title_options(topic, script_excerpt)
@@ -295,7 +449,7 @@ class PackagingEngine:
         tags = self._build_tags(topic, script_excerpt)
         self.validate_packaging_metadata(topic, chosen, description, tags)
         metadata = PackagingMetadata(
-            category="Education",
+            category=category,
             description=description,
             tags=tags,
             thumbnail_notes=(
@@ -318,6 +472,147 @@ class PackagingEngine:
         project.status = "packaging_complete"
         ProjectManager(self.projects_dir)._save_project(project, project_path)
         return artifact
+
+    @staticmethod
+    def _category_id_for(category: str) -> str:
+        normalized = (category or "Education").strip().casefold()
+        mapping = {
+            "entertainment": "24",
+            "education": "27",
+            "science": "28",
+            "howto": "26",
+            "travel": "19",
+            "people": "22",
+            "news": "25",
+            "music": "10",
+            "film": "1",
+        }
+        return mapping.get(normalized, "27")
+
+    def build_upload_metadata(
+        self,
+        artifact: PackagingArtifact,
+        *,
+        category: str = "Entertainment",
+        language: str = "en",
+        made_for_kids: bool = False,
+    ) -> dict[str, Any]:
+        if not artifact.selected_title.strip():
+            raise ValueError("A selected title is required before building upload metadata.")
+        if not artifact.metadata.description.strip():
+            raise ValueError("Packaging description is required before building upload metadata.")
+        if not artifact.metadata.tags:
+            raise ValueError("Packaging tags are required before building upload metadata.")
+
+        return {
+            "title": artifact.selected_title.strip(),
+            "description": artifact.metadata.description.strip(),
+            "tags": list(artifact.metadata.tags),
+            "category_id": self._category_id_for(category),
+            "category": category,
+            "language": (language or "en").strip() or "en",
+            "made_for_kids": bool(made_for_kids),
+            "thumbnail_notes": artifact.metadata.thumbnail_notes,
+            "thumbnail_brief": artifact.thumbnail_brief.to_dict() if artifact.thumbnail_brief else None,
+        }
+
+    def build_upload_package(
+        self,
+        artifact: PackagingArtifact,
+        *,
+        final_video: str,
+        category: str = "Education",
+        language: str = "en",
+        made_for_kids: bool = False,
+        playlist: str | None = None,
+        subtitle_file: str = "subtitle_en.vtt",
+    ) -> UploadPackage:
+        title_variants = artifact.title_options[:3] or [TitleOption(artifact.selected_title, "Selected title")]
+        if not title_variants or title_variants[0].title != artifact.selected_title:
+            title_variants = [
+                *title_variants,
+                TitleOption(artifact.selected_title, "Selected title"),
+            ]
+            title_variants = title_variants[:3]
+
+        default_brief = artifact.thumbnail_brief or ThumbnailBrief(
+            subject=artifact.selected_title,
+            primary_visual=artifact.selected_title,
+            text_layout="Large title text with a single hook image",
+            mobile_readability="Keep it readable on mobile.",
+            notes="Selected thumbnail brief.",
+        )
+
+        thumbnail_variants = [
+            ThumbnailVariant(
+                variant_name="A",
+                prompt=f"Thumbnail A for '{artifact.selected_title}': clean title-first composition with large readable headline and one central object.",
+                text=artifact.selected_title,
+                notes=(default_brief.notes or "Use a clean, contrast-heavy layout with a single object and large headline."),
+            ),
+            ThumbnailVariant(
+                variant_name="B",
+                prompt=f"Thumbnail B for '{artifact.selected_title}': object-first composition with dramatic visual and a tight two-line headline.",
+                text=artifact.selected_title[:60],
+                notes="Strong object focus, high contrast, best mobile readability.",
+            ),
+            ThumbnailVariant(
+                variant_name="C",
+                prompt=f"Thumbnail C for '{artifact.selected_title}': curiosity hook with a single visual symbol and short question framing.",
+                text=f"Why {artifact.selected_title.split(':')[0].split(' ')[0]}?",
+                notes="Question framing and concise text for quick click-through.",
+            ),
+        ]
+
+        package = UploadPackage(
+            final_video=final_video,
+            title_variants=title_variants,
+            thumbnail_variants=thumbnail_variants,
+            description=artifact.metadata.description.strip(),
+            tags=list(artifact.metadata.tags),
+            category=category,
+            language=(language or "en").strip() or "en",
+            audience={"made_for_kids": bool(made_for_kids)},
+            altered_synthetic_content={
+                "status": "determine_per_video",
+                "disclosure": "",
+                "never_blindly_mark_true": True,
+            },
+            chapters={
+                "allow_automatic_chapters": True,
+                "generate_manual_chapters": True,
+                "manual_chapters": [],
+            },
+            playlist=playlist or "Automatically select the appropriate Ritzz playlist",
+            end_screen_plan={
+                "enabled": True,
+                "placement": "At video end, after final CTA and after 20 seconds of final key image.",
+                "recommendations": ["Related topic", "Next video in playlist"],
+            },
+            cards_plan={
+                "enabled": True,
+                "recommendations": ["Related curiosity topic", "Previous RITZZ video"],
+            },
+            visibility={
+                "upload_status": "private",
+                "scheduling": "MANUAL",
+                "embeddable": True,
+                "public_statistics": True,
+            },
+            subtitles={
+                "generate_english_subtitles": True,
+                "language": "en",
+                "file": subtitle_file,
+            },
+            license="Standard YouTube License",
+            ab_test={
+                "enabled": True,
+                "variant_count": 3,
+                "winner_required": True,
+                "winner": artifact.selected_title,
+            },
+        )
+        return package
 
     @staticmethod
     def load_project_packaging(project_path: str | Path) -> PackagingArtifact:
