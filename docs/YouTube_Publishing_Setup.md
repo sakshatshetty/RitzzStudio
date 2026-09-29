@@ -11,6 +11,10 @@ The live provider is opt-in. Existing workflows continue to use `FakeYouTubeProv
 
 The first live publish opens the local OAuth consent flow and stores the refreshable token at the configured token path. Credentials are never embedded in project artifacts or source code.
 
+To authorize without uploading a video, run `scripts/authorize_youtube.py`. It
+only initializes the YouTube OAuth service and saves the token configured by
+`GOOGLE_TOKEN_FILE`.
+
 ## Provider wiring
 
 ```python
