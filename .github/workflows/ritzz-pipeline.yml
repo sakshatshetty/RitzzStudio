@@ -1,0 +1,582 @@
+name: RITZZ Video Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      discovery_mode:
+        description: Topic discovery mode
+        required: true
+        type: choice
+        options:
+          - TRENDING
+          - EVERGREEN
+        default: TRENDING
+      test_run:
+        description: Keep all generated output private or unlisted as a test run
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: ritzz-video-pipeline
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate RITZZ pipeline
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Run focused pipeline tests
+        run: >-
+          python -m pytest
+          tests/test_m7_analytics.py
+          tests/test_youtube_provider.py
+          tests/test_video_pipeline_engine.py
+          -q
+
+      - name: Write run manifest
+        shell: bash
+        env:
+          DISCOVERY_MODE: ${{ inputs.discovery_mode }}
+          TEST_RUN: ${{ inputs.test_run }}
+        run: |
+          mkdir -p .pipeline-artifacts
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          manifest = {
+              "workflow": "RITZZ Video Pipeline",
+              "discovery_mode": os.environ["DISCOVERY_MODE"],
+              "test_run": os.environ["TEST_RUN"].lower() == "true",
+              "public_publish_allowed": False,
+              "approval_status": "PENDING",
+          }
+          Path(".pipeline-artifacts/run_manifest.json").write_text(
+              json.dumps(manifest, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Upload validation artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ritzz-pipeline-validation-${{ github.run_id }}
+          path: .pipeline-artifacts/
+          if-no-files-found: error
+
+  discover-topics:
+    name: Discover four trending topics
+    needs: validate
+    runs-on: ubuntu-latest
+    outputs:
+      issue_number: ${{ steps.create-approval-issue.outputs.issue_number }}
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      VIDIQ_MCP_API_KEY: ${{ secrets.VIDIQ_MCP_API_KEY }}
+      RITZZ_DISCOVERY_MODE: ${{ inputs.discovery_mode }}
+      RITZZ_DISCOVERY_TIMEFRAME: this week
+      RITZZ_TREND_TOPIC: history
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Discover exactly four candidates
+        run: python scripts/discover_pipeline_topics.py
+
+      - name: Upload topic candidates
+        uses: actions/upload-artifact@v4
+        with:
+          name: ritzz-topic-candidates-${{ github.run_id }}
+          path: .pipeline-artifacts/
+          if-no-files-found: error
+
+      - name: Create browser approval issue
+        id: create-approval-issue
+        uses: actions/github-script@v7
+        env:
+          CANDIDATE_SUMMARY: .pipeline-artifacts/topic_candidates.md
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync(process.env.CANDIDATE_SUMMARY, 'utf8');
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `RITZZ topic approval - run ${context.runId}`,
+              body: `${summary}\n\nReply with exactly 1, 2, 3, or 4 to select a topic. Only trusted repository collaborators may approve this run.`,
+            });
+            core.setOutput('issue_number', issue.data.number);
+            core.summary.addHeading('Topic approval issue');
+            core.summary.addLink(`Open topic approval issue #${issue.data.number}`, issue.data.html_url);
+            await core.summary.write();
+
+  select-topic:
+    name: Wait for topic selection
+    needs: discover-topics
+    runs-on: ubuntu-latest
+    outputs:
+      selection: ${{ steps.wait-for-selection.outputs.selection }}
+    env:
+      ISSUE_NUMBER: ${{ needs.discover-topics.outputs.issue_number }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Wait for numbered browser selection
+        id: wait-for-selection
+        shell: bash
+        run: |
+          set -euo pipefail
+          selection=""
+          for attempt in $(seq 1 240); do
+            selection=$(gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}/comments" \
+              --jq '.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | .body' \
+              | tr -d '\r' \
+              | awk '/^[1-4]$/{value=$0} END{print value}')
+            if [[ "$selection" =~ ^[1-4]$ ]]; then
+              echo "Selected topic number: $selection"
+              echo "selection=$selection" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Waiting for a trusted collaborator to reply with 1, 2, 3, or 4 (attempt $attempt/240)."
+            sleep 30
+          done
+          echo "Timed out waiting for topic selection." >&2
+          exit 1
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Download topic candidates
+        uses: actions/download-artifact@v4
+        with:
+          name: ritzz-topic-candidates-${{ github.run_id }}
+          path: .pipeline-artifacts
+
+      - name: Persist selected topic
+        env:
+          RITZZ_SELECTED_TOPIC_NUMBER: ${{ steps.wait-for-selection.outputs.selection }}
+        run: python scripts/select_pipeline_topic.py
+
+      - name: Upload approved topic selection
+        uses: actions/upload-artifact@v4
+        with:
+          name: ritzz-approved-topic-${{ github.run_id }}
+          path: .pipeline-artifacts/topic_selection.json
+          if-no-files-found: error
+
+  topic-approval:
+    name: Approve selected topic
+    needs: select-topic
+    runs-on: ubuntu-latest
+    outputs:
+      selection: ${{ needs.select-topic.outputs.selection }}
+    environment:
+      name: ritzz-topic-approval
+    steps:
+      - name: Record topic approval boundary
+        run: |
+          echo "Topic ${{ needs.select-topic.outputs.selection }} selected."
+          echo "Approve this environment to continue into production stages."
+
+  test-approval:
+    name: Human approval for test pipeline
+    needs: topic-approval
+    runs-on: ubuntu-latest
+    environment:
+      name: ritzz-test-approval
+      url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Confirm approval boundary
+        run: |
+          echo "Test pipeline approved."
+          echo "Discovery mode: ${{ inputs.discovery_mode }}"
+          echo "Selected topic number: ${{ needs.topic-approval.outputs.selection }}"
+          echo "All output must remain private or unlisted."
+          echo "Video generation and publishing stages will be added behind this gate."
+
+  content-preparation:
+    name: Research, outline, and script
+    needs: test-approval
+    runs-on: ubuntu-latest
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      VIDIQ_MCP_API_KEY: ${{ secrets.VIDIQ_MCP_API_KEY }}
+      RITZZ_PIPELINE_ARTIFACTS: .pipeline-artifacts
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Download topic candidates
+        uses: actions/download-artifact@v4
+        with:
+          name: ritzz-topic-candidates-${{ github.run_id }}
+          path: .pipeline-artifacts
+
+      - name: Download approved topic
+        uses: actions/download-artifact@v4
+        with:
+          name: ritzz-approved-topic-${{ github.run_id }}
+          path: .pipeline-artifacts
+
+      - name: Run approved content workflow
+        run: python scripts/run_approved_content_workflow.py
+
+      - name: Archive generated project artifacts
+        shell: bash
+        run: |
+          project_id=$(python -c "import json; print(json.load(open('.pipeline-artifacts/content_workflow_result.json'))['project_id'])")
+          project_name=$(find projects -mindepth 1 -maxdepth 1 -type d -name "${project_id}_*" -printf "%f\n" | head -n 1)
+          tar -czf .pipeline-artifacts/content-project.tar.gz -C projects "$project_name"
+
+      - name: Upload content artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ritzz-content-project-${{ github.run_id }}
+          path: .pipeline-artifacts/
+          if-no-files-found: error
+
+  voice-generation:
+    name: Generate and validate narration
+    needs: content-preparation
+    runs-on: ubuntu-latest
+    env:
+      ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+      RITZZ_VOICE_ID: ${{ secrets.RITZZ_VOICE_ID }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Download content project
+        uses: actions/download-artifact@v4
+        with:
+          name: ritzz-content-project-${{ github.run_id }}
+          path: .pipeline-artifacts
+
+      - name: Extract content project
+        shell: bash
+        run: tar -xzf .pipeline-artifacts/content-project.tar.gz
+
+      - name: Read project ID
+        id: project
+        shell: bash
+        run: |
+          project_id=$(python -c "import json; print(json.load(open('.pipeline-artifacts/content_workflow_result.json'))['project_id'])")
+          echo "project_id=$project_id" >> "$GITHUB_OUTPUT"
+
+      - name: Generate and validate narration
+        env:
+          RITZZ_PROJECT_ID: ${{ steps.project.outputs.project_id }}
+        run: python scripts/run_voice_stage.py
+
+      - name: Archive voice project artifacts
+        shell: bash
+        run: |
+          project_name=$(find projects -mindepth 1 -maxdepth 1 -type d -name "${{ steps.project.outputs.project_id }}_*" -printf "%f\n" | head -n 1)
+          tar -czf .pipeline-artifacts/voice-project.tar.gz -C projects "$project_name"
+
+      - name: Upload voice artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ritzz-voice-project-${{ github.run_id }}
+          path: .pipeline-artifacts/
+          if-no-files-found: error
+
+  pipeline-placeholder:
+    name: Production stages pending M8 implementation
+    needs: private-upload
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report current implementation boundary
+        run: |
+          echo "The CI control plane is active."
+          echo "Private test upload completed after human approval."
+          echo "Public publication remains disabled for M8/M9 test runs."
+
+  image-generation:
+    name: Generate timed-scene images
+    needs: storyboard-generation
+    runs-on: ubuntu-latest
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Download storyboard project
+        uses: actions/download-artifact@v4
+        with:
+          name: ritzz-storyboard-project-${{ github.run_id }}
+          path: .pipeline-artifacts
+
+      - name: Extract storyboard project
+        shell: bash
+        run: tar -xzf .pipeline-artifacts/storyboard-project.tar.gz
+
+      - name: Read project ID
+        id: project
+        shell: bash
+        run: |
+          project_id=$(python -c "import json; print(json.load(open('.pipeline-artifacts/content_workflow_result.json'))['project_id'])")
+          echo "project_id=$project_id" >> "$GITHUB_OUTPUT"
+
+      - name: Generate timed-scene images
+        env:
+          RITZZ_PROJECT_ID: ${{ steps.project.outputs.project_id }}
+        run: python scripts/run_image_stage.py
+
+      - name: Archive image project artifacts
+        shell: bash
+        run: |
+          project_name=$(find projects -mindepth 1 -maxdepth 1 -type d -name "${{ steps.project.outputs.project_id }}_*" -printf "%f\n" | head -n 1)
+          tar -czf .pipeline-artifacts/image-project.tar.gz -C projects "$project_name"
+
+      - name: Upload image artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ritzz-image-project-${{ github.run_id }}
+          path: .pipeline-artifacts/
+          if-no-files-found: error
+
+  render-video:
+    name: Render and run technical QA
+    needs: image-generation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Download image project
+        uses: actions/download-artifact@v4
+        with:
+          name: ritzz-image-project-${{ github.run_id }}
+          path: .pipeline-artifacts
+
+      - name: Extract image project
+        shell: bash
+        run: tar -xzf .pipeline-artifacts/image-project.tar.gz
+
+      - name: Read project ID
+        id: project
+        shell: bash
+        run: |
+          project_id=$(python -c "import json; print(json.load(open('.pipeline-artifacts/content_workflow_result.json'))['project_id'])")
+          echo "project_id=$project_id" >> "$GITHUB_OUTPUT"
+
+      - name: Render test video and run technical QA
+        env:
+          RITZZ_PROJECT_ID: ${{ steps.project.outputs.project_id }}
+        run: python scripts/run_render_stage.py
+
+      - name: Archive rendered project
+        shell: bash
+        run: |
+          project_name=$(find projects -mindepth 1 -maxdepth 1 -type d -name "${{ steps.project.outputs.project_id }}_*" -printf "%f\n" | head -n 1)
+          tar -czf .pipeline-artifacts/rendered-project.tar.gz -C projects "$project_name"
+
+      - name: Upload rendered video artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ritzz-rendered-project-${{ github.run_id }}
+          path: .pipeline-artifacts/
+          if-no-files-found: error
+
+  video-approval:
+    name: Human approval for generated test video
+    needs: render-video
+    runs-on: ubuntu-latest
+    environment:
+      name: ritzz-video-approval
+      url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Confirm video review boundary
+        run: |
+          echo "Rendered test video passed deterministic technical QA."
+          echo "Review the uploaded artifact before approving this environment."
+          echo "This is a test video and must remain private or unlisted."
+
+  packaging-approval:
+    name: Human approval for packaging
+    needs: video-approval
+    runs-on: ubuntu-latest
+    environment:
+      name: ritzz-packaging-approval
+      url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Confirm packaging review boundary
+        run: |
+          echo "Packaging metadata is ready for review."
+          echo "Approve this environment to permit the private test upload."
+          echo "Public publication remains disabled."
+
+  private-upload:
+    name: Upload test video privately
+    needs: packaging-approval
+    runs-on: ubuntu-latest
+    env:
+      GOOGLE_CLIENT_SECRETS_B64: ${{ secrets.GOOGLE_CLIENT_SECRETS_B64 }}
+      GOOGLE_TOKEN_B64: ${{ secrets.GOOGLE_TOKEN_B64 }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Download rendered project
+        uses: actions/download-artifact@v4
+        with:
+          name: ritzz-rendered-project-${{ github.run_id }}
+          path: .pipeline-artifacts
+
+      - name: Extract rendered project
+        shell: bash
+        run: tar -xzf .pipeline-artifacts/rendered-project.tar.gz
+
+      - name: Read project ID
+        id: project
+        shell: bash
+        run: |
+          project_id=$(python -c "import json; print(json.load(open('.pipeline-artifacts/content_workflow_result.json'))['project_id'])")
+          echo "project_id=$project_id" >> "$GITHUB_OUTPUT"
+
+      - name: Write OAuth files from GitHub Secrets
+        shell: bash
+        run: |
+          printf '%s' "$GOOGLE_CLIENT_SECRETS_B64" | base64 --decode > "$RUNNER_TEMP/youtube-client-secrets.json"
+          printf '%s' "$GOOGLE_TOKEN_B64" | base64 --decode > "$RUNNER_TEMP/youtube-token.json"
+
+      - name: Upload test video privately
+        env:
+          RITZZ_PROJECT_ID: ${{ steps.project.outputs.project_id }}
+          GOOGLE_CLIENT_SECRETS_FILE: ${{ runner.temp }}/youtube-client-secrets.json
+          GOOGLE_TOKEN_FILE: ${{ runner.temp }}/youtube-token.json
+        run: python scripts/run_private_upload_stage.py
+
+  storyboard-generation:
+    name: Build audio-timed storyboard
+    needs: voice-generation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Download voice project
+        uses: actions/download-artifact@v4
+        with:
+          name: ritzz-voice-project-${{ github.run_id }}
+          path: .pipeline-artifacts
+
+      - name: Extract voice project
+        shell: bash
+        run: tar -xzf .pipeline-artifacts/voice-project.tar.gz
+
+      - name: Read project ID
+        id: project
+        shell: bash
+        run: |
+          project_id=$(python -c "import json; print(json.load(open('.pipeline-artifacts/content_workflow_result.json'))['project_id'])")
+          echo "project_id=$project_id" >> "$GITHUB_OUTPUT"
+
+      - name: Build narrative and audio-timed storyboards
+        env:
+          RITZZ_PROJECT_ID: ${{ steps.project.outputs.project_id }}
+        run: python scripts/run_storyboard_stage.py
+
+      - name: Archive storyboard project artifacts
+        shell: bash
+        run: |
+          tar -czf .pipeline-artifacts/storyboard-project.tar.gz -C projects "${{ steps.project.outputs.project_id }}"
+
+      - name: Upload storyboard artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ritzz-storyboard-project-${{ github.run_id }}
+          path: .pipeline-artifacts/
+          if-no-files-found: error

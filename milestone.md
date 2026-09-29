@@ -1,28 +1,78 @@
 ﻿# RITZZ Studio Milestones
 
 Last verified: 2026-09-25
+Last verified: 2026-09-28
 
 This file is the current status source for the project. The older roadmap in
 `docs/Milestone.md` points here.
 
-## Current milestone: YouTube Publishing and Scheduling
+## Current milestone: Approval-Aware Pipeline Orchestration and Retryability
 
-**Status: M6 COMPLETE — LIVE OAUTH UPLOAD VERIFIED**
+**Status: M8 ACTIVE — HUMAN-APPROVAL-AWARE AUTOMATION LAYER**
 
-## Current Next Milestone
+**Next validation milestone: M9 — FIRST REPEATABLE PRODUCTION / VIDEO #2 READINESS**
 
-**M7 - Inventory Completion and Analytics Learning Loop**
+All videos generated during M8 implementation and M9 validation are test videos.
+They must remain private or unlisted unless separately approved for testing. V1
+is the first actual public video and will be created only after the pipeline,
+approval flow, rendering, upload, and end-to-end tests are complete.
+
+M9 does not introduce a new architecture. It is the first real validation of the
+existing M0–M6 production flow with a genuinely new second video, using the
+current approved pipeline and the same human review gates. The goal is to prove
+the workflow is repeatable in real production: a new project, preserved quality
+checks, publish approval, and the first post-publish learning signal for M7.
 
 M6 is complete for the current scope. The live OAuth upload was verified with a
 real YouTube upload that returned a valid video ID and URL, and the project
 publishing flow has been validated end-to-end with explicit approval plus
 schedule handling.
 
-The current verified evidence includes a successful public/private scheduled
-upload result with a valid YouTube video ID and URL, and the project retains the
-approval and scheduling workflow for human review before upload. M7 analytics
-remains the next milestone and is deferred until the published inventory and
-analytics loop are implemented.
+M7 is implemented for the repository scope: published projects can be recorded
+in an inventory, analytics snapshots are persisted with raw/normalized/derived
+layers, learning aggregates are computed, and a CLI exists to collect analytics
+for a published project. The project-level contract is validated by focused
+tests and does not claim a live YouTube Analytics API fetch unless the
+configured OAuth credentials are available and the user chooses to run the live
+collector against a published video.
+
+The next milestone is M8: approval-aware pipeline orchestration and retryability.
+This milestone focuses on the missing parts required for a production-ready
+human-controlled pipeline rather than a fully autonomous system:
+
+- full orchestration across all stage transitions
+- stronger end-to-end resume/retry coverage
+- final approval automation around packaging and publish readiness
+- better operational monitoring and stage status reporting
+- integration of M7 learning feeds when they exist
+
+The architecture remains explicit about human approval gates. Automation should
+The architecture remains explicit about human approval gates. Automation should
+cover stage execution, state persistence, and recovery, while approval,
+scheduling, and final publish remain explicit and reviewable.
+
+The selected CI/CD control plane is GitHub Actions. Normal video production is
+browser-driven from the GitHub Actions workflow UI; the user does not need to
+run a command-line script for each video. The workflow discovers four trending
+topic candidates, presents them as numbered choices 1 through 4, and pauses for
+human selection and approval before continuing.
+
+The same workflow pauses for human approval after video generation and QA,
+before upload, and before public publication. GitHub Actions manages stages,
+artifacts, logs, retries, and approvals while the existing RITZZ Python modules
+remain the production workers. Dynamic topic selection is currently handled by
+a GitHub issue created for the run: a trusted collaborator replies with 1, 2, 3,
+or 4, and the workflow resumes into the protected approval environment.
+- GitHub Actions workflow control with browser-only execution
+- numbered trending-topic selection: 1, 2, 3, or 4
+- approval pauses for topic choice, generated video, upload, and publication
+
+M8 is focused on reliability and observability. Once the reliability layer is
+in place, M9 becomes the first repeatable production test: create a new video #2,
+run the approved M0–M6 flow, publish it, and let M7 begin collecting analytics
+from that real second video. M10 is the future learning-feedback milestone that
+connects M7 insights back into the M0 topic-selection and production decision
+process.
 
 See [CHANGELOG.md](CHANGELOG.md) for the milestone history and
 [RITZZ Master Milestones](docs/RITZZ_Master_Milestones.md) for the long-term

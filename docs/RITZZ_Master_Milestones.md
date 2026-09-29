@@ -32,6 +32,18 @@ Topic intelligence
 
 The pipeline must preserve intermediate artifacts, support retry and resume, keep human approval explicit, and avoid regenerating expensive assets unnecessarily.
 
+All videos generated during M8 implementation and M9 validation are test
+videos. Test uploads remain private or unlisted. V1 is the first actual public
+video and is deferred until the pipeline, approval flow, render quality, upload
+flow, and end-to-end tests have passed.
+
+The selected CI/CD control plane is GitHub Actions. Video production is started
+from the GitHub Actions web interface, not from a local command line. Each run
+discovers four trending candidates and presents numbered choices 1, 2, 3, and 4
+for human selection before production continues. The current browser selection
+mechanism is a run-specific GitHub issue where a trusted collaborator replies
+with the selected number.
+
 ## Production Rules
 
 - One channel only. Do not add multi-channel architecture.
@@ -62,7 +74,10 @@ The pipeline must preserve intermediate artifacts, support retry and resume, kee
 | M4 | Resumable end-to-end production orchestration | Complete for current scope |
 | M5 | Packaging: titles, thumbnails, and metadata | Complete for current scope |
 | M6 | YouTube publishing and scheduling | Complete for current scope; live OAuth upload verified |
-| M7 | Inventory completion and analytics learning loop | Planned |
+| M7 | Inventory completion and analytics learning loop | Complete for the current repository scope; analytics inventory, snapshots, and learning reports implemented |
+| M8 | Approval-aware pipeline orchestration and retryability | Active; focuses on stage orchestration, retry/resume coverage, approval-aware automation, and monitoring |
+| M9 | First repeatable production / Video #2 readiness | Planned next validation milestone; validates the existing production flow with a new second project and the first real M7 learning signal |
+| M10 | M7 learning feedback into M0 topic selection | Deferred; connects inventory/analytics insights back into the topic and opportunity decision layer |
 
 A milestone is complete only when its acceptance criteria, focused tests, artifacts, and human approval requirements are satisfied.
 
@@ -400,6 +415,71 @@ Every new milestone must:
 - Make thresholds and configuration values configurable.
 - Avoid unrelated refactoring.
 
+## M9 - First Repeatable Production / Video #2 Readiness
+
+**Goal:** Validate the existing M0–M6 production flow on a genuinely new second
+video without redesigning the architecture.
+
+### Deliverables
+
+- New second-project production run using the standard M0–M6 flow.
+- Real publish validation against the existing approval and schedule gates.
+- 1920x1080, 30 FPS render verification before publication.
+- A published project that gives M7 its first true learning signal.
+- Repository-level evidence that the pipeline can be repeated without reworking
+  the base architecture.
+
+### Scope
+
+This milestone does not introduce a new production architecture. It proves that
+the current system is capable of a second repeatable production run, while M7
+continues to collect post-publish analytics from the new video. The learning
+loop remains intentionally delayed and observational: it informs future
+decisions rather than bypassing human approval or production stages.
+
+The Video #2 run is a test validation run. Its upload must remain private or
+unlisted. It is not V1 and must not become the first public release by default.
+
+### Acceptance criteria
+
+- A new second video is created and reaches production using the current flow.
+- Technical quality checks confirm 1920x1080 output and consistent frame rate.
+- Human approval gates remain explicit and auditable.
+- A valid private or unlisted test project exists for M7 to inventory and analyze.
+- M7 begins learning from Video #2 without changing the existing M0–M6 workflow.
+
+V1 may begin only after M8 and M9 acceptance criteria are complete, the relevant
+end-to-end tests pass, and a separate human approval explicitly authorizes the
+first public release.
+
+## M10 - Connect M7 Learning into M0
+
+**Goal:** Let historical learning from published videos influence the topic
+selection and opportunity-scoring layer without compromising the human approval
+process.
+
+### Scope
+
+M10 is not the first learning implementation. M7 already exists and should be
+running and polling after publication. M10 is the downstream integration step
+that applies the resulting signals into M0-style selection and recommendation
+workflows when the data is mature enough to be used as a read-only planning
+input.
+
+### Deliverables
+
+- Historical learning consumed from inventory and analytics artifacts.
+- Topic scoring adjustments grounded in published project evidence.
+- Controlled, explainable update path for recommendation logic.
+- Human review preserved before any topic selection is acted on.
+
+### Acceptance criteria
+
+- M7 analytics data is discoverable, auditable, and current.
+- No automatic channel-level decision is made without human approval.
+- Historical signal quality is sufficient before recommendations change.
+- Existing M0–M6 process remains intact.
+
 ## Deferred Until Approved
 
 - Full eight-minute image generation.
@@ -412,13 +492,72 @@ Every new milestone must:
 
 ## Current Next Milestone
 
-**M7 - Inventory Completion and Analytics Learning Loop**
+**M8 - Approval-Aware Pipeline Orchestration and Retryability**
 
 M6 is complete for the current scope. The live YouTube upload was verified, the
 approval and schedule workflow was exercised, and the resulting video ID and URL
-were captured. The next milestone focuses on inventory completion and analytics
-learning so published video performance can feed future recommendations and
-topic scoring.
+were captured. M7 is implemented for the repository scope as a learning and
+inventory layer. The next milestone focuses on full orchestration across the
+production stages, stronger resume/retry behavior, final approval-aware
+packaging readiness, operational monitoring, and eventual M7 learning-feed
+integration without removing the human approval boundaries.
+
+### M8 - Approval-Aware Pipeline Orchestration and Retryability
+
+**Goal:** Build the automation layer that makes the existing production pipeline
+resumable, observable, and safe without removing human approval checkpoints.
+
+### Deliverables
+
+- Full orchestration across all stage transitions.
+- Stronger end-to-end resume and retry coverage.
+- Final approval automation around packaging and publish readiness.
+- Better operational monitoring and stage status reporting.
+- Controlled integration of M7 learning feeds when they exist.
+- GitHub Actions workflow as the browser-operated CI/CD controller.
+- Numbered topic approval with four dynamically generated choices.
+- Human approval checkpoints after topic discovery, video QA, upload readiness,
+  and before public publication.
+
+### Scope
+
+This milestone does not remove human review or bypass upload approval. It makes
+existing project stages easier to run, resume, and monitor while keeping the
+explicit approval gates that protect the channel and published output.
+
+### Acceptance criteria
+
+- Every stage has clear status transitions.
+- Successful stages are not re-run unnecessarily.
+- Retry logic resumes from the correct stage.
+- Approval-required steps remain explicit and auditable.
+- Packaging readiness is checked before upload.
+- Monitoring exposes current stage, errors, and retry state.
+- M7 learning data can be consumed as read-only input when available.
+- A new video can be started from the GitHub Actions web UI without running a
+  local command-line command.
+- Trending discovery presents exactly four selectable candidates labeled 1, 2,
+  3, and 4, and the selected choice is persisted with the project.
+- The workflow pauses at each required human approval checkpoint and resumes
+  only after the approval is recorded.
+
+### Browser-operated pipeline flow
+
+```text
+GitHub Actions: Run workflow
+  -> Trending discovery
+  -> Four candidates: select 1, 2, 3, or 4
+  -> Human topic approval
+  -> Research, outline, script, voice, storyboard, and images
+  -> Render and technical/semantic QA
+  -> Human video approval
+  -> Packaging and metadata
+  -> Human upload approval
+  -> YouTube upload or schedule
+  -> Human public-release approval
+  -> Publish
+  -> Scheduled M7 analytics collection
+```
 
 ## Change Log
 
@@ -436,3 +575,11 @@ topic scoring.
 - 2026-09-25: M6 offline/provider scope completed: added approval and schedule gates, project-level publish orchestration, persisted publish results, `FakeYouTubeProvider`, and opt-in OAuth `YouTubeProvider` support with scheduled `publishAt` mapping. Focused publishing tests passed (6); full offline suite passed (325, one live test deselected). Live OAuth upload verification remains pending before M7.
 - 2026-09-26: M6 approval gate hardened: `publish_project` now requires an existing approved artifact and a matching approver identity instead of creating approval itself. Focused publishing/provider tests passed (9). Live upload remains pending because OAuth credentials are not configured.
 - 2026-09-28: M6 live OAuth upload verification completed: a real upload succeeded, produced a valid YouTube video ID and URL, and confirmed approval/scheduling behavior. M6 is now complete for the current scope and M7 is the active next milestone.
+- 2026-09-28: M8/M9 milestone scope clarified: M8 focuses on approval-aware orchestration and retryability, M9 validates the existing production flow with a genuinely new second video, and M10 remains the future learning-feedback integration step that connects M7 results back into M0 topic selection without bypassing human approval.
+- 2026-09-28: M8 execution model selected: GitHub Actions is the browser-operated CI/CD controller. New runs discover four trending candidates and pause for numbered selection 1-4, followed by human approvals for topic, generated video, upload readiness, and public publication. Normal production does not require local command-line execution.
+- 2026-09-28: Production boundary clarified: M8 and M9 outputs are test videos and remain private or unlisted. V1 is the first actual public video and is deferred until implementation, end-to-end testing, render validation, approval flow, and upload flow are complete.
+- 2026-09-29: M8 implementation started: added the browser-operated GitHub Actions workflow, focused regression gate, four-candidate discovery script, run artifact, and trusted-collaborator issue selection with protected topic/test approval environments. Full production stages remain behind the validated boundary.
+- 2026-09-29: M8 content handoff added: the approved numbered topic now runs through the existing Research -> Outline -> Script workflow in GitHub Actions, and the generated project artifacts are archived in the workflow run. Narration, visual production, render QA, upload, and publication remain subsequent approval-gated slices.
+- 2026-09-29: M8 narration and storyboard stages added: GitHub Actions now generates validated ElevenLabs narration with character alignment and builds the narrative plus audio-timed static storyboard from the approved project. Image generation, rendering, QA, upload, and publication remain subsequent test-gated slices.
+- 2026-09-29: M8 image and render stages added: GitHub Actions now generates timed-scene images with a manifest, renders the private test video, runs deterministic technical QA, and pauses at a protected human video-approval environment. Packaging and publishing remain subsequent approval-gated slices.
+- 2026-09-29: M8 packaging and private-upload controls added: the workflow now pauses for packaging approval and can upload a reviewed test video privately through the existing YouTube OAuth publishing engine. Public V1 publication remains disabled until the full test workflow is accepted.
