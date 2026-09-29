@@ -477,12 +477,15 @@ class PackagingEngine:
         )
         chosen = (selected_title or title_options[0].title).strip()
 
-        description = (
-            f"{chosen}. "
-            f"{script_excerpt.strip()[:220]}"
-            if script_excerpt.strip()
-            else f"A curious explainer about {topic}."
-        )
+        description_parts = [f"{chosen}."]
+        angle = str(context.get("angle", "")).strip()
+        if angle:
+            description_parts.append(f"This video explores {angle}.")
+        if script_excerpt.strip():
+            description_parts.append(script_excerpt.strip()[:220])
+        else:
+            description_parts.append(f"A curious explainer about {topic}.")
+        description = " ".join(description_parts)
         tags = self._build_tags(topic, script_excerpt, context)
         self.validate_packaging_metadata(topic, chosen, description, tags)
         metadata = PackagingMetadata(
