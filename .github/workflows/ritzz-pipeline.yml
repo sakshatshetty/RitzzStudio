@@ -60,6 +60,12 @@ jobs:
           tests/test_video_pipeline_engine.py
           -q
 
+      - name: Enforce test-only release boundary
+        if: ${{ inputs.test_run != true }}
+        run: |
+          echo "Public V1 publishing is not enabled yet. Set test_run to true." >&2
+          exit 1
+
       - name: Write run manifest
         shell: bash
         env:
@@ -104,6 +110,7 @@ jobs:
       RITZZ_DISCOVERY_MODE: ${{ inputs.discovery_mode }}
       RITZZ_DISCOVERY_TIMEFRAME: this week
       RITZZ_TREND_TOPIC: history
+      RITZZ_INVENTORY_FILE: data/content_inventory.json
     steps:
       - name: Check out repository
         uses: actions/checkout@v4

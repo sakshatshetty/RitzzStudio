@@ -33,6 +33,11 @@ exceed the target.
 16. Keep the current run marked as a test run; public publication remains
    disabled.
 
+Topic duplicate prevention reads the durable repository inventory at
+`data/content_inventory.json`. Test runs do not write to this file and therefore
+do not reserve or permanently exclude their selected topics. A future approved
+V1 release will update the inventory with the final topic and publication data.
+
 ## Repository setup
 
 Configure these GitHub repository secrets:

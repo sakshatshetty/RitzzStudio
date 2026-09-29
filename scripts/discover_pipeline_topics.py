@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 from modules.topic_intelligence.engine import TopicIntelligenceEngine
+from modules.topic_intelligence.inventory import ContentInventoryManager
 from modules.topic_intelligence.models import TopicDiscoveryRequest
 
 
@@ -33,7 +34,12 @@ def main() -> int:
     mode = os.environ.get("RITZZ_DISCOVERY_MODE", "TRENDING").upper()
     timeframe = os.environ.get("RITZZ_DISCOVERY_TIMEFRAME", "this week")
     trend_topic = os.environ.get("RITZZ_TREND_TOPIC") or None
-    report = TopicIntelligenceEngine().discover(
+    inventory_file = Path(
+        os.environ.get("RITZZ_INVENTORY_FILE", "data/content_inventory.json")
+    )
+    report = TopicIntelligenceEngine(
+        inventory_manager=ContentInventoryManager(inventory_file),
+    ).discover(
         TopicDiscoveryRequest(
             mode=mode,
             timeframe=timeframe,
