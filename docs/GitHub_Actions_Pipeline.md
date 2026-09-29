@@ -14,6 +14,12 @@ When starting a run, the GitHub form provides `Discovery mode`, `Test run`,
 minutes`. Both duration fields default to 8 minutes, and the minimum cannot
 exceed the target.
 
+Before tests or external providers run, the workflow validates that all required
+secrets are present and that the Google client and token secrets decode to valid
+OAuth JSON. This preflight makes no provider API calls, so it does not consume
+quota or prove that a key has live service permission; provider failures still
+stop their individual stage.
+
 1. Run focused pipeline regression tests.
 2. Discover exactly four trending or evergreen candidates.
 3. Publish the candidates in a GitHub issue and workflow artifact.

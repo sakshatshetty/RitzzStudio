@@ -36,8 +36,31 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  preflight:
+    name: Validate pipeline prerequisites
+    runs-on: ubuntu-latest
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      VIDIQ_MCP_API_KEY: ${{ secrets.VIDIQ_MCP_API_KEY }}
+      ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+      RITZZ_VOICE_ID: ${{ secrets.RITZZ_VOICE_ID }}
+      GOOGLE_CLIENT_SECRETS_B64: ${{ secrets.GOOGLE_CLIENT_SECRETS_B64 }}
+      GOOGLE_TOKEN_B64: ${{ secrets.GOOGLE_TOKEN_B64 }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate required secrets and OAuth JSON
+        run: python scripts/validate_pipeline_prerequisites.py
+
   validate:
     name: Validate RITZZ pipeline
+    needs: preflight
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
