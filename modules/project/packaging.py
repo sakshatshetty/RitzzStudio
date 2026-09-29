@@ -82,6 +82,7 @@ class PackagingArtifact:
     title_options: list[TitleOption] = field(default_factory=list)
     metadata: PackagingMetadata = field(default_factory=PackagingMetadata)
     thumbnail_brief: ThumbnailBrief | None = None
+    opportunity_context: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -89,6 +90,7 @@ class PackagingArtifact:
             "title_options": [option.to_dict() for option in self.title_options],
             "metadata": self.metadata.to_dict(),
             "thumbnail_brief": self.thumbnail_brief.to_dict() if self.thumbnail_brief else None,
+            "opportunity_context": dict(self.opportunity_context),
         }
 
     @classmethod
@@ -102,6 +104,7 @@ class PackagingArtifact:
                 if isinstance(data.get("thumbnail_brief"), dict)
                 else None
             ),
+            opportunity_context=dict(data.get("opportunity_context", {})),
         )
 
 
@@ -276,8 +279,15 @@ class PackagingEngine:
             title = title[:-1]
         return title[:1].upper() + title[1:]
 
-    def generate_title_options(self, topic: str, script_excerpt: str) -> list[TitleOption]:
+    def generate_title_options(
+        self,
+        topic: str,
+        script_excerpt: str,
+        *,
+        opportunity_context: dict[str, Any] | None = None,
+    ) -> list[TitleOption]:
         """Create a small set of candidate titles with reasoning."""
+        context = opportunity_context or {}
         normalized = self._normalized_topic(topic)
         base = normalized
         if re.match(r"^(why|what|how|when|where|who)\b", base, flags=re.IGNORECASE):
@@ -300,6 +310,9 @@ class PackagingEngine:
             f"{self._title_case_topic(base)}: What They Didn't Tell You",
             f"{self._title_case_topic(base)} Explained in One Minute",
         ]
+        proposed_title = str(context.get("proposed_title", "")).strip()
+        if proposed_title:
+            structure.insert(0, proposed_title)
 
         unique = []
         seen = set()
@@ -311,11 +324,15 @@ class PackagingEngine:
             if lowered in seen:
                 continue
             seen.add(lowered)
-            reason = {
-                0: "Focuses on the strongest explanatory hook from the script.",
-                1: "Presents a clear curiosity angle with a simple, memorable payoff.",
-                2: "Keeps the title accessible and search-friendly for curious viewers.",
-            }[idx]
+            reason = (
+                "Uses the selected vidIQ angle and proposed title as evidence."
+                if proposed_title and idx == 0
+                else {
+                    0: "Focuses on the strongest explanatory hook from the script.",
+                    1: "Presents a clear curiosity angle with a simple, memorable payoff.",
+                    2: "Keeps the title accessible and search-friendly for curious viewers.",
+                }.get(idx, "Provides an additional curiosity-first packaging option.")
+            )
             unique.append(TitleOption(title=cleaned, reason=reason))
 
         if len(unique) < 3:
@@ -332,8 +349,18 @@ class PackagingEngine:
         return unique[:3]
 
     @staticmethod
-    def _build_tags(topic: str, script_excerpt: str) -> list[str]:
-        text = f"{topic} {script_excerpt}".lower()
+    def _build_tags(
+        topic: str,
+        script_excerpt: str,
+        opportunity_context: dict[str, Any] | None = None,
+    ) -> list[str]:
+        context = opportunity_context or {}
+        evidence_terms = [
+            str(context.get("primary_keyword", "")),
+            *[str(item) for item in context.get("related_keywords", [])],
+            *[str(item) for item in context.get("related_questions", [])],
+        ]
+        text = f"{topic} {script_excerpt} {' '.join(evidence_terms)}".lower()
         tokens = re.findall(r"[a-z0-9][a-z0-9'/-]{2,}", text)
         filtered = []
         for token in tokens:
@@ -384,14 +411,17 @@ class PackagingEngine:
         topic: str,
         selected_title: str,
         script_excerpt: str,
+        opportunity_context: dict[str, Any] | None = None,
     ) -> ThumbnailBrief:
         normalized = self._normalized_topic(topic)
+        context = opportunity_context or {}
+        angle = str(context.get("angle", "")).strip()
         if "pirate" in normalized.lower() and "eye" in normalized.lower():
             subject = "Pirate eye patch + sunlight contrast"
             primary_visual = "A pirate with one eye covered, the other eye staring into bright sunlight while the dark deck is visible in the background."
         else:
             subject = self._title_case_topic(topic)
-            primary_visual = f"A highly recognizable object tied to the topic, framed with a clean, single-idea visual and strong contrast."
+            primary_visual = f"A highly recognizable object tied to the topic, framed around {angle or 'one clear curiosity hook'} with strong contrast."
 
         brief = ThumbnailBrief(
             subject=subject,
@@ -400,7 +430,8 @@ class PackagingEngine:
             mobile_readability="Keep the focal object large and readable on mobile: high contrast, clear silhouette, text no more than 2 lines and large enough to read without zooming.",
             notes=(
                 f"Selected title: {selected_title}. "
-                f"Use the strongest single hook from the script: {script_excerpt.strip()[:160]}"
+                f"Use the strongest single hook from the script: {script_excerpt.strip()[:160]} "
+                f"VidIQ angle used as planning evidence: {angle or 'none'}"
             ),
         )
         return brief
@@ -435,18 +466,27 @@ class PackagingEngine:
         category: str = "Education",
         language: str = "en",
         made_for_kids: bool = False,
+        opportunity_context: dict[str, Any] | None = None,
     ) -> PackagingArtifact:
         project_path = Path(self.projects_dir) / f"{project.project_id}_{project.slug}"
-        title_options = self.generate_title_options(topic, script_excerpt)
+        context = dict(opportunity_context or {})
+        title_options = self.generate_title_options(
+            topic,
+            script_excerpt,
+            opportunity_context=context,
+        )
         chosen = (selected_title or title_options[0].title).strip()
 
-        description = (
-            f"{chosen}. "
-            f"{script_excerpt.strip()[:220]}"
-            if script_excerpt.strip()
-            else f"A curious explainer about {topic}."
-        )
-        tags = self._build_tags(topic, script_excerpt)
+        description_parts = [f"{chosen}."]
+        angle = str(context.get("angle", "")).strip()
+        if angle:
+            description_parts.append(f"This video explores {angle}.")
+        if script_excerpt.strip():
+            description_parts.append(script_excerpt.strip()[:220])
+        else:
+            description_parts.append(f"A curious explainer about {topic}.")
+        description = " ".join(description_parts)
+        tags = self._build_tags(topic, script_excerpt, context)
         self.validate_packaging_metadata(topic, chosen, description, tags)
         metadata = PackagingMetadata(
             category=category,
@@ -457,12 +497,19 @@ class PackagingEngine:
                 "and one dominant object so it remains legible on mobile."
             ),
         )
-        thumbnail_brief = self.generate_thumbnail_brief(project, topic, chosen, script_excerpt)
+        thumbnail_brief = self.generate_thumbnail_brief(
+            project,
+            topic,
+            chosen,
+            script_excerpt,
+            context,
+        )
         artifact = PackagingArtifact(
             selected_title=chosen,
             title_options=title_options,
             metadata=metadata,
             thumbnail_brief=thumbnail_brief,
+            opportunity_context=context,
         )
 
         project_file = project_path / "packaging.json"

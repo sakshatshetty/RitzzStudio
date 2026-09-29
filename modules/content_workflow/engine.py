@@ -226,6 +226,15 @@ class ContentWorkflow:
                 project=self.manager.load_project(project.project_id),
                 topic=topic,
                 script_excerpt=script_excerpt,
+                opportunity_context=(
+                    {
+                        "report_id": report.report_id,
+                        "provider": report.provider,
+                        **candidate.model_dump(mode="json"),
+                    }
+                    if report and candidate
+                    else {}
+                ),
             )
             if isinstance(packaging_result, PackagingArtifact):
                 packaging_ok = bool(
