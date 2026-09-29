@@ -9,6 +9,11 @@ Workflow file: `.github/workflows/ritzz-pipeline.yml`
 
 The current M8 slice performs these steps:
 
+When starting a run, the GitHub form provides `Discovery mode`, `Test run`,
+`Target video duration in minutes`, and `Minimum allowed video duration in
+minutes`. Both duration fields default to 8 minutes, and the minimum cannot
+exceed the target.
+
 1. Run focused pipeline regression tests.
 2. Discover exactly four trending or evergreen candidates.
 3. Publish the candidates in a GitHub issue and workflow artifact.
