@@ -16,6 +16,16 @@ on:
         required: true
         type: boolean
         default: true
+      target_duration_minutes:
+        description: Target video duration in minutes
+        required: true
+        type: number
+        default: 8
+      minimum_duration_minutes:
+        description: Minimum allowed video duration in minutes
+        required: true
+        type: number
+        default: 8
 
 permissions:
   contents: read
@@ -146,6 +156,8 @@ jobs:
     env:
       ISSUE_NUMBER: ${{ needs.discover-topics.outputs.issue_number }}
       GH_TOKEN: ${{ github.token }}
+      RITZZ_TARGET_DURATION_MINUTES: ${{ inputs.target_duration_minutes }}
+      RITZZ_MINIMUM_DURATION_MINUTES: ${{ inputs.minimum_duration_minutes }}
     steps:
       - name: Wait for numbered browser selection
         id: wait-for-selection

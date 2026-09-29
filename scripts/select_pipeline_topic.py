@@ -13,6 +13,12 @@ def main() -> int:
     )
     output_directory = Path(os.environ.get("RITZZ_PIPELINE_ARTIFACTS", ".pipeline-artifacts"))
     selection_number = int(os.environ["RITZZ_SELECTED_TOPIC_NUMBER"])
+    target_minutes = float(os.environ.get("RITZZ_TARGET_DURATION_MINUTES", "8"))
+    minimum_minutes = float(os.environ.get("RITZZ_MINIMUM_DURATION_MINUTES", "8"))
+    if target_minutes <= 0 or minimum_minutes <= 0:
+        raise ValueError("Video durations must be greater than zero minutes.")
+    if minimum_minutes > target_minutes:
+        raise ValueError("Minimum duration cannot exceed target duration.")
 
     payload = json.loads(candidates_path.read_text(encoding="utf-8"))
     candidates = payload.get("candidates", [])
@@ -25,6 +31,8 @@ def main() -> int:
         candidate_id=candidate["candidate_id"],
         topic=candidate["topic"],
         source="discovery",
+        target_duration_seconds=round(target_minutes * 60),
+        minimum_duration_seconds=round(minimum_minutes * 60),
     )
     output_directory.mkdir(parents=True, exist_ok=True)
     selection_path = output_directory / "topic_selection.json"
