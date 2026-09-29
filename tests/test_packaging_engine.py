@@ -4,6 +4,7 @@ import pytest
 
 from modules.project.manager import ProjectManager
 from modules.project.packaging import PackagingEngine
+from modules.topic_intelligence.models import OpportunityCandidate
 
 
 def test_generate_title_options_returns_distinct_titles(tmp_path: Path):
@@ -39,6 +40,42 @@ def test_build_project_packaging_writes_metadata_and_selection(tmp_path: Path):
     assert artifact.metadata.description
     assert artifact.metadata.tags
     assert artifact.metadata.category == "Education"
+
+
+def test_vidiq_candidate_informs_packaging_and_is_persisted(tmp_path: Path):
+    manager = ProjectManager(tmp_path)
+    project = manager.create_project("Why Do Pirates Wear Eye Patches?")
+    engine = PackagingEngine(tmp_path)
+    candidate = OpportunityCandidate(
+        candidate_id="candidate-1",
+        topic="Why Do Pirates Wear Eye Patches?",
+        proposed_title="Why Pirates Wear Eye Patches: The Real Reason",
+        angle="the practical adaptation sailors used between darkness and sunlight",
+        primary_keyword="pirate eye patch",
+        related_keywords=["pirate history", "sailor vision"],
+        related_questions=["Did eye patches improve night vision?"],
+        provider="vidiq",
+    )
+
+    artifact = engine.build_project_packaging(
+        project=project,
+        topic=candidate.topic,
+        script_excerpt="Sailors moved between dark decks and bright sunlight.",
+        opportunity_context={
+            "report_id": "report-1",
+            "provider": candidate.provider,
+            **candidate.model_dump(mode="json"),
+        },
+    )
+
+    assert artifact.selected_title == candidate.proposed_title
+    assert "pirate" in " ".join(artifact.metadata.tags).lower()
+    assert artifact.opportunity_context["report_id"] == "report-1"
+    assert artifact.thumbnail_brief is not None
+    assert "adaptation" in artifact.thumbnail_brief.notes
+
+    saved = (manager.get_project_path(project) / "packaging.json").read_text(encoding="utf-8")
+    assert '"opportunity_context"' in saved
 
 
 def test_select_title_and_generate_thumbnail_brief(tmp_path: Path):

@@ -22,13 +22,15 @@ exceed the target.
 6. Pause at the protected test-approval environment.
 7. Run the existing Research -> Outline -> Script content workflow.
 8. Upload the generated project artifacts to the GitHub Actions run.
-9. Generate and validate ElevenLabs narration with character alignment.
-10. Build the narrative and audio-timed static storyboard.
-11. Render the test video and run deterministic technical QA.
-12. Pause for human video review and approval.
-13. Pause for packaging approval.
-14. Upload the test video privately through YouTube OAuth.
-15. Keep the current run marked as a test run; public publication remains
+9. Use the selected vidIQ candidate to inform titles, tags, description framing,
+   and the thumbnail brief; persist the source report and candidate context.
+10. Generate and validate ElevenLabs narration with character alignment.
+11. Build the narrative and audio-timed static storyboard.
+12. Render the test video and run deterministic technical QA.
+13. Pause for human video review and approval.
+14. Pause for packaging approval.
+15. Upload the test video privately through YouTube OAuth.
+16. Keep the current run marked as a test run; public publication remains
    disabled.
 
 ## Repository setup
