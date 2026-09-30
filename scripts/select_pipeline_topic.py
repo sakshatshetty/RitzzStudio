@@ -9,6 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from modules.topic_intelligence.inventory import normalize_topic
 from modules.topic_intelligence.models import TopicSelection
 
 
@@ -38,6 +39,23 @@ def main() -> int:
         source="discovery",
         target_duration_seconds=round(target_minutes * 60),
         minimum_duration_seconds=round(minimum_minutes * 60),
+        normalized_topic=normalize_topic(candidate["topic"]),
+        angle=candidate.get("angle"),
+        source_evidence={
+            "provider": candidate.get("provider"),
+            "discovery_sources": candidate.get("discovery_sources", []),
+            "raw_evidence": candidate.get("raw_evidence", {}),
+        },
+        trend_evidence=candidate.get("current_vidiq_demand_signals", {}),
+        competition_evidence=candidate.get("competition_saturation_signal"),
+        competitor_evidence=candidate.get("competitor_evidence", []),
+        ritzz_fit=candidate.get("ritzz_fit", {}),
+        ritzz_learning_signals=candidate.get("ritzz_learning_signals", {}),
+        discovered_at=candidate.get("discovered_at"),
+        approval_metadata={
+            "method": "trusted GitHub collaborator numbered issue reply",
+            "selection_number": selection_number,
+        },
     )
     output_directory.mkdir(parents=True, exist_ok=True)
     selection_path = output_directory / "topic_selection.json"

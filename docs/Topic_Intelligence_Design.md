@@ -356,3 +356,55 @@ Run focused tests first, then the broader offline suite. Do not weaken existing 
 - The adapter maps only explicit topic rows and provider metrics. It does not transform prose into invented metrics.
 - Editorial dimensions are preliminary OpenAI judgments; they are not factual research or verified saturation measurements. If that assessment fails, the report retains provider evidence and explicitly lowers score completeness.
 - Tool names and response fields can evolve; runtime schema discovery reduces input assumptions, but actual server compatibility still needs a credentialed check.
+
+## 16. Current pipeline discovery and learning integration
+
+The pipeline-specific discovery path is source-aware and bounded by
+`RITZZ_CANDIDATE_POOL_TARGET` (15–30, default 30). In TRENDING mode its
+deterministic fallback order is requested category/timeframe, broader
+timeframe, advertised rising-demand capability, advertised evergreen and
+long-tail capabilities, competitor/outlier research, then unscoped discovery.
+Related keywords/questions are expanded only when the provider returns them.
+The adapter uses advertised MCP tool schemas; it does not invent vidIQ fields
+or metrics.
+
+Candidate processing normalizes and removes exact duplicates, checks the
+authoritative RITZZ inventory, applies cheap niche and RITZZ-fit prefilters,
+enriches with available competitor/M7 context, and calls the editorial model
+only for candidates that remain plausible. Editorial `PASS` alone is not
+sufficient: candidates must also pass the explicit RITZZ-fit threshold, final
+duplicate validation, opportunity score, and evidence-completeness checks.
+Competitor or historical signals cannot override these gates. The final
+pipeline issue still contains exactly four candidates or discovery safely
+fails with JSON and Markdown diagnostics.
+
+The RITZZ-fit result records `PASS`/`REVIEW`/`FAIL`, score, story type, fit
+dimensions, trend dependency, and rationale. Cheap deterministic checks hold
+ambiguous bare entities and reject clear fixtures, promotions, or temporary
+event terms before LLM scoring. A provider-supported related question can
+still enter separately as a story opportunity; raw trends are not rewritten
+into unsupported claims.
+
+`config/competitors.json` provides `core`, `adjacent`, and `emerging` groups
+with no sample channels prefilled. Configured channel-specific research is
+used only when vidIQ advertises a channel-scoped outlier tool schema; otherwise
+the topic-query capability and its limitation are recorded. Competitor video
+evidence remains distinct from RITZZ history. Relative baseline ratios are
+used when observed data supports them; raw views alone do not qualify as
+outlier success or a repeated successful-topic pattern.
+
+The optional M7 adapter reads the existing analytics inventory, by default
+`projects/inventory.json` or `RITZZ_M7_INVENTORY_FILE`. It does not write to
+that store or create a second history store. Missing/invalid M7 data is
+explicitly reported and discovery continues. Per-candidate historical
+observations include sample-size tiers (`INSUFFICIENT`, `LIMITED`, `EMERGING`,
+`ESTABLISHED`) and remain descriptive evidence, not predictions or automatic
+score-weight learning. One or two observed videos are not sufficient for
+established conclusions.
+
+The selected `topic_selection.json` now retains normalized topic, angle,
+source/trend/competition/competitor evidence, RITZZ-fit result, optional M7
+signals, discovery timestamp, and the numbered human-approval mechanism.
+Existing consumers remain compatible because these fields are optional.
+M10 remains deferred: this slice exposes read-only M7 evidence but does not
+learn scoring weights or predict future performance.

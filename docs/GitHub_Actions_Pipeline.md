@@ -44,15 +44,44 @@ Topic duplicate prevention reads the durable repository inventory at
 do not reserve or permanently exclude their selected topics. A future approved
 V1 release will update the inventory with the final topic and publication data.
 
-If a selected trending category returns fewer than four distinct candidates
-that pass the recommendation gate, discovery retries once with unscoped trending
-results and backfills the four choices with distinct candidates. If vidIQ still supplies fewer than four,
-the run stops before topic approval and reports the counts from both attempts.
-Only candidates that pass the recommendation gate are selectable in the
-pipeline. Review/recap/reaction formats and broad flagged topics are excluded;
-the approval issue presents the proposed explainer title and angle for each
-remaining option. If four qualified candidates are unavailable, the workflow
-stops rather than presenting unrelated ideas as valid choices.
+For pipeline discovery, the provider targets 30 distinct candidates by
+default (configurable from 15 to 30 with `RITZZ_CANDIDATE_POOL_TARGET`). It
+starts with the requested category/timeframe, then attempts supported
+broader-timeframe, rising-demand, evergreen, long-tail, competitor/outlier, and
+unscoped discovery. Fallback stages are configurable with
+`RITZZ_DISCOVERY_FALLBACK_STAGES`. Related keywords/questions are used only
+when present in provider results. Unsupported or failed sources are recorded
+in diagnostics and do not stop later sources.
+
+The final gate requires RITZZ-fit `PASS`, editorial `PASS`, no blocking niche
+or inventory reason, no exact/near duplicate, and a `RECOMMENDED` evidence and
+opportunity validation status. `REVIEW` and `FAIL` items are never promoted to
+fill the list. Obvious fixtures, promotional trailer queries, temporary event
+terms, and ambiguous bare entities are held or rejected before editorial model
+scoring; a supported related question may independently qualify as an
+explanatory story.
+
+If fewer than four candidates pass, the run stops before topic approval and
+reports the request, provider capabilities, per-source raw/unique/duplicate
+counts, filter-stage counts, missing M7 state, and candidate exclusion reasons.
+Both JSON and Markdown diagnostics are uploaded even on failure. `history`
+remains the preferred discovery lens, not a requirement that every final topic
+be a current history trend.
+
+Competitor channel groups are configured in `config/competitors.json`. The
+checked-in registry is intentionally empty; no competitor names are fabricated.
+Per-channel requests are made only if the advertised vidIQ outlier schema
+supports a channel selector. Otherwise topic-level competitor discovery is
+used and the limitation is reported. Raw views alone do not create an outlier
+or repeated-success pattern; provider outlier scores or channel-relative
+performance are required.
+
+Topic intelligence optionally reads the existing M7 inventory at
+`projects/inventory.json` (override with `RITZZ_M7_INVENTORY_FILE`). It reads
+existing analytics snapshots only; absent or invalid M7 data is reported and
+does not stop discovery. Historical sample size/confidence and lexical topic
+matches are evidence only and cannot override any hard gate. The human issue
+approval and numbered selection mechanism are unchanged.
 
 ## Repository setup
 

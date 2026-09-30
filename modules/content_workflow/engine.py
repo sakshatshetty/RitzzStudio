@@ -1,18 +1,23 @@
-from dataclasses import dataclass
 import inspect
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
+from modules.outline.models import Outline
 from modules.project import Project, ProjectManager
 from modules.project.config import ProductionConfig
 from modules.project.packaging import PackagingArtifact, PackagingEngine
-from modules.outline.models import Outline
+from modules.qa.engine import record_stage_qa
+from modules.qa.models import QAStageResult
 from modules.research.models import Research
 from modules.research.validation import validate_research
 from modules.script.models import Script
-from modules.qa.engine import record_stage_qa
-from modules.qa.models import QAStageResult
-from modules.topic_intelligence.inventory import ContentInventoryEntry, ContentInventoryManager, inventory_path, normalize_topic
+from modules.topic_intelligence.inventory import (
+    ContentInventoryEntry,
+    ContentInventoryManager,
+    inventory_path,
+    normalize_topic,
+)
 from modules.topic_intelligence.models import OpportunityReport, TopicSelection
 
 
@@ -53,6 +58,10 @@ class ContentWorkflow:
         if project_id is None and self.inventory_manager.find_overlap(topic):
             raise ValueError("Topic overlaps an existing RITZZ inventory entry.")
 
+        candidate = next(
+            (item for item in report.candidates if item.candidate_id == candidate_id),
+            None,
+        ) if report else None
         project = self.manager.load_project(project_id) if project_id else self.manager.create_project(topic)
         project_path = self.manager.get_project_path(project)
         production_config = ProductionConfig(
@@ -72,10 +81,30 @@ class ContentWorkflow:
             minimum_duration_seconds=minimum_duration_seconds,
             constraints=constraints or [],
             project_id=project.project_id,
+            normalized_topic=normalize_topic(topic),
+            angle=candidate.angle if candidate else None,
+            source_evidence={
+                "provider": candidate.provider,
+                "discovery_sources": candidate.discovery_sources,
+                "raw_evidence": candidate.raw_evidence,
+            } if candidate else {},
+            trend_evidence=candidate.current_vidiq_demand_signals if candidate else {},
+            competition_evidence=candidate.competition_saturation_signal if candidate else None,
+            competitor_evidence=[
+                item.model_dump(mode="json")
+                for item in candidate.competitor_evidence
+            ] if candidate else [],
+            ritzz_fit=(
+                candidate.ritzz_fit.model_dump(mode="json")
+                if candidate and candidate.ritzz_fit
+                else {}
+            ),
+            ritzz_learning_signals=candidate.ritzz_learning_signals if candidate else {},
+            discovered_at=candidate.discovered_at if candidate else None,
+            approval_metadata={"method": "content workflow"} if candidate else {},
         )
         selection_path = project_path / "topic_selection.json"
         selection_path.write_text(selection.model_dump_json(indent=2), encoding="utf-8")
-        candidate = next((item for item in report.candidates if item.candidate_id == candidate_id), None) if report else None
         self.inventory_manager.add(ContentInventoryEntry(
             topic=topic,
             normalized_topic=normalize_topic(topic),

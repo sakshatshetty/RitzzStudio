@@ -82,6 +82,10 @@ jobs:
           tests/test_youtube_provider.py
           tests/test_video_pipeline_engine.py
           tests/test_topic_intelligence.py
+          tests/test_topic_intelligence_learning.py
+          tests/test_discover_pipeline_topics.py
+          tests/test_select_pipeline_topic.py
+          tests/test_content_workflow.py::test_selected_candidate_is_linked_to_report_and_project
           tests/test_config_settings.py
           -q
 
@@ -136,6 +140,9 @@ jobs:
       RITZZ_DISCOVERY_MODE: ${{ inputs.discovery_mode }}
       RITZZ_DISCOVERY_TIMEFRAME: this week
       RITZZ_TREND_TOPIC: history
+      RITZZ_CANDIDATE_POOL_TARGET: 30
+      RITZZ_DISCOVERY_FALLBACK_STAGES: broader-trending,rising,evergreen,long-tail,competitor-outliers,unscoped
+      RITZZ_M7_INVENTORY_FILE: projects/inventory.json
       RITZZ_INVENTORY_FILE: data/content_inventory.json
     steps:
       - name: Check out repository
@@ -154,11 +161,12 @@ jobs:
         run: python scripts/discover_pipeline_topics.py
 
       - name: Upload topic candidates
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ritzz-topic-candidates-${{ github.run_id }}
           path: .pipeline-artifacts/
-          if-no-files-found: error
+          if-no-files-found: warn
           include-hidden-files: true
 
       - name: Create browser approval issue

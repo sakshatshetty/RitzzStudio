@@ -11,6 +11,34 @@ from modules.topic_intelligence.market_intelligence import (
 OpportunityType = Literal["TRENDING", "EVERGREEN", "TREND_TO_EVERGREEN"]
 EditorialStatus = Literal["PASS", "REVIEW", "FAIL"]
 ValidationStatus = Literal["RECOMMENDED", "REVIEW", "REJECTED"]
+RitzzFitStatus = Literal["PASS", "REVIEW", "FAIL"]
+StoryType = Literal[
+    "WHY",
+    "HOW",
+    "ORIGIN",
+    "MYSTERY",
+    "HISTORY",
+    "SCIENCE",
+    "MYTH_VS_FACT",
+    "EXPLAINER",
+    "HUMAN_BEHAVIOR",
+    "GEOGRAPHY",
+    "INVENTION",
+    "OTHER",
+]
+
+
+class RitzzFitResult(BaseModel):
+    fit_status: RitzzFitStatus
+    fit_score: float | None = Field(default=None, ge=0, le=100)
+    story_type: StoryType = "OTHER"
+    curiosity_strength: float | None = Field(default=None, ge=0, le=100)
+    researchability: float | None = Field(default=None, ge=0, le=100)
+    visual_potential: float | None = Field(default=None, ge=0, le=100)
+    evergreen_potential: float | None = Field(default=None, ge=0, le=100)
+    audience_value: float | None = Field(default=None, ge=0, le=100)
+    temporary_trend_dependency: float | None = Field(default=None, ge=0, le=100)
+    reason: str
 
 
 class TopicDiscoveryRequest(BaseModel):
@@ -54,6 +82,7 @@ class OpportunityCandidate(BaseModel):
     validation_status: ValidationStatus = "REVIEW"
     validation_reasons: list[str] = Field(default_factory=list)
     provider: str
+    discovery_sources: list[str] = Field(default_factory=list)
     discovered_at: str = Field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
@@ -65,6 +94,8 @@ class OpportunityCandidate(BaseModel):
     competition_saturation_signal: EvidenceMetric | None = None
     competition_saturation_assessment: str | None = None
     ritzz_differentiation_angle: str | None = None
+    ritzz_fit: RitzzFitResult | None = None
+    ritzz_learning_signals: dict = Field(default_factory=dict)
 
 
 class OpportunityReport(BaseModel):
@@ -83,6 +114,7 @@ class OpportunityReport(BaseModel):
     validation_version: str = "ritzz-topic-validation-v2"
     shortlist_candidate_ids: list[str] = Field(default_factory=list)
     competitor_report: dict | None = None
+    discovery_diagnostics: dict = Field(default_factory=dict)
 
 
 class TopicSelection(BaseModel):
@@ -98,6 +130,16 @@ class TopicSelection(BaseModel):
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
     project_id: str | None = None
+    normalized_topic: str | None = None
+    angle: str | None = None
+    source_evidence: dict = Field(default_factory=dict)
+    trend_evidence: dict[str, EvidenceMetric] = Field(default_factory=dict)
+    competition_evidence: EvidenceMetric | None = None
+    competitor_evidence: list[dict] = Field(default_factory=list)
+    ritzz_fit: dict = Field(default_factory=dict)
+    ritzz_learning_signals: dict = Field(default_factory=dict)
+    discovered_at: str | None = None
+    approval_metadata: dict = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_duration(self):

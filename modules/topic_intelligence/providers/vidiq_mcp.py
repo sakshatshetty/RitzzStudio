@@ -6,11 +6,16 @@ vidIQ-specific HTTP API or hard-coding undocumented tool arguments.
 
 import json
 import re
+from pathlib import Path
 from typing import Any
 
 import requests
 
-from config.settings import VIDIQ_MCP_API_KEY, VIDIQ_MCP_URL
+from config.settings import (
+    RITZZ_DISCOVERY_FALLBACK_STAGES,
+    VIDIQ_MCP_API_KEY,
+    VIDIQ_MCP_URL,
+)
 from modules.topic_intelligence.market_intelligence import (
     MarketIntelligenceReport,
     build_market_intelligence_report,
@@ -23,11 +28,21 @@ from modules.topic_intelligence.models import (
 from modules.topic_intelligence.providers.base import ProviderUnavailableError
 
 
+def normalize_candidate_key(topic: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", topic.casefold()))
+
+
 class VidiqMcpProvider:
     name = "vidiq_mcp"
 
-    def __init__(self, endpoint: str = VIDIQ_MCP_URL, api_key: str | None = VIDIQ_MCP_API_KEY,
-                 timeout: float = 30, session: requests.Session | None = None) -> None:
+    def __init__(
+        self,
+        endpoint: str = VIDIQ_MCP_URL,
+        api_key: str | None = VIDIQ_MCP_API_KEY,
+        timeout: float = 30,
+        session: requests.Session | None = None,
+        competitor_registry_path: str | Path | None = None,
+    ) -> None:
         self.endpoint = endpoint
         self.api_key = api_key
         self.timeout = timeout
@@ -36,6 +51,10 @@ class VidiqMcpProvider:
         self._request_id = 0
         self._initialized = False
         self.protocol_version = "2025-03-26"
+        self.competitor_registry_path = Path(
+            competitor_registry_path
+            or Path(__file__).resolve().parents[3] / "config" / "competitors.json"
+        )
 
     def discover(self, request: TopicDiscoveryRequest) -> list[OpportunityCandidate]:
         if not self.api_key:
@@ -66,6 +85,451 @@ class VidiqMcpProvider:
             self._candidate(record, index, request.mode)
             for index, record in enumerate(records[:request.limit])
         ]
+
+    def discover_pipeline_candidates(
+        self,
+        request: TopicDiscoveryRequest,
+    ) -> tuple[list[OpportunityCandidate], dict[str, Any], MarketIntelligenceReport | None]:
+        """Gather a bounded, source-aware topic pool before editorial scoring."""
+        pool_limit = min(max(request.limit, 15), 30)
+        try:
+            tool_result = self._rpc("tools/list", {})
+        except ProviderUnavailableError as exc:
+            raise ProviderUnavailableError(
+                f"Could not list vidIQ tools for multi-source discovery: {exc}"
+            ) from exc
+        tools = tool_result.get("tools", []) if isinstance(tool_result, dict) else []
+        if not isinstance(tools, list):
+            raise ProviderUnavailableError("vidIQ MCP tools/list did not return a tool list.")
+        diagnostics: dict[str, Any] = {
+            "pool_target": pool_limit,
+            "fallback_stages_configured": list(RITZZ_DISCOVERY_FALLBACK_STAGES),
+            "sources_attempted": [],
+            "sources_unavailable": [],
+            "source_counts": {},
+            "duplicate_counts": {},
+            "stage_counts": [],
+            "provider_capabilities": {
+                "trending": self._select_trending_tool(tools) is not None,
+                "rising": self._select_source_tool(tools, "rising") is not None,
+                "evergreen": self._select_source_tool(tools, "evergreen") is not None,
+                "long_tail": self._select_source_tool(tools, "long-tail") is not None,
+                "competitor_videos": self._find_market_tool(tools, {"vidiq_outliers"}) is not None,
+            },
+        }
+        candidates: list[OpportunityCandidate] = []
+        seen_topics: set[str] = set()
+        competitor_report: MarketIntelligenceReport | None = None
+
+        plan: list[tuple[str, str, TopicDiscoveryRequest]] = []
+        unscoped_stage: tuple[str, str, TopicDiscoveryRequest] | None = None
+        if request.mode == "TRENDING":
+            plan.append(("trending", "TRENDING", request))
+            broader_timeframe = self._broader_timeframe(request.timeframe)
+            if (
+                broader_timeframe != request.timeframe
+                and "broader-trending" in RITZZ_DISCOVERY_FALLBACK_STAGES
+            ):
+                plan.append((
+                    "broader-trending",
+                    "TRENDING",
+                    request.model_copy(update={"timeframe": broader_timeframe}),
+                ))
+            if "rising" in RITZZ_DISCOVERY_FALLBACK_STAGES:
+                plan.append(("rising", "TRENDING", request))
+            if "evergreen" in RITZZ_DISCOVERY_FALLBACK_STAGES:
+                plan.append((
+                    "evergreen",
+                    "EVERGREEN",
+                    request.model_copy(update={"mode": "EVERGREEN", "trend_topic": None}),
+                ))
+            if "long-tail" in RITZZ_DISCOVERY_FALLBACK_STAGES:
+                plan.append((
+                    "long-tail",
+                    "EVERGREEN",
+                    request.model_copy(update={"mode": "EVERGREEN", "trend_topic": None}),
+                ))
+            if "unscoped" in RITZZ_DISCOVERY_FALLBACK_STAGES:
+                unscoped_stage = (
+                    "unscoped-trending",
+                    "TRENDING",
+                    request.model_copy(update={"trend_topic": None}),
+                )
+        else:
+            plan.append(("evergreen", "EVERGREEN", request))
+            if "long-tail" in RITZZ_DISCOVERY_FALLBACK_STAGES:
+                plan.append((
+                    "long-tail",
+                    "EVERGREEN",
+                    request.model_copy(update={"mode": "EVERGREEN", "trend_topic": None}),
+                ))
+            if "unscoped" in RITZZ_DISCOVERY_FALLBACK_STAGES:
+                unscoped_stage = (
+                    "unscoped-evergreen",
+                    "EVERGREEN",
+                    request.model_copy(update={"trend_topic": None}),
+                )
+
+        def run_source(
+            source: str,
+            tool_mode: str,
+            source_request: TopicDiscoveryRequest,
+        ) -> None:
+            diagnostics["sources_attempted"].append(source)
+            if len(candidates) >= pool_limit:
+                diagnostics.setdefault("sources_skipped", []).append(
+                    f"{source}: raw candidate pool reached its {pool_limit} target"
+                )
+                return
+            if source == "rising":
+                tool = self._select_source_tool(tools, "rising")
+            elif source == "evergreen":
+                tool = self._select_source_tool(tools, "evergreen")
+            elif source == "long-tail":
+                tool = self._select_source_tool(tools, "long-tail")
+            elif source in {"trending", "broader-trending", "unscoped-trending"}:
+                tool = self._select_trending_tool(tools)
+            else:
+                tool = self._select_tool(tools, tool_mode)
+            if tool is None:
+                diagnostics["sources_unavailable"].append(
+                    f"{source}: no supported vidIQ tool advertised"
+                )
+                diagnostics["source_counts"][source] = {"raw": 0, "unique": 0}
+                return
+            effective_request = source_request.model_copy(
+                update={"mode": tool_mode, "limit": pool_limit}
+            )
+            try:
+                arguments = self._arguments(tool, effective_request)
+                if source == "rising":
+                    arguments = self._rising_arguments(tool, effective_request, arguments)
+                result = self._rpc("tools/call", {
+                    "name": tool["name"],
+                    "arguments": arguments,
+                })
+                records = self._extract_records(result)
+                if not records:
+                    raise ProviderUnavailableError(
+                        f"vidIQ returned no recognizable records for {source}."
+                    )
+                accepted = 0
+                duplicate_count = 0
+                related_raw = 0
+                related_unique = 0
+                related_duplicate_count = 0
+                for index, record in enumerate(records[:pool_limit]):
+                    try:
+                        candidate = self._candidate(
+                            record,
+                            index,
+                            "EVERGREEN" if source == "evergreen" else "TRENDING",
+                        )
+                    except ProviderUnavailableError:
+                        continue
+                    candidate_key = normalize_candidate_key(candidate.topic)
+                    if not candidate_key:
+                        continue
+                    existing = next(
+                        (item for item in candidates if normalize_candidate_key(item.topic) == candidate_key),
+                        None,
+                    )
+                    if existing is not None:
+                        if source not in existing.discovery_sources:
+                            existing.discovery_sources.append(source)
+                        duplicate_count += 1
+                        continue
+                    if any(item.candidate_id == candidate.candidate_id for item in candidates):
+                        candidate.candidate_id = f"{source}_{candidate.candidate_id}"
+                    candidate.discovery_sources = [source]
+                    candidates.append(candidate)
+                    seen_topics.add(candidate_key)
+                    accepted += 1
+                    if len(candidates) >= pool_limit:
+                        continue
+                    normalized_record = {
+                        re.sub(r"[^a-z0-9]", "", str(key).casefold()): value
+                        for key, value in record.items()
+                    }
+                    related_values = [
+                        ("related-keyword", normalized_record.get("relatedkeywords")),
+                        (
+                            "related-question",
+                            normalized_record.get("relatedquestions")
+                            or normalized_record.get("questions"),
+                        ),
+                    ]
+                    for related_source, values in related_values:
+                        if not isinstance(values, list):
+                            continue
+                        for related_index, value in enumerate(values):
+                            if not isinstance(value, str) or not value.strip():
+                                continue
+                            related_raw += 1
+                            related_topic = value.strip()
+                            related_key = normalize_candidate_key(related_topic)
+                            if not related_key or related_key in seen_topics:
+                                related_duplicate_count += 1
+                                continue
+                            related_candidate = OpportunityCandidate(
+                                candidate_id=f"{candidate.candidate_id}_{related_source}_{related_index + 1}",
+                                topic=related_topic,
+                                primary_keyword=related_topic,
+                                opportunity_type=candidate.opportunity_type,
+                                provider=self.name,
+                                discovery_sources=[f"{source}-{related_source}"],
+                                raw_evidence={
+                                    "related_to": candidate.topic,
+                                    "relation": related_source,
+                                    "provider_record": record,
+                                },
+                            )
+                            if any(
+                                item.candidate_id == related_candidate.candidate_id
+                                for item in candidates
+                            ):
+                                related_candidate.candidate_id += f"_{index + 1}"
+                            candidates.append(related_candidate)
+                            seen_topics.add(related_key)
+                            related_unique += 1
+                            if len(candidates) >= pool_limit:
+                                break
+                        if len(candidates) >= pool_limit:
+                            break
+                diagnostics["source_counts"][source] = {
+                    "raw": len(records),
+                    "unique": accepted,
+                }
+                diagnostics["duplicate_counts"][source] = duplicate_count
+                if related_raw:
+                    diagnostics["source_counts"][f"{source}-related"] = {
+                        "raw": related_raw,
+                        "unique": related_unique,
+                    }
+                    diagnostics["duplicate_counts"][f"{source}-related"] = related_duplicate_count
+                diagnostics["stage_counts"].append({
+                    "stage": source,
+                    "raw_total": len(records),
+                    "pool_unique_total": len(candidates),
+                })
+            except ProviderUnavailableError as exc:
+                diagnostics["sources_unavailable"].append(f"{source}: {exc}")
+                diagnostics["source_counts"][source] = {"raw": 0, "unique": 0}
+
+        for source, tool_mode, source_request in plan:
+            run_source(source, tool_mode, source_request)
+
+        if "competitor-outliers" in RITZZ_DISCOVERY_FALLBACK_STAGES:
+            diagnostics["sources_attempted"].append("competitor-outliers")
+        if (
+            "competitor-outliers" in RITZZ_DISCOVERY_FALLBACK_STAGES
+            and len(candidates) < pool_limit
+        ):
+            try:
+                competitor_report = self.discover_competitor_research(
+                    f"{request.trend_topic or request.niche} curiosity explainers",
+                    limit=pool_limit,
+                )
+                raw_videos = len(competitor_report.outliers)
+                accepted = 0
+                duplicate_count = 0
+                for video in competitor_report.outliers:
+                    if len(candidates) >= pool_limit:
+                        break
+                    if (
+                        video.relative_performance is None
+                        and video.breakout_score is None
+                    ):
+                        continue
+                    topic = video.topic
+                    if not topic or topic.casefold() == video.title.casefold():
+                        topic = next((item for item in video.topics if item.casefold() != video.title.casefold()), None)
+                    if not topic:
+                        continue
+                    key = normalize_candidate_key(topic)
+                    if not key or key in seen_topics:
+                        duplicate_count += 1
+                        continue
+                    candidate = OpportunityCandidate(
+                        candidate_id=video.video_id or f"competitor_{len(candidates) + 1:03d}",
+                        topic=topic,
+                        proposed_title=None,
+                        primary_keyword=topic,
+                        related_keywords=video.tags,
+                        opportunity_type="TREND_TO_EVERGREEN",
+                        provider=self.name,
+                        discovery_sources=["competitor-outliers"],
+                        raw_evidence={"competitor_video": video.model_dump()},
+                    )
+                    if any(item.candidate_id == candidate.candidate_id for item in candidates):
+                        candidate.candidate_id = f"competitor_{candidate.candidate_id}"
+                    candidates.append(candidate)
+                    seen_topics.add(key)
+                    accepted += 1
+                diagnostics["source_counts"]["competitor-outliers"] = {
+                    "raw": raw_videos,
+                    "unique": accepted,
+                }
+                diagnostics["duplicate_counts"]["competitor-outliers"] = duplicate_count
+                diagnostics["stage_counts"].append({
+                    "stage": "competitor-outliers",
+                    "raw_total": raw_videos,
+                    "pool_unique_total": len(candidates),
+                })
+            except ProviderUnavailableError as exc:
+                diagnostics["sources_unavailable"].append(
+                    f"competitor-outliers: {exc}"
+                )
+                diagnostics["source_counts"]["competitor-outliers"] = {
+                    "raw": 0,
+                    "unique": 0,
+                }
+        elif "competitor-outliers" in RITZZ_DISCOVERY_FALLBACK_STAGES:
+            try:
+                competitor_report = self.discover_competitor_research(
+                    f"{request.trend_topic or request.niche} curiosity explainers",
+                    limit=pool_limit,
+                )
+                diagnostics["source_counts"]["competitor-outliers"] = {
+                    "raw": len(competitor_report.outliers),
+                    "unique": 0,
+                }
+                diagnostics["duplicate_counts"]["competitor-outliers"] = 0
+                diagnostics.setdefault("sources_skipped", []).append(
+                    "competitor-outliers: raw candidate pool reached its target; evidence was collected but no fallback candidates were appended"
+                )
+            except ProviderUnavailableError as exc:
+                diagnostics["sources_unavailable"].append(
+                    f"competitor-outliers: {exc}"
+                )
+                diagnostics["source_counts"]["competitor-outliers"] = {
+                    "raw": 0,
+                    "unique": 0,
+                }
+                diagnostics["duplicate_counts"]["competitor-outliers"] = 0
+
+        if "competitor-outliers" not in RITZZ_DISCOVERY_FALLBACK_STAGES:
+            diagnostics.setdefault("sources_skipped", []).append(
+                "competitor-outliers: disabled by RITZZ_DISCOVERY_FALLBACK_STAGES"
+            )
+        if unscoped_stage is None and "unscoped" not in RITZZ_DISCOVERY_FALLBACK_STAGES:
+            diagnostics.setdefault("sources_skipped", []).append(
+                "unscoped: disabled by RITZZ_DISCOVERY_FALLBACK_STAGES"
+            )
+        if unscoped_stage is not None and len(candidates) < pool_limit:
+            run_source(*unscoped_stage)
+
+        diagnostics["pool_unique_total"] = len(candidates)
+        return candidates[:pool_limit], diagnostics, competitor_report
+
+    @staticmethod
+    def _broader_timeframe(timeframe: str) -> str:
+        normalized = timeframe.casefold()
+        if "week" in normalized or "day" in normalized:
+            return "this month"
+        if "month" in normalized:
+            return "this year"
+        return timeframe
+
+    @staticmethod
+    def _select_source_tool(
+        tools: list[dict[str, Any]],
+        source: str,
+    ) -> dict[str, Any] | None:
+        if source == "evergreen":
+            for tool in tools:
+                label = (
+                    f"{tool.get('name', '')} {tool.get('description', '')}"
+                    .casefold()
+                    .replace("_", " ")
+                    .replace("-", " ")
+                )
+                if any(term in label for term in ("keyword research", "evergreen")):
+                    return tool
+            return None
+        if source == "long-tail":
+            for tool in tools:
+                label = (
+                    f"{tool.get('name', '')} {tool.get('description', '')}"
+                    .casefold()
+                    .replace("_", " ")
+                    .replace("-", " ")
+                )
+                if any(term in label for term in ("long tail", "longtail", "related question")):
+                    return tool
+            return None
+        if source == "rising":
+            for tool in tools:
+                label = (
+                    f"{tool.get('name', '')} {tool.get('description', '')}"
+                    .casefold()
+                    .replace("_", " ")
+                    .replace("-", " ")
+                )
+                schema = tool.get("inputSchema", {})
+                mode_values = (
+                    schema.get("properties", {}).get("mode", {}).get("enum", [])
+                    if isinstance(schema, dict)
+                    else []
+                )
+                if any(
+                    term in label
+                    for term in (
+                        "rising keyword",
+                        "increasing demand",
+                        "rising search",
+                        "trend discovery",
+                    )
+                ) or any(str(value).casefold() == "rising" for value in mode_values):
+                    return tool
+            return None
+        return None
+
+    @staticmethod
+    def _select_trending_tool(
+        tools: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        ranked = []
+        for tool in tools:
+            label = (
+                f"{tool.get('name', '')} {tool.get('description', '')}"
+                .casefold()
+                .replace("_", " ")
+                .replace("-", " ")
+            )
+            if any(term in label for term in ("trending video", "trend discovery", "trending topic")):
+                priority = 2 if "trending video" in label or "trending topic" in label else 1
+                ranked.append((priority, tool))
+        return max(ranked, key=lambda item: item[0])[1] if ranked else None
+
+    @staticmethod
+    def _rising_arguments(
+        tool: dict[str, Any],
+        request: TopicDiscoveryRequest,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        schema = tool.get("inputSchema", {})
+        properties = schema.get("properties", {}) if isinstance(schema, dict) else {}
+        result = dict(arguments)
+        for name in properties:
+            key = re.sub(r"[^a-z0-9]", "", str(name).casefold())
+            if key == "mode":
+                enum = properties[name].get("enum", [])
+                rising_mode = next(
+                    (value for value in enum if str(value).casefold() == "rising"),
+                    None,
+                )
+                if rising_mode is not None:
+                    result[name] = rising_mode
+            elif key in {"keyword", "query", "searchterm", "searchquery"} and name not in result:
+                result[name] = (
+                    f"{request.trend_topic} curiosity explainers"
+                    if request.trend_topic
+                    else f"{request.niche} YouTube topic opportunities"
+                )
+            elif key in {"topic", "category"} and request.trend_topic:
+                result[name] = request.trend_topic
+        return result
 
     def discover_outliers(self, query: str, limit: int = 10) -> MarketIntelligenceReport:
         """Compatibility wrapper for callers that require outlier results."""
@@ -103,6 +567,8 @@ class VidiqMcpProvider:
         tools = result.get("tools", []) if isinstance(result, dict) else []
         outlier_tool = self._find_market_tool(tools, {"vidiq_outliers"})
         channel_tool = self._find_market_tool(tools, {"vidiq_similar_channels"})
+        configured_competitors, registry_warnings = self._load_competitor_registry()
+        warnings.extend(registry_warnings)
         if outlier_tool is None:
             warnings.append("vidIQ MCP does not advertise the vidiq_outliers competitor-video tool.")
         if channel_tool is None:
@@ -124,18 +590,57 @@ class VidiqMcpProvider:
                 except ProviderUnavailableError as exc:
                     warnings.append(f"vidIQ similar-channel research failed: {exc}")
         if outlier_tool is not None:
-            arguments = self._market_arguments(outlier_tool, query, limit)
-            if arguments is None:
-                warnings.append("The advertised vidIQ outlier tool requires unsupported arguments.")
-            else:
+            channel_schema = outlier_tool.get("inputSchema", {})
+            properties = channel_schema.get("properties", {}) if isinstance(channel_schema, dict) else {}
+            channel_fields = {
+                re.sub(r"[^a-z0-9]", "", str(name).casefold())
+                for name in properties
+            } & {"channel", "channelid", "channelhandle", "channelurl"}
+            can_scope_channels = bool(channel_fields)
+            scopes = (
+                [(entry, entry.get("group")) for entry in configured_competitors]
+                if configured_competitors and can_scope_channels
+                else [(None, None)]
+            )
+            if configured_competitors and not can_scope_channels:
+                warnings.append(
+                    "Configured competitor channels were not individually queried because "
+                    "the advertised vidIQ outlier schema has no channel selector."
+                )
+            for competitor, group in scopes:
+                arguments = self._market_arguments(
+                    outlier_tool,
+                    query,
+                    limit,
+                    competitor=competitor,
+                )
+                if arguments is None:
+                    warnings.append("The advertised vidIQ outlier tool requires unsupported arguments.")
+                    continue
                 try:
                     response = self._rpc("tools/call", {
                         "name": outlier_tool["name"],
                         "arguments": arguments,
                     })
-                    videos = self._extract_records(response)
+                    batch = self._extract_records(response)
+                    if competitor is not None:
+                        for record in batch:
+                            record.setdefault("channelGroup", group)
+                            record.setdefault(
+                                "channelId",
+                                competitor.get("channel_id")
+                                or competitor.get("channel")
+                                or competitor.get("handle"),
+                            )
+                            record.setdefault("channelTitle", competitor.get("name"))
+                    videos.extend(batch)
                 except ProviderUnavailableError as exc:
-                    warnings.append(f"vidIQ competitor-video research failed: {exc}")
+                    scope_name = (
+                        competitor.get("name") or competitor.get("channel_id")
+                        if competitor
+                        else "topic query"
+                    )
+                    warnings.append(f"vidIQ competitor-video research failed for {scope_name}: {exc}")
 
         return build_market_intelligence_report(
             query,
@@ -145,6 +650,32 @@ class VidiqMcpProvider:
             performance_tool_available=outlier_tool is not None,
             warnings=warnings,
         )
+
+    def _load_competitor_registry(self) -> tuple[list[dict[str, Any]], list[str]]:
+        try:
+            payload = json.loads(
+                self.competitor_registry_path.read_text(encoding="utf-8")
+            )
+        except FileNotFoundError:
+            return [], [
+                f"Competitor registry is unavailable: {self.competitor_registry_path} was not found."
+            ]
+        except (OSError, json.JSONDecodeError) as exc:
+            return [], [f"Competitor registry could not be read: {exc}"]
+        if not isinstance(payload, dict):
+            return [], ["Competitor registry must be a JSON object."]
+        competitors = []
+        for group in ("core", "adjacent", "emerging"):
+            entries = payload.get(group, [])
+            if not isinstance(entries, list):
+                return [], [f"Competitor registry group '{group}' must be a list."]
+            for entry in entries:
+                if not isinstance(entry, dict) or entry.get("enabled", True) is False:
+                    continue
+                if not any(entry.get(key) for key in ("channel_id", "channel", "handle")):
+                    continue
+                competitors.append({**entry, "group": group})
+        return competitors, []
 
     @staticmethod
     def _find_market_tool(
@@ -165,6 +696,7 @@ class VidiqMcpProvider:
         tool: dict[str, Any],
         query: str,
         limit: int,
+        competitor: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         schema = tool.get("inputSchema", {})
         properties = schema.get("properties", {}) if isinstance(schema, dict) else {}
@@ -174,7 +706,13 @@ class VidiqMcpProvider:
             key = re.sub(r"[^a-z0-9]", "", str(name).casefold())
             enum = definition.get("enum", []) if isinstance(definition, dict) else []
             default = definition.get("default") if isinstance(definition, dict) else None
-            if key in {"query", "keyword", "searchterm", "searchquery", "topic", "niche", "category"}:
+            if key in {"channel", "channelid", "channelhandle", "channelurl"} and competitor:
+                arguments[name] = (
+                    competitor.get("channel_id")
+                    or competitor.get("handle")
+                    or competitor.get("channel")
+                )
+            elif key in {"query", "keyword", "searchterm", "searchquery", "topic", "niche", "category"}:
                 arguments[name] = query
             elif key in {"limit", "count", "maxresults", "numresults", "topn"}:
                 arguments[name] = limit
@@ -299,15 +837,16 @@ class VidiqMcpProvider:
         ranked = []
         for tool in tools:
             label = f"{tool.get('name', '')} {tool.get('description', '')}".casefold().replace("_", " ").replace("-", " ")
-            trending = any(word in label for word in ("rising keyword", "trending video", "trend discovery", "trending topic"))
+            trending = any(word in label for word in ("trending video", "trend discovery", "trending topic"))
+            rising = any(word in label for word in ("rising keyword", "increasing demand", "rising search"))
             evergreen = "keyword research" in label
             schema = tool.get("inputSchema", {})
             mode_values = schema.get("properties", {}).get("mode", {}).get("enum", [])
             supports_rising = "rising" in mode_values
             if mode == "TRENDING" and trending:
-                ranked.append((3 if supports_rising else 2 if "rising keyword" in label or "trend discovery" in label else 1, tool))
-            elif mode == "TRENDING" and supports_rising:
-                ranked.append((3, tool))
+                ranked.append((4 if "trending video" in label or "trending topic" in label else 3, tool))
+            elif mode == "TRENDING" and (rising or supports_rising):
+                ranked.append((2, tool))
             elif mode == "EVERGREEN" and evergreen:
                 ranked.append((1, tool))
         return max(ranked, key=lambda item: item[0])[1] if ranked else None
@@ -325,11 +864,15 @@ class VidiqMcpProvider:
             default = definition.get("default")
             if key == "mode":
                 desired = "rising" if request.mode == "TRENDING" else "research"
-                if enum and desired not in enum:
+                selected = next(
+                    (option for option in enum or [] if str(option).casefold() == desired),
+                    desired,
+                )
+                if enum and selected == desired and desired not in enum:
                     raise ProviderUnavailableError(
                         f"vidIQ tool does not support '{desired}' mode."
                     )
-                result[name] = desired
+                result[name] = selected
             elif key in {"period", "timeframe", "time_frame", "date_range", "time_range"}:
                 value = request.timeframe
                 if enum:

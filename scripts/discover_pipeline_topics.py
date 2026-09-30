@@ -1,10 +1,10 @@
 """Discover four pipeline candidates without interactive terminal input."""
 
-import hashlib
 import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -40,6 +40,7 @@ def _candidate_markdown(index: int, candidate) -> str:
         if competition and competition.available and competition.value is not None
         else "No current competition metric available."
     )
+    fit = candidate.ritzz_fit
     competitor_lines = []
     for evidence in candidate.competitor_evidence[:3]:
         observed = ", ".join(
@@ -81,12 +82,22 @@ def _candidate_markdown(index: int, candidate) -> str:
         f"- Competition/saturation interpretation: "
         f"{candidate.competition_saturation_assessment or 'Not assessed.'}\n"
         f"- RITZZ differentiation angle: {candidate.ritzz_differentiation_angle or 'Not provided.'}\n"
+        f"- RITZZ fit: `{fit.fit_status if fit else 'REVIEW'}` "
+        f"({fit.reason if fit else 'Not assessed.'})\n"
+        f"- RITZZ historical evidence: `{candidate.ritzz_learning_signals.get('sample_size', 'INSUFFICIENT')}` "
+        f"sample; {len(candidate.ritzz_learning_signals.get('topic_signals', []))} matching historical topic record(s).\n"
         f"- Competitor video performance available: "
         f"`{str(candidate.competitor_topic_performance_available).lower()}`\n"
         f"- Repeated competitor topic patterns: {pattern_summary}\n"
         f"- Relevant competitor evidence:\n{competitor_summary}\n"
         f"- Notes: {rationale}\n"
     )
+
+
+class InsufficientTopicCandidatesError(RuntimeError):
+    def __init__(self, message: str, diagnostics: dict[str, Any]):
+        super().__init__(message)
+        self.diagnostics = diagnostics
 
 
 def discover_four_candidates(
@@ -96,52 +107,44 @@ def discover_four_candidates(
     report = engine.discover(request)
     candidates: list[OpportunityCandidate] = []
     seen_topics: set[str] = set()
-    seen_ids: set[str] = set()
+    for candidate in report.candidates:
+        if (
+            candidate.editorial_status != "PASS"
+            or candidate.ritzz_fit is None
+            or candidate.ritzz_fit.fit_status != "PASS"
+            or candidate.validation_status != "RECOMMENDED"
+            or candidate.filter_reasons
+            or any("near-duplicate" in reason.casefold() for reason in candidate.validation_reasons)
+        ):
+            continue
+        key = normalize_topic(candidate.topic)
+        if key and key not in seen_topics:
+            seen_topics.add(key)
+            candidates.append(candidate)
 
-    def add_distinct(items: list[OpportunityCandidate]) -> None:
-        for candidate in items:
-            if (
-                candidate.editorial_status != "PASS"
-                or candidate.filter_reasons
-                or any("near-duplicate" in reason.casefold() for reason in candidate.validation_reasons)
-            ):
-                continue
-            key = normalize_topic(candidate.topic)
-            if key and key not in seen_topics:
-                seen_topics.add(key)
-                if candidate.candidate_id in seen_ids:
-                    suffix = hashlib.sha256(key.encode("utf-8")).hexdigest()[:8]
-                    candidate = candidate.model_copy(
-                        update={"candidate_id": f"{candidate.candidate_id}_{suffix}"}
-                    )
-                seen_ids.add(candidate.candidate_id)
-                candidates.append(candidate)
-
-    add_distinct(report.candidates)
-    discovery_notes = [f"{request.trend_topic or 'unscoped'}: {len(candidates)} distinct candidate(s)"]
-
-    if len(candidates) < 4 and request.mode == "TRENDING" and request.trend_topic:
-        broader_request = request.model_copy(update={"trend_topic": None, "force_refresh": True})
-        broader_report = engine.discover(broader_request)
-        add_distinct(broader_report.candidates)
-        report = broader_report
-        discovery_notes.append(f"unscoped fallback: {len(candidates)} distinct candidate(s) total")
-        report.warnings.insert(
-            0,
-            f"The '{request.trend_topic}' category returned fewer than four unique candidates; unscoped trending results were added.",
-        )
-
-    report.candidates = candidates[:4]
+    diagnostics = report.discovery_diagnostics
+    discovery_notes = [
+        f"{source}: raw={counts.get('raw', 0)}, unique={counts.get('unique', 0)}"
+        for source, counts in diagnostics.get("source_counts", {}).items()
+    ]
+    if not discovery_notes:
+        discovery_notes = [f"{request.trend_topic or 'unscoped'}: {len(candidates)} eligible candidate(s)"]
+    candidates = candidates[:4]
+    report.candidates = candidates
     report.shortlist_candidate_ids = [
         candidate.candidate_id
         for candidate in report.candidates
     ]
     if len(report.candidates) < 4:
-        warning_text = "; ".join(report.warnings)
-        raise RuntimeError(
-            f"vidIQ returned only {len(report.candidates)} distinct candidates after fallback discovery; four are required. "
-            f"Discovery details: {'; '.join(discovery_notes)}. {warning_text}"
+        diagnostic_text = json.dumps(diagnostics, ensure_ascii=False, sort_keys=True)
+        message = (
+            f"Discovery produced {len(report.candidates)} final eligible distinct candidates; four are required. "
+            f"Sources attempted: {', '.join(diagnostics.get('sources_attempted', [])) or 'none'}. "
+            f"Sources unavailable: {', '.join(diagnostics.get('sources_unavailable', [])) or 'none'}. "
+            f"Discovery diagnostics: {diagnostic_text}. "
+            f"Warnings: {'; '.join(report.warnings)}"
         )
+        raise InsufficientTopicCandidatesError(message, diagnostics)
     return report, report.candidates, discovery_notes
 
 
@@ -164,16 +167,97 @@ def main() -> int:
     engine = TopicIntelligenceEngine(
         inventory_manager=ContentInventoryManager(inventory_file),
     )
-    report, candidates, discovery_notes = discover_four_candidates(
-        engine,
-        TopicDiscoveryRequest(
-            mode=discovery_mode,
-            timeframe=timeframe,
-            trend_topic=trend_topic,
-            force_refresh=True,
-            pipeline_topic_gate=True,
-        ),
-    )
+    try:
+        report, candidates, discovery_notes = discover_four_candidates(
+            engine,
+            TopicDiscoveryRequest(
+                mode=discovery_mode,
+                timeframe=timeframe,
+                trend_topic=trend_topic,
+                force_refresh=True,
+                pipeline_topic_gate=True,
+            ),
+        )
+    except InsufficientTopicCandidatesError as exc:
+        diagnostic_path = output_directory / "topic_discovery_diagnostics.json"
+        diagnostic_path.write_text(
+            json.dumps(exc.diagnostics, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        diagnostic_markdown = [
+            "# Topic discovery diagnostics",
+            "",
+            f"- Request: `{json.dumps(exc.diagnostics.get('request', {}), ensure_ascii=False)}`",
+            f"- Final eligible candidates: `{exc.diagnostics.get('final_count', 0)}` (4 required)",
+            f"- Sources attempted: {', '.join(exc.diagnostics.get('sources_attempted', [])) or 'none'}",
+            f"- Sources unavailable: {', '.join(exc.diagnostics.get('sources_unavailable', [])) or 'none'}",
+            f"- Provider capabilities: `{json.dumps(exc.diagnostics.get('provider_capabilities', {}), ensure_ascii=False)}`",
+            f"- M7 learning: `{json.dumps(exc.diagnostics.get('m7_learning', {}), ensure_ascii=False)}`",
+            "",
+            "## Source counts",
+            "",
+        ]
+        for source, counts in exc.diagnostics.get("source_counts", {}).items():
+            diagnostic_markdown.append(
+                f"- **{source}**: raw={counts.get('raw', 0)}, unique={counts.get('unique', 0)}"
+            )
+        for source, duplicate_count in exc.diagnostics.get("duplicate_counts", {}).items():
+            diagnostic_markdown.append(f"- **{source} duplicates removed**: {duplicate_count}")
+        diagnostic_markdown.extend(["", "## Filter-stage counts", ""])
+        for stage in (
+            "raw_candidates",
+            "after_normalization",
+            "after_inventory_filter",
+            "after_niche_filter",
+            "after_ritzz_fit_prefilter",
+            "after_editorial_filter",
+            "after_near_duplicate_filter",
+            "after_final_validation",
+            "final_count",
+        ):
+            if stage in exc.diagnostics:
+                diagnostic_markdown.append(f"- **{stage}**: {exc.diagnostics[stage]}")
+        diagnostic_markdown.extend(["", "## Candidate exclusions", ""])
+        for exclusion in exc.diagnostics.get("candidate_exclusions", []):
+            reasons = (
+                exclusion.get("filter_reasons")
+                or exclusion.get("validation_reasons")
+                or [exclusion.get("ritzz_fit", {}).get("reason", "Not eligible")]
+            )
+            diagnostic_markdown.append(
+                f"- **{exclusion.get('topic', 'Unknown')}** "
+                f"(sources: {', '.join(exclusion.get('sources', [])) or 'unknown'}): "
+                f"{'; '.join(str(reason) for reason in reasons)}"
+            )
+        for exclusion in exc.diagnostics.get("inventory_exclusions", []):
+            diagnostic_markdown.append(
+                f"- **{exclusion.get('topic', 'Unknown')}** (inventory): {exclusion.get('reason', 'overlap')}"
+            )
+        for exclusion in exc.diagnostics.get("ritzz_fit_exclusions", []):
+            diagnostic_markdown.append(
+                f"- **{exclusion.get('topic', 'Unknown')}** (RITZZ fit): {exclusion.get('reason', 'not eligible')}"
+            )
+        diagnostic_markdown.extend([
+            "",
+            "## Recommended recovery",
+            "",
+            (
+                "Review provider capability/source counts, broaden supported discovery sources, "
+                "or revise the preferred category/timeframe. Do not lower editorial or RITZZ-fit gates."
+            ),
+            "",
+        ])
+        (output_directory / "topic_discovery_diagnostics.md").write_text(
+            "\n".join(diagnostic_markdown),
+            encoding="utf-8",
+        )
+        message = f"## Topic discovery did not find four eligible candidates\n\n{exc}\n"
+        github_summary = os.environ.get("GITHUB_STEP_SUMMARY")
+        if github_summary:
+            with Path(github_summary).open("a", encoding="utf-8") as stream:
+                stream.write(message)
+        print(message, file=sys.stderr)
+        return 1
 
     payload = {
         "report_id": report.report_id,

@@ -79,6 +79,11 @@ with the selected number.
 | M9 | First repeatable production / Video #2 readiness | Planned next validation milestone; validates the existing production flow with a new second project and the first real M7 learning signal |
 | M10 | M7 learning feedback into M0 topic selection | Deferred; connects inventory/analytics insights back into the topic and opportunity decision layer |
 
+M1 now supports an optional, read-only view of existing M7 analytics snapshots
+for candidate context. This does not mark M10 complete: it does not adapt
+scoring weights, train a prediction model, or let historical performance
+bypass topic/editorial gates.
+
 A milestone is complete only when its acceptance criteria, focused tests, artifacts, and human approval requirements are satisfied.
 
 ## M0 - Foundation and Existing Production Engines

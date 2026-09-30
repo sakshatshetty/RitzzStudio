@@ -30,6 +30,10 @@ from modules.topic_intelligence.models import (
 )
 from modules.topic_intelligence.providers.base import ProviderUnavailableError
 from modules.topic_intelligence.providers.vidiq_mcp import VidiqMcpProvider
+from modules.topic_intelligence.ritzz_fit import (
+    build_ritzz_fit_result,
+    prefilter_reason,
+)
 from modules.topic_intelligence.validation import validate_candidates
 
 
@@ -247,6 +251,30 @@ def test_competitor_topics_repeated_across_channels_are_summarized():
     assert report.topic_patterns[0].channel_count == 2
 
 
+def test_raw_views_alone_do_not_create_successful_topic_patterns():
+    report = build_market_intelligence_report(
+        "space",
+        [
+            {
+                "videoId": "video-1",
+                "videoTitle": "A mystery in space",
+                "videoTopics": ["space mysteries"],
+                "channelId": "channel-1",
+                "viewCount": 1_000_000,
+            },
+            {
+                "videoId": "video-2",
+                "videoTitle": "Another mystery in space",
+                "videoTopics": ["space mysteries"],
+                "channelId": "channel-2",
+                "viewCount": 900_000,
+            },
+        ],
+    )
+
+    assert report.topic_patterns == []
+
+
 def test_missing_competitor_metrics_remain_unavailable():
     report = build_market_intelligence_report(
         "space",
@@ -280,6 +308,313 @@ def test_provider_records_unavailable_competitor_video_capability():
     assert report.outliers == []
     assert any("does not advertise the vidiq_outliers" in warning for warning in report.warnings)
     assert [method for method, _ in provider.methods] == ["tools/list"]
+
+
+def test_pipeline_discovery_uses_ordered_multi_source_fallbacks():
+    class MockedVidiqProvider(VidiqMcpProvider):
+        def __init__(self):
+            super().__init__(api_key="fixture")
+            self.calls = []
+            self.tools = [
+                {
+                    "name": "trending_videos",
+                    "inputSchema": {
+                        "properties": {
+                            "topic": {"type": "string"},
+                            "timeframe": {"type": "string"},
+                            "limit": {"type": "integer"},
+                        },
+                        "required": ["topic"],
+                    },
+                },
+                {
+                    "name": "rising_keywords",
+                    "inputSchema": {
+                        "properties": {
+                            "keyword": {"type": "string"},
+                            "mode": {"type": "string", "enum": ["rising"]},
+                            "limit": {"type": "integer"},
+                        },
+                        "required": ["keyword", "mode"],
+                    },
+                },
+                {
+                    "name": "keyword_research",
+                    "description": "Research related keywords",
+                    "inputSchema": {
+                        "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}},
+                        "required": ["query"],
+                    },
+                },
+                {
+                    "name": "vidiq_similar_channels",
+                    "inputSchema": {
+                        "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}},
+                        "required": ["query"],
+                    },
+                },
+                {
+                    "name": "vidiq_outliers",
+                    "inputSchema": {
+                        "properties": {
+                            "keyword": {"type": "string"},
+                            "contentType": {"type": "string"},
+                            "sort": {"type": "string"},
+                            "limit": {"type": "integer"},
+                        },
+                        "required": ["keyword", "contentType", "sort", "limit"],
+                    },
+                },
+            ]
+
+        def _rpc(self, method, params):
+            if method == "tools/list":
+                return {"tools": self.tools}
+            name = params["name"]
+            arguments = params["arguments"]
+            self.calls.append((name, arguments))
+            if name == "trending_videos":
+                label = "History weekly mystery" if arguments.get("timeframe") == "this week" else "History monthly discovery"
+                return {"structuredContent": {"topics": [{"topic": label}]}}
+            if name == "rising_keywords":
+                raise ProviderUnavailableError("rising tool timed out")
+            if name == "keyword_research":
+                return {"structuredContent": {"keywords": [
+                    {"keyword": "Why do ancient maps show sea monsters?"},
+                    {"keyword": "How did Roman concrete last so long?"},
+                ]}}
+            if name == "vidiq_similar_channels":
+                return {"structuredContent": {"channels": [{"channelId": "channel-1", "channelTitle": "History Lab"}]}}
+            if name == "vidiq_outliers":
+                return {"structuredContent": {"videos": [{
+                    "videoId": "video-1",
+                    "videoTitle": "How Romans Built Roads",
+                    "videoTopics": ["Roman road engineering"],
+                    "channelId": "channel-1",
+                    "viewCount": 500,
+                    "baselineViews": 100,
+                }]}}
+            raise AssertionError(name)
+
+    provider = MockedVidiqProvider()
+    candidates, diagnostics, competitor_report = provider.discover_pipeline_candidates(
+        TopicDiscoveryRequest(
+            mode="TRENDING",
+            timeframe="this week",
+            trend_topic="history",
+            limit=10,
+            pipeline_topic_gate=True,
+        )
+    )
+
+    assert diagnostics["sources_attempted"] == [
+        "trending",
+        "broader-trending",
+        "rising",
+        "evergreen",
+        "long-tail",
+        "competitor-outliers",
+        "unscoped-trending",
+    ]
+    assert diagnostics["sources_unavailable"] == [
+        "rising: rising tool timed out",
+        "long-tail: no supported vidIQ tool advertised",
+    ]
+    assert diagnostics["source_counts"]["evergreen"]["unique"] == 2
+    assert diagnostics["source_counts"]["long-tail"] == {"raw": 0, "unique": 0}
+    assert any(item.discovery_sources == ["competitor-outliers"] for item in candidates)
+    assert competitor_report is not None
+    assert competitor_report.outliers[0].topic == "Roman road engineering"
+    assert provider.calls[0][1]["topic"] == "history"
+    assert provider.calls[1][1]["timeframe"] == "this month"
+    assert "topic" not in provider.calls[-1][1]
+
+
+def test_pipeline_discovery_can_backfill_a_small_trending_pool_from_rising_keywords():
+    class RisingProvider(VidiqMcpProvider):
+        def __init__(self):
+            super().__init__(api_key="fixture")
+            self.tools = [
+                {
+                    "name": "trending_videos",
+                    "inputSchema": {
+                        "properties": {"topic": {"type": "string"}, "limit": {"type": "integer"}},
+                        "required": ["topic"],
+                    },
+                },
+                {
+                    "name": "rising_keywords",
+                    "inputSchema": {
+                        "properties": {
+                            "keyword": {"type": "string"},
+                            "mode": {"type": "string", "enum": ["rising"]},
+                            "limit": {"type": "integer"},
+                        },
+                        "required": ["keyword", "mode"],
+                    },
+                },
+            ]
+
+        def _rpc(self, method, params):
+            if method == "tools/list":
+                return {"tools": self.tools}
+            if params["name"] == "trending_videos":
+                return {"structuredContent": {"topics": [{"topic": "History's lost inventions"}]}}
+            if params["name"] == "rising_keywords":
+                return {"structuredContent": {"keywords": [
+                    {"keyword": "Why did ancient cities build underground tunnels?"},
+                    {"keyword": "How did sailors navigate before GPS?"},
+                    {"keyword": "Why are old maps full of sea monsters?"},
+                    {"keyword": "How did ancient people make purple dye?"},
+                ]}}
+            raise AssertionError(params["name"])
+
+    provider = RisingProvider()
+    candidates, diagnostics, _ = provider.discover_pipeline_candidates(
+        TopicDiscoveryRequest(
+            mode="TRENDING",
+            trend_topic="history",
+            timeframe="this week",
+            pipeline_topic_gate=True,
+        )
+    )
+
+    assert diagnostics["source_counts"]["trending"]["raw"] == 1
+    assert diagnostics["source_counts"]["rising"]["unique"] == 4
+    assert len(candidates) >= 4
+    assert all("rising" in item.discovery_sources for item in candidates if item.topic.startswith("Why") or item.topic.startswith("How"))
+
+    rising_only_provider = RisingProvider()
+    rising_only_provider.tools = rising_only_provider.tools[1:]
+    rising_only_candidates, rising_only_diagnostics, _ = (
+        rising_only_provider.discover_pipeline_candidates(
+            TopicDiscoveryRequest(
+                mode="TRENDING",
+                trend_topic="history",
+                timeframe="this week",
+                pipeline_topic_gate=True,
+            )
+        )
+    )
+    assert rising_only_diagnostics["source_counts"]["trending"] == {"raw": 0, "unique": 0}
+    assert len(rising_only_candidates) == 4
+    assert all(item.discovery_sources == ["rising"] for item in rising_only_candidates)
+
+
+def test_long_tail_source_is_used_only_when_advertised():
+    class LongTailProvider(VidiqMcpProvider):
+        def __init__(self):
+            super().__init__(api_key="fixture")
+            self.tools = [{
+                "name": "long_tail_keywords",
+                "description": "Discover long-tail keyword questions",
+                "inputSchema": {
+                    "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}},
+                    "required": ["query"],
+                },
+            }]
+
+        def _rpc(self, method, params):
+            if method == "tools/list":
+                return {"tools": self.tools}
+            return {"structuredContent": {"keywords": [
+                {"keyword": "Why did medieval builders use flying buttresses?"},
+                {"keyword": "How did ancient sailors navigate by stars?"},
+            ]}}
+
+    provider = LongTailProvider()
+    candidates, diagnostics, _ = provider.discover_pipeline_candidates(
+        TopicDiscoveryRequest(mode="EVERGREEN", limit=15)
+    )
+
+    assert diagnostics["provider_capabilities"]["long_tail"] is True
+    assert diagnostics["source_counts"]["long-tail"]["unique"] == 2
+    assert all("long-tail" in item.discovery_sources for item in candidates)
+
+
+def test_provider_related_question_is_a_separate_story_candidate_not_a_rewritten_trend():
+    class RelatedQuestionProvider(VidiqMcpProvider):
+        def __init__(self):
+            super().__init__(api_key="fixture")
+            self.tools = [{
+                "name": "trending_videos",
+                "inputSchema": {
+                    "properties": {"topic": {"type": "string"}, "limit": {"type": "integer"}},
+                    "required": ["topic"],
+                },
+            }]
+
+        def _rpc(self, method, params):
+            if method == "tools/list":
+                return {"tools": self.tools}
+            return {"structuredContent": {"topics": [{
+                "topic": "England vs Spain",
+                "relatedQuestions": [
+                    "Why did England and Spain become football rivals?"
+                ],
+            }]}}
+
+    candidates, _, _ = RelatedQuestionProvider().discover_pipeline_candidates(
+        TopicDiscoveryRequest(
+            mode="TRENDING",
+            trend_topic="history",
+            timeframe="this week",
+            limit=15,
+        )
+    )
+    story_candidate = next(
+        item for item in candidates
+        if item.topic.startswith("Why did England")
+    )
+
+    assert story_candidate.discovery_sources == ["trending-related-question"]
+    assert story_candidate.raw_evidence["related_to"] == "England vs Spain"
+    assert story_candidate.topic != "England vs Spain"
+
+
+def test_configured_competitor_registry_scopes_queries_and_preserves_group(tmp_path):
+    registry_path = tmp_path / "competitors.json"
+    registry_path.write_text(json.dumps({
+        "core": [{"channel_id": "core-1", "name": "Core Example"}],
+        "adjacent": [{"handle": "@adjacent", "name": "Adjacent Example"}],
+        "emerging": [],
+    }))
+
+    class ScopedProvider(VidiqMcpProvider):
+        def __init__(self):
+            super().__init__(api_key="fixture", competitor_registry_path=registry_path)
+            self.calls = []
+
+        def _rpc(self, method, params):
+            if method == "tools/list":
+                return {"tools": [{
+                    "name": "vidiq_outliers",
+                    "inputSchema": {
+                        "properties": {
+                            "keyword": {"type": "string"},
+                            "channelId": {"type": "string"},
+                            "contentType": {"type": "string"},
+                            "sort": {"type": "string"},
+                            "limit": {"type": "integer"},
+                        },
+                        "required": ["keyword", "channelId", "contentType", "sort", "limit"],
+                    },
+                }]}
+            self.calls.append(params["arguments"])
+            channel_id = params["arguments"]["channelId"]
+            return {"structuredContent": {"videos": [{
+                "videoId": f"video-{channel_id}",
+                "videoTitle": f"Why {channel_id} matters",
+                "topic": "historical engineering",
+                "viewCount": 200,
+                "baselineViews": 100,
+            }]}}
+
+    provider = ScopedProvider()
+    report = provider.discover_competitor_research("history explainers", limit=5)
+
+    assert [call["channelId"] for call in provider.calls] == ["core-1", "@adjacent"]
+    assert {item.channel_group for item in report.outliers} == {"core", "adjacent"}
 
 
 def candidate(topic, *, keyword_score=None, search_volume=None, competition=None, growth=None):
@@ -387,6 +722,247 @@ def test_pipeline_topic_gate_keeps_editorial_pass_even_if_metrics_need_review(tm
     assert all(item.editorial_status == "PASS" for item in report.candidates)
     assert all("review" not in item.topic.casefold() for item in report.candidates)
     assert all(item.topic != "United Nations" for item in report.candidates)
+
+
+def test_editorial_information_is_not_treated_as_a_filter_reason():
+    item = candidate("Chaos Canyon secret badge")
+    assessment = CandidateEditorialAssessment(
+        candidate_id=item.candidate_id,
+        audience_fit=85,
+        curiosity=82,
+        evergreen=70,
+        visual=80,
+        researchability=75,
+        differentiation=70,
+        saturation=65,
+        status="PASS",
+        rationale=["None significant from the supplied data."],
+        filter_reasons=["None significant from the supplied data."],
+    )
+
+    apply_editorial_assessments([item], [assessment])
+
+    assert item.editorial_status == "PASS"
+    assert item.rationale == ["None significant from the supplied data."]
+    assert item.filter_reasons == []
+
+
+def test_validation_rejects_matchups_in_reverse_order_and_related_pirate_topics():
+    matchups = [
+        candidate("England vs Spain"),
+        candidate("Spain vs England"),
+    ]
+    related = [
+        candidate("Why do pirates wear eye patches?"),
+        candidate("Why did sailors use eye patches?"),
+    ]
+    for item in matchups + related:
+        item.opportunity_score = 75
+        item.score_completeness = 1
+
+    validate_candidates(matchups)
+    validate_candidates(related)
+
+    assert matchups[0].validation_status == "RECOMMENDED"
+    assert matchups[1].validation_status == "REVIEW"
+    assert any("near-duplicate" in reason.casefold() for reason in matchups[1].validation_reasons)
+    assert related[0].validation_status == "RECOMMENDED"
+    assert related[1].validation_status == "REVIEW"
+    assert any("near-duplicate" in reason.casefold() for reason in related[1].validation_reasons)
+
+
+def test_pipeline_discovery_reports_candidate_stage_counts_and_keeps_exactly_four(tmp_path):
+    class PipelineProvider(FakeProvider):
+        def discover_pipeline_candidates(self, request):
+            items = [
+                candidate(f"Curiosity question {index}", search_volume=100 - index)
+                for index in range(6)
+            ]
+            for item in items:
+                item.discovery_sources = ["rising"]
+            return items, {
+                "pool_target": request.limit,
+                "sources_attempted": ["trending", "rising", "evergreen"],
+                "sources_unavailable": ["evergreen: tool unavailable"],
+                "source_counts": {
+                    "trending": {"raw": 2, "unique": 2},
+                    "rising": {"raw": 6, "unique": 4},
+                    "evergreen": {"raw": 0, "unique": 0},
+                },
+                "stage_counts": [
+                    {"stage": "trending", "raw_total": 2, "pool_unique_total": 2},
+                    {"stage": "rising", "raw_total": 6, "pool_unique_total": 6},
+                ],
+            }, None
+
+    report = TopicIntelligenceEngine(
+        provider=PipelineProvider(),
+        cache_dir=tmp_path,
+        editorial_evaluator=FakeEditorialEvaluator(),
+    ).discover(TopicDiscoveryRequest(pipeline_topic_gate=True))
+
+    assert len(report.candidates) == 4
+    assert report.discovery_diagnostics["raw_candidates"] == 6
+    assert report.discovery_diagnostics["after_editorial_filter"] == 6
+    assert report.discovery_diagnostics["after_near_duplicate_filter"] == 6
+    assert report.discovery_diagnostics["final_count"] == 4
+    assert report.discovery_diagnostics["source_counts"]["rising"]["unique"] == 4
+    assert report.discovery_diagnostics["sources_unavailable"] == [
+        "evergreen: tool unavailable"
+    ]
+
+
+def test_pipeline_does_not_promote_editorial_review_or_fail_candidates(tmp_path):
+    class MixedEditorialEvaluator(FakeEditorialEvaluator):
+        def assess(self, candidates):
+            statuses = {
+                "Strong explainer topic": "PASS",
+                "Under-specified topic": "REVIEW",
+                "Movie recap": "FAIL",
+            }
+            return [
+                CandidateEditorialAssessment(
+                    candidate_id=item.candidate_id,
+                    audience_fit=80,
+                    curiosity=80,
+                    evergreen=80,
+                    visual=80,
+                    researchability=80,
+                    differentiation=80,
+                    saturation=80,
+                    status=statuses[item.topic],
+                    rationale=[],
+                )
+                for item in candidates
+            ]
+
+    class ManyProvider(FakeProvider):
+        def discover_pipeline_candidates(self, request):
+            return [
+                candidate(topic, search_volume=100)
+                for topic in ("Strong explainer topic", "Under-specified topic", "Movie recap")
+            ], {"source_counts": {"trending": {"raw": 3, "unique": 3}}}, None
+
+    report = TopicIntelligenceEngine(
+        provider=ManyProvider(),
+        cache_dir=tmp_path,
+        editorial_evaluator=MixedEditorialEvaluator(),
+    ).discover(TopicDiscoveryRequest(pipeline_topic_gate=True))
+
+    assert [item.topic for item in report.candidates] == ["Strong explainer topic"]
+    assert report.candidates[0].editorial_status == "PASS"
+    exclusions = {item["topic"]: item["editorial_status"] for item in report.discovery_diagnostics["candidate_exclusions"]}
+    assert exclusions["Under-specified topic"] == "REVIEW"
+    assert exclusions["Movie recap"] == "FAIL"
+
+
+def test_ritzz_fit_prefilter_rejects_fixtures_and_ambiguous_entities():
+    assert prefilter_reason(candidate("England vs Spain"))[0] == "FAIL"
+    assert prefilter_reason(candidate("Udta Teer trailer"))[0] == "FAIL"
+    assert prefilter_reason(candidate("Bruno PH"))[0] == "REVIEW"
+    assert prefilter_reason(candidate("Ashke"))[0] == "REVIEW"
+    assert prefilter_reason(candidate("Why do birds migrate?")) is None
+
+
+def test_ritzz_fit_pass_requires_editorial_pass_and_configured_score():
+    item = candidate("Why do ancient maps show sea monsters?")
+    assessment = build_ritzz_fit_result(
+        item,
+        story_type="MYSTERY",
+        editorial_status="PASS",
+        editorial_scores={
+            "curiosity": 90,
+            "researchability": 80,
+            "visual": 75,
+            "evergreen": 80,
+            "audience_fit": 85,
+        },
+    )
+    low_score = build_ritzz_fit_result(
+        item,
+        editorial_status="PASS",
+        editorial_scores={
+            "curiosity": 50,
+            "researchability": 50,
+            "visual": 50,
+            "evergreen": 50,
+            "audience_fit": 50,
+        },
+    )
+    editorial_review = build_ritzz_fit_result(
+        item,
+        editorial_status="REVIEW",
+        editorial_scores={"curiosity": 100},
+    )
+
+    assert assessment.fit_status == "PASS"
+    assert assessment.story_type == "MYSTERY"
+    assert low_score.fit_status == "REVIEW"
+    assert editorial_review.fit_status == "REVIEW"
+
+
+def test_competitor_evidence_cannot_override_ritzz_fit_fail(tmp_path):
+    class ProviderWithStrongCompetitorEvidence(FakeProvider):
+        def discover(self, request):
+            return [candidate("England vs Spain", search_volume=1000)]
+
+        def discover_competitor_research(self, query, limit=10):
+            return build_market_intelligence_report(
+                query,
+                [{
+                    "videoId": "outlier",
+                    "videoTitle": "England vs Spain",
+                    "topic": "England vs Spain",
+                    "channelId": "channel",
+                    "viewCount": 10000,
+                    "baselineViews": 100,
+                }],
+            )
+
+    report = TopicIntelligenceEngine(
+        provider=ProviderWithStrongCompetitorEvidence(),
+        cache_dir=tmp_path,
+        editorial_evaluator=FakeEditorialEvaluator(),
+    ).discover(TopicDiscoveryRequest(pipeline_topic_gate=True))
+
+    assert report.candidates == []
+    exclusion = report.discovery_diagnostics["candidate_exclusions"][0]
+    assert exclusion["ritzz_fit"]["fit_status"] == "FAIL"
+    assert "matchup" in exclusion["ritzz_fit"]["reason"]
+
+
+def test_pipeline_does_not_lower_evidence_gate_to_reach_four(tmp_path):
+    class UnscoredProvider(FakeProvider):
+        def discover(self, request):
+            return [candidate("Why do ancient maps show sea monsters?")]
+
+    class LowEditorialScore(FakeEditorialEvaluator):
+        def assess(self, candidates):
+            return [
+                CandidateEditorialAssessment(
+                    candidate_id=item.candidate_id,
+                    audience_fit=20,
+                    curiosity=20,
+                    evergreen=20,
+                    visual=20,
+                    researchability=20,
+                    differentiation=20,
+                    saturation=20,
+                    status="PASS",
+                )
+                for item in candidates
+            ]
+
+    report = TopicIntelligenceEngine(
+        provider=UnscoredProvider(),
+        cache_dir=tmp_path,
+        editorial_evaluator=LowEditorialScore(),
+    ).discover(TopicDiscoveryRequest(pipeline_topic_gate=True))
+
+    assert report.candidates == []
+    exclusion = report.discovery_diagnostics["candidate_exclusions"][0]
+    assert exclusion["validation_status"] == "REVIEW"
+    assert any("Opportunity score" in item for item in exclusion["validation_reasons"])
 
 
 def test_engine_attaches_competitor_report_when_provider_supports_it(tmp_path):

@@ -3,13 +3,14 @@ import json
 import pytest
 
 from modules.content_workflow.engine import ContentWorkflow
+from modules.project.config import ProductionConfig
 from modules.qa.engine import load_project_qa
 from modules.qa.models import QAStageResult
 from modules.research.models import KeyFact, Research, Source
-from modules.project.config import ProductionConfig
 from modules.topic_intelligence.models import (
     OpportunityCandidate,
     OpportunityReport,
+    RitzzFitResult,
     TopicDiscoveryRequest,
 )
 
@@ -112,7 +113,7 @@ def test_selection_persists_duration_and_constraints(tmp_path):
 
 def test_duplicate_manual_topic_is_rejected(tmp_path):
     events = []
-    first = workflow(tmp_path, events).run("Why do cats purr?")
+    workflow(tmp_path, events).run("Why do cats purr?")
     with pytest.raises(ValueError, match="overlaps"):
         workflow(tmp_path, events).run("Why Do Cats Purr?")
 
@@ -120,6 +121,13 @@ def test_duplicate_manual_topic_is_rejected(tmp_path):
 def test_selected_candidate_is_linked_to_report_and_project(tmp_path):
     events = []
     candidate = OpportunityCandidate(candidate_id="c1", topic="Why do cats purr?", provider="fixture")
+    candidate.angle = "Explain the biological purpose of purring."
+    candidate.discovery_sources = ["trending"]
+    candidate.ritzz_fit = RitzzFitResult(
+        fit_status="PASS",
+        fit_score=80,
+        reason="test fixture",
+    )
     report = OpportunityReport(report_id="r1", request=TopicDiscoveryRequest(), provider="fixture", candidates=[candidate])
     result = workflow(tmp_path, events).run(candidate.topic, report=report, candidate_id="c1")
     assert result.selection.source == "discovery"
@@ -127,6 +135,9 @@ def test_selected_candidate_is_linked_to_report_and_project(tmp_path):
     saved = json.loads((result.project_path / "topic_selection.json").read_text())
     assert saved["candidate_id"] == "c1"
     assert saved["project_id"] == result.project.project_id
+    assert saved["angle"] == "Explain the biological purpose of purring."
+    assert saved["source_evidence"]["discovery_sources"] == ["trending"]
+    assert saved["ritzz_fit"]["fit_status"] == "PASS"
 
 
 def test_candidate_must_belong_to_report(tmp_path):

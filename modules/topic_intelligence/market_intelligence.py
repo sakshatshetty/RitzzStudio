@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 class CompetitorEvidence(BaseModel):
     channel: dict[str, str | int | float | None] = Field(default_factory=dict)
+    channel_group: str | None = None
     video: dict[str, str | int | float | None] = Field(default_factory=dict)
     topic: str | None = None
     observed_performance: dict[str, int | float] = Field(default_factory=dict)
@@ -34,6 +35,7 @@ class OutlierVideo(BaseModel):
     topic: str | None = None
     channel_id: str | None = None
     channel_title: str | None = None
+    channel_group: str | None = None
     channel_subscribers: int | None = None
     views: int | None = None
     likes: int | None = None
@@ -138,6 +140,7 @@ def normalize_outlier(
         topic=topic,
         channel_id=_optional_string(get("channelId", "channel_id")),
         channel_title=_optional_string(get("channelTitle", "channelName", "channel")),
+        channel_group=_optional_string(get("channelGroup", "competitorGroup")),
         channel_subscribers=_integer(get("subscriberCount", "channelSubscribers", "subscribers")),
         views=_integer(get("viewCount", "views", "videoViews")),
         likes=_integer(get("likeCount", "likes")),
@@ -272,6 +275,7 @@ def competitor_evidence_for_video(video: OutlierVideo, source: str, collected_at
             "id": video.channel_id,
             "name": video.channel_title,
             "subscribers": video.channel_subscribers,
+            "group": video.channel_group,
         }.items()
         if value is not None
     }
@@ -287,6 +291,7 @@ def competitor_evidence_for_video(video: OutlierVideo, source: str, collected_at
     }
     return CompetitorEvidence(
         channel=channel,
+        channel_group=video.channel_group,
         video=video_data,
         topic=video.topic,
         observed_performance=observed,
@@ -343,6 +348,8 @@ def _topic_patterns(outliers: list[OutlierVideo]) -> list[CompetitorTopicPattern
     grouped: dict[str, list[OutlierVideo]] = defaultdict(list)
     labels: dict[str, str] = {}
     for video in outliers:
+        if video.relative_performance is None and video.breakout_score is None:
+            continue
         if not video.topic:
             continue
         key = _topic_key(video.topic)
@@ -393,6 +400,7 @@ def _normalize_channels(
                 "id": item.channel_id,
                 "name": item.channel_title,
                 "subscribers": item.channel_subscribers,
+                "group": item.channel_group,
             }
     return [result[key] for key in sorted(result)]
 

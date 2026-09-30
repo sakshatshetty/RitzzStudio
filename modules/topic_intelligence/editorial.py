@@ -1,13 +1,26 @@
 """Evidence-grounded editorial scoring for RITZZ topic candidates."""
 
 import json
+import re
 from typing import Literal
 
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
 from config import OPENAI_API_KEY, OPENAI_MODEL
-from modules.topic_intelligence.models import OpportunityCandidate
+from modules.topic_intelligence.models import (
+    OpportunityCandidate,
+    RitzzFitResult,
+    StoryType,
+)
+
+_INFORMATIONAL_FILTER_REASONS = {
+    "none",
+    "none significant",
+    "none significant from the supplied data",
+    "no significant concerns",
+    "no filter reasons",
+}
 
 
 class CandidateEditorialAssessment(BaseModel):
@@ -22,6 +35,8 @@ class CandidateEditorialAssessment(BaseModel):
     researchability: float = Field(ge=0, le=100)
     differentiation: float = Field(ge=0, le=100)
     saturation: float = Field(ge=0, le=100, description="100 means little existing-content saturation")
+    story_type: StoryType = "OTHER"
+    temporary_trend_dependency: float = Field(default=50, ge=0, le=100)
     status: Literal["PASS", "REVIEW", "FAIL"]
     rationale: list[str] = Field(default_factory=list)
     filter_reasons: list[str] = Field(default_factory=list)
@@ -34,7 +49,7 @@ class CandidateEditorialAssessments(BaseModel):
 class EditorialEvaluator:
     """Use the configured OpenAI model for preliminary editorial judgment only."""
 
-    prompt_version = "ritzz-editorial-assessment-v1"
+    prompt_version = "ritzz-editorial-assessment-v2"
 
     def __init__(self, client=None) -> None:
         self.client = client or OpenAI(api_key=OPENAI_API_KEY)
@@ -72,7 +87,9 @@ class EditorialEvaluator:
             "curiosity, evergreen potential, visual storytelling, researchability, "
             "differentiation, and low saturation from 0 to 100. A higher saturation "
             "score means less saturated. Use only the topic and supplied evidence; "
-            "do not invent search metrics, facts, or competitor counts. These are "
+            "classify story_type and score temporary_trend_dependency from 0 "
+            "(not trend-dependent) to 100 (entirely dependent on a temporary trend). "
+            "Do not invent search metrics, facts, or competitor counts. These are "
             "preliminary editorial judgments, not factual research. Mark PASS for a "
             "clear general-audience curiosity explainer, REVIEW for uncertain fit or "
             "evidence, and FAIL for clearly unsuitable ideas such as gossip, unsafe "
@@ -92,11 +109,31 @@ class EditorialEvaluator:
                 "primary_keyword": candidate.primary_keyword,
                 "related_keywords": candidate.related_keywords,
                 "related_questions": candidate.related_questions,
+                "discovery_sources": candidate.discovery_sources,
                 "opportunity_type": candidate.opportunity_type,
                 "provider_evidence": {
                     key: metric.model_dump()
                     for key, metric in candidate.evidence.items()
                 },
+                "competitor_evidence": [
+                    evidence.model_dump(mode="json")
+                    for evidence in candidate.competitor_evidence
+                ],
+                "competitor_topic_patterns": [
+                    pattern.model_dump(mode="json")
+                    for pattern in candidate.competitor_topic_patterns
+                ],
+                "current_vidiq_demand_signals": {
+                    key: metric.model_dump()
+                    for key, metric in candidate.current_vidiq_demand_signals.items()
+                },
+                "competition_saturation_assessment": candidate.competition_saturation_assessment,
+                "ritzz_fit_prefilter": (
+                    candidate.ritzz_fit.model_dump(mode="json")
+                    if candidate.ritzz_fit
+                    else None
+                ),
+                "ritzz_learning_signals": candidate.ritzz_learning_signals,
             })
         return "Score these candidate ideas. Treat provider metrics as supplied data, not as proof of factual accuracy.\n" + json.dumps(rows, ensure_ascii=False)
 
@@ -120,9 +157,24 @@ def apply_editorial_assessments(
             "saturation": assessment.saturation,
         }
         candidate.editorial_status = assessment.status
+        if candidate.ritzz_fit is None:
+            candidate.ritzz_fit = RitzzFitResult(
+                fit_status="REVIEW",
+                reason="Editorial assessment completed; RITZZ fit not finalized.",
+            )
+        candidate.ritzz_fit.story_type = assessment.story_type
+        candidate.ritzz_fit.temporary_trend_dependency = (
+            assessment.temporary_trend_dependency
+        )
         candidate.proposed_title = assessment.proposed_title or candidate.topic
         candidate.angle = assessment.angle or (candidate.rationale[0] if candidate.rationale else candidate.topic)
         candidate.why_interesting = assessment.why_interesting or candidate.rationale[0] if candidate.rationale else candidate.topic
-        candidate.filter_reasons = list(dict.fromkeys(candidate.filter_reasons + assessment.filter_reasons))
+        filter_reasons = [
+            reason.strip()
+            for reason in candidate.filter_reasons + assessment.filter_reasons
+            if re.sub(r"[^a-z0-9 ]", "", reason.casefold()).strip()
+            not in _INFORMATIONAL_FILTER_REASONS
+        ]
+        candidate.filter_reasons = list(dict.fromkeys(filter_reasons))
         candidate.rationale = list(dict.fromkeys(candidate.rationale + assessment.rationale))
     return candidates
