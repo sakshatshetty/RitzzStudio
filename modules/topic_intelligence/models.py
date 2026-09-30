@@ -16,6 +16,7 @@ class TopicDiscoveryRequest(BaseModel):
     trend_topic: str | None = None
     limit: int = Field(default=10, ge=1, le=50)
     force_refresh: bool = False
+    require_recommended_candidates: bool = False
 
 
 class EvidenceMetric(BaseModel):

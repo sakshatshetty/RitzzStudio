@@ -1,6 +1,7 @@
 """Discover four pipeline candidates without interactive terminal input."""
 
 import json
+import hashlib
 import os
 import sys
 from pathlib import Path
@@ -22,11 +23,13 @@ def _candidate_markdown(index: int, candidate) -> str:
     )
     rationale = "; ".join(candidate.rationale[:2]) or "No additional rationale recorded."
     return (
-        f"### {index}. {candidate.topic}\n"
+        f"### {index}. {candidate.proposed_title or candidate.topic}\n"
+        f"- VidIQ topic signal: {candidate.topic}\n"
         f"- Candidate ID: `{candidate.candidate_id}`\n"
         f"- Type: `{candidate.opportunity_type}`\n"
         f"- Opportunity score: `{score}`\n"
         f"- Validation: `{candidate.validation_status}`\n"
+        f"- Explainer angle: {candidate.angle or 'Not provided.'}\n"
         f"- Why it is interesting: {candidate.why_interesting or 'Not provided.'}\n"
         f"- Notes: {rationale}\n"
     )
@@ -39,12 +42,21 @@ def discover_four_candidates(
     report = engine.discover(request)
     candidates: list[OpportunityCandidate] = []
     seen_topics: set[str] = set()
+    seen_ids: set[str] = set()
 
     def add_distinct(items: list[OpportunityCandidate]) -> None:
         for candidate in items:
+            if candidate.validation_status != "RECOMMENDED":
+                continue
             key = normalize_topic(candidate.topic)
             if key and key not in seen_topics:
                 seen_topics.add(key)
+                if candidate.candidate_id in seen_ids:
+                    suffix = hashlib.sha256(key.encode("utf-8")).hexdigest()[:8]
+                    candidate = candidate.model_copy(
+                        update={"candidate_id": f"{candidate.candidate_id}_{suffix}"}
+                    )
+                seen_ids.add(candidate.candidate_id)
                 candidates.append(candidate)
 
     add_distinct(report.candidates)
@@ -96,6 +108,7 @@ def main() -> int:
             timeframe=timeframe,
             trend_topic=trend_topic,
             force_refresh=True,
+            require_recommended_candidates=True,
         ),
     )
 

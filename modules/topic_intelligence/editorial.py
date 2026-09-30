@@ -66,6 +66,8 @@ class EditorialEvaluator:
     def _system_prompt() -> str:
         return (
             "Assess video-topic ideas for the RITZZ mixed-curiosity YouTube channel. "
+            "RITZZ publishes curiosity-led explainers, not generic reviews, recaps, reactions, or broad news summaries. "
+            "A broad entity or institution is not automatically a suitable topic; it needs a specific explanatory question or mystery. "
             "Return exactly one assessment for every candidate ID. Score audience fit, "
             "curiosity, evergreen potential, visual storytelling, researchability, "
             "differentiation, and low saturation from 0 to 100. A higher saturation "
@@ -75,6 +77,7 @@ class EditorialEvaluator:
             "clear general-audience curiosity explainer, REVIEW for uncertain fit or "
             "evidence, and FAIL for clearly unsuitable ideas such as gossip, unsafe "
             "topics, or political commentary without a curiosity-explainer angle. "
+            "Mark generic movie/TV reviews, recaps, reaction videos, and broad news topics FAIL unless the topic is explicitly reframed around a factual curiosity question. "
             "For every candidate also provide a proposed YouTube title, a distinct explanatory angle, "
             "and one concise reason it is interesting. Explain each judgment briefly and list exclusion concerns."
         )

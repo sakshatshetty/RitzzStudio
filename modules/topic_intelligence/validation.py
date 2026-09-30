@@ -10,6 +10,8 @@ MIN_OPPORTUNITY_SCORE = 55.0
 _UNSUITABLE_TERMS = {
     "celebrity gossip", "celebrity feud", "influencer drama", "election results",
     "political campaign", "presidential campaign", "stock price", "crypto price",
+    "movie review", "film review", "movie reviews", "film reviews", "episode recap",
+    "season recap", "reaction video",
 }
 _BROAD_TERMS = {"united nations", "politics", "celebrity news", "breaking news"}
 
@@ -19,7 +21,9 @@ def apply_niche_filter(candidates: list[OpportunityCandidate]) -> None:
     for candidate in candidates:
         topic = candidate.topic.casefold()
         if any(term in topic for term in _UNSUITABLE_TERMS):
-            candidate.filter_reasons.append("Outside the mixed-curiosity explainer niche.")
+            candidate.filter_reasons.append(
+                "This is a review, recap, reaction, or otherwise unsuitable format for the curiosity-explainer channel."
+            )
         elif any(term in topic for term in _BROAD_TERMS):
             candidate.filter_reasons.append("Broad or news-adjacent topic needs a specific curiosity angle.")
 
