@@ -179,7 +179,7 @@ class TopicIntelligenceEngine:
                 candidates, patterns, generation_diagnostics = (
                     generator.generate(
                         competitor_report,
-                        candidate_limit=min(max(request.limit, 4), 8),
+                        candidate_limit=min(max(request.limit, 4), 30),
                     )
                 )
                 pattern_count = len(patterns)
@@ -197,12 +197,14 @@ class TopicIntelligenceEngine:
                     "status": "failed",
                     "error_type": "TOPIC_GENERATION_ERROR",
                     "message": str(exc),
-                    "fallback_behavior": "Use optional secondary sources only when configured competitors were present.",
+                    "fallback_behavior": "Continue through secondary sources without attributing them to competitor evidence.",
                 })
 
         diagnostics.update({
             "competitor_channels_configured": competitor_report.configured_competitor_count,
             "competitors_queried": competitor_report.competitors_queried,
+            "competitor_group_diagnostics": competitor_report.competitor_group_diagnostics,
+            "competitor_channels": competitor_report.channels,
             "videos_inspected": generation_diagnostics["videos_inspected"],
             "successful_outlier_videos": generation_diagnostics["successful_outlier_videos"],
             "topic_patterns_extracted": pattern_count,
@@ -303,11 +305,7 @@ class TopicIntelligenceEngine:
                 "keyword_research_enrichment: provider does not support optional enrichment."
             )
 
-        allow_secondary = (
-            competitor_report.configured_competitor_count > 0
-            or not isinstance(self.provider, VidiqMcpProvider)
-        )
-        if len(candidates) < 4 and allow_secondary:
+        if len(candidates) < min(request.limit, 30):
             diagnostics["secondary_fallback_attempted"] = True
             diagnostics["sources_attempted"].append("secondary_topic_discovery")
             try:
@@ -368,12 +366,8 @@ class TopicIntelligenceEngine:
                     "message": str(exc),
                     "fallback_behavior": "Keep only validated competitor-derived ideas.",
                 })
-        elif len(candidates) < 4:
+        else:
             diagnostics["secondary_fallback_attempted"] = False
-            diagnostics["sources_unavailable"].append(
-                "secondary_topic_discovery: skipped because no competitors are configured; "
-                "generic trend results are not substituted for competitor evidence."
-            )
         diagnostics["pool_unique_total"] = len(candidates)
         diagnostics["stage_counts"].insert(0, {
             "stage": "configured_competitor_outliers",
@@ -516,12 +510,14 @@ class TopicIntelligenceEngine:
         for candidate in candidates:
             overlaps = self.inventory_manager.find_overlap(candidate.topic)
             if overlaps:
+                candidate.inventory_status = "DUPLICATE"
                 inventory_excluded.append({
                     "topic": candidate.topic,
                     "reason": "Overlaps existing RITZZ inventory: "
                     + ", ".join(item.topic for item in overlaps),
                 })
                 continue
+            candidate.inventory_status = "ELIGIBLE"
             eligible.append(candidate)
         candidates = eligible
         diagnostics["raw_candidates"] = raw_count
@@ -717,6 +713,10 @@ class TopicIntelligenceEngine:
         diagnostics["after_editorial_filter"] = sum(
             item.editorial_status == "PASS"
             and not item.filter_reasons
+            for item in ranked_all
+        )
+        diagnostics["after_visual_fit"] = sum(
+            item.editorial_scores.get("format_fit", -1) >= 55
             for item in ranked_all
         )
         diagnostics["after_near_duplicate_filter"] = sum(

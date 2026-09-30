@@ -1,6 +1,6 @@
 ﻿# Topic Intelligence / Opportunity Engine — Design
 
-**Status:** Competitor-led discovery is implemented and mock-tested; live validation requires enabled competitor channel IDs; EVERGREEN adapter validation remains
+**Status:** Competitor-led discovery supports separate format/topic/emerging-format groups and channel handles/URLs; live validation requires configured real competitors; EVERGREEN adapter validation remains
 **Scope:** Discover, evaluate, and present video topic opportunities; let the user select one; hand the selected or manually entered topic to Research → Outline → Script.
 **Out of scope:** Automatic publishing or topic approval, downstream video production changes, full 8-minute image generation, and fabricated provider metrics.
 
@@ -360,13 +360,25 @@ Run focused tests first, then the broader offline suite. Do not weaken existing 
 ## 16. Current pipeline discovery and learning integration
 
 The pipeline-specific path starts with enabled competitor channels in
-`config/competitors.json`. It queries only capabilities and arguments advertised
-by the vidIQ MCP schema: channel-scoped outliers first, then channel-scoped
-recent/popular videos when supported. TRENDING/rising/evergreen discovery is a
-secondary fallback only when competitors are configured; an empty competitor
-registry does not silently become generic trend discovery. The separate
-multi-source discovery path remains bounded by `RITZZ_CANDIDATE_POOL_TARGET`
-(15–30, default 30). The adapter does not invent vidIQ fields or metrics.
+`config/competitors.json`. Its `format_competitors`, `topic_competitors`, and
+`emerging_format` groups keep visual-format competitors distinct from
+subject-matter competitors and newer format channels. Entries accept
+`channel_id`, `channel_handle`, or `channel_url`; vidIQ's advertised outlier
+tool resolves handles and URLs internally. Exact handle lookup or channel
+metadata tools are used only when the selected video tool does not advertise
+support for those references; this avoids a redundant, credit-consuming lookup.
+An `INSUFFICIENT_CREDITS` response is surfaced explicitly and prevents further
+paid fallback calls in that discovery attempt. The observed outlier query costs
+5 vidIQ credits per competitor-group query. The
+provider queries groups separately, starting with format competitors, and
+retains the group on channel and video evidence. It queries only capabilities
+and arguments advertised by the vidIQ MCP schema: channel-scoped outliers
+first, then channel-scoped recent/popular videos when supported.
+TRENDING/rising/evergreen discovery remains a clearly labeled secondary path
+when competitor evidence is absent or does not fill the configured candidate
+pool. It is never treated as competitor evidence. The separate multi-source
+discovery path remains bounded by `RITZZ_CANDIDATE_POOL_TARGET` (15–30,
+default 30). The adapter does not invent vidIQ fields or metrics.
 
 Candidate processing normalizes and removes exact duplicates, checks the
 authoritative RITZZ inventory, applies cheap niche and RITZZ-fit prefilters,
@@ -385,8 +397,15 @@ event terms before LLM scoring. A provider-supported related question can
 still enter separately as a story opportunity; raw trends are not rewritten
 into unsupported claims.
 
-`config/competitors.json` provides `core`, `adjacent`, and `emerging` groups
-with no sample channels prefilled. When available, outlier success is
+The editorial assessment separately scores fit with the RITZZ static 2D
+stickman/cartoon style, hard cuts, symbolic illustrations, maps/diagrams, and
+one-word uppercase callouts. A format-fit score below 55 cannot pass the
+RITZZ-fit gate; topics dependent on footage or camera motion remain REVIEW
+unless an illustrated treatment is viable.
+
+`config/competitors.json` provides the three distinct groups above with no
+sample channels prefilled. Legacy `core`, `adjacent`, and `emerging` registries
+remain readable. When available, outlier success is
 determined by a provider breakout score meeting `RITZZ_OUTLIER_MIN_SCORE` or
 video views reaching at least `max(2, RITZZ_OUTLIER_MIN_SCORE)` times that
 competitor channel's supported baseline. Raw views alone do not qualify.
@@ -400,6 +419,12 @@ unavailable, and competitor-derived candidates are retained. If the
 configured provider lacks channel-scoped video performance capabilities, the
 report records `competitor_topic_performance_available = false` and does not
 invent competitor metrics.
+
+Competitor diagnostics expose configured, resolved, queried, and researched
+channel counts, video inspections, and successful outliers separately for
+each group. Provider errors are not counted as successful research.
+Candidate evidence preserves the originating group alongside channel, video,
+topic, performance, baseline, outlier signal, source, and collection time.
 
 The optional M7 adapter reads the existing analytics inventory, by default
 `projects/inventory.json` or `RITZZ_M7_INVENTORY_FILE`. It does not write to

@@ -1,5 +1,82 @@
 {
-  "core": [],
-  "adjacent": [],
-  "emerging": []
+  "format_competitors": [
+    {
+      "channel_url": "https://www.youtube.com/@MackExplains7",
+      "channel_handle": "@MackExplains7",
+      "name": "Mack",
+      "enabled": true,
+      "priority": "high",
+      "role": "primary",
+      "reason": "Closest current RITZZ reference for curiosity-driven explainers, pacing, topic selection and simple visual storytelling."
+    },
+    {
+      "channel_url": "https://www.youtube.com/@Inkexplainer96",
+      "channel_handle": "@Inkexplainer96",
+      "name": "Ink Explainer",
+      "enabled": true,
+      "priority": "high",
+      "role": "primary",
+      "reason": "Strong overlap with RITZZ curiosity, history and question-driven explainer topics."
+    },
+    {
+      "channel_handle": "@Kelevins",
+      "name": "Kelevin",
+      "enabled": true,
+      "priority": "high",
+      "role": "primary",
+      "reason": "Strong overlap with RITZZ curiosity-driven topics, unusual history, myths, strange facts and list-based storytelling."
+    },
+    {
+      "channel_handle": "@someguywhoknowsstuff",
+      "name": "Some Guy Who Knows Stuff",
+      "enabled": true,
+      "priority": "high",
+      "role": "primary",
+      "reason": "Very strong overlap with RITZZ in simple animated storytelling, curiosity-driven topics, unusual history, mysteries, science and strange facts."
+    },
+    {
+      "channel_handle": "@HistoryMatters",
+      "name": "History Matters",
+      "enabled": true,
+      "priority": "medium",
+      "role": "format_reference",
+      "reason": "Useful reference for stick-figure historical storytelling, concise explanations and history-focused curiosity topics."
+    }
+  ],
+  "topic_competitors": [
+    {
+      "channel_handle": "@RealLifeLore",
+      "name": "RealLifeLore",
+      "enabled": true,
+      "priority": "medium",
+      "role": "topic_reference",
+      "reason": "Useful source of curiosity-driven subjects involving geography, history, countries and unusual real-world questions."
+    },
+    {
+      "channel_handle": "@WendoverProductions",
+      "name": "Wendover Productions",
+      "enabled": true,
+      "priority": "medium",
+      "role": "topic_reference",
+      "reason": "Useful source of unusual real-world topics, systems, geography, travel and hidden explanations."
+    },
+    {
+      "channel_handle": "@Vsauce",
+      "name": "Vsauce",
+      "enabled": true,
+      "priority": "medium",
+      "role": "topic_reference",
+      "reason": "Useful source of broad curiosity questions, science, psychology, perception and unusual thought experiments."
+    }
+  ],
+  "emerging_format": [
+    {
+      "channel_handle": "@doodlehistoryreal",
+      "name": "Doodle History",
+      "enabled": true,
+      "priority": "medium",
+      "role": "emerging_format",
+      "reason": "Very close to the RITZZ visual direction: simple hand-drawn/stick-figure historical storytelling and newer-channel format signals."
+    }
+  ]
 }

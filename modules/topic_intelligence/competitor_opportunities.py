@@ -32,7 +32,7 @@ class CompetitorPatternProposal(BaseModel):
     core_question: str = Field(min_length=8)
     subject_entities: list[str] = Field(default_factory=list)
     why_interesting: str = Field(min_length=8)
-    evidence_ids: list[str] = Field(min_length=2)
+    evidence_ids: list[str] = Field(min_length=1)
 
 
 class OriginalTopicProposal(BaseModel):
@@ -52,7 +52,7 @@ class CompetitorOpportunityBatch(BaseModel):
 class CompetitorOpportunityGenerator:
     """Use observed cross-channel patterns to propose, never select, RITZZ topics."""
 
-    prompt_version = "ritzz-competitor-opportunities-v1"
+    prompt_version = "ritzz-competitor-opportunities-v2"
 
     def __init__(self, client=None) -> None:
         self.client = client
@@ -76,6 +76,9 @@ class CompetitorOpportunityGenerator:
             serialized_videos.append({
                 "evidence_id": evidence_id,
                 "channel": video.channel_title or video.channel_id,
+                "competitor_group": video.channel_group,
+                "competitor_priority": video.channel_priority,
+                "competitor_role": video.channel_role,
                 "video_title": video.title,
                 "underlying_topic_from_provider": video.topic,
                 "topic_tags": video.topics,
@@ -101,7 +104,7 @@ class CompetitorOpportunityGenerator:
             for video in videos
             if video.channel_id or video.channel_title
         }
-        if len(videos) < 2 or len(distinct_channels) < 2:
+        if not videos or not distinct_channels:
             return [], [], diagnostics
 
         if self.client is None:
@@ -141,9 +144,17 @@ class CompetitorOpportunityGenerator:
         return (
             "You are the RITZZ competitor-topic analyst. RITZZ is a general-audience "
             "English mixed-curiosity channel making educational, story-driven explainers. "
-            "Analyze only the supplied successful videos. First identify patterns supported "
-            "by at least two distinct videos from at least two distinct competitor channels. "
+            "Analyze only the supplied successful videos. Identify repeated patterns when "
+            "multiple distinct videos and channels support them. A one-video signal may be "
+            "reported as a tentative low-confidence pattern, but never describe it as repeated. "
             "Cite each pattern with evidence_ids exactly from the input. Do not rank channels. "
+            "Treat format competitors, topic competitors, and emerging-format channels as "
+            "distinct evidence groups. Format competitors primarily inform storytelling, "
+            "curiosity, title, and visual patterns; topic competitors primarily inform "
+            "subject/question demand; emerging-format channels inform tentative early "
+            "patterns. A topic competitor must never override RITZZ visual compatibility. "
+            "Use configured priority as context, not as a ranking of channels. "
+            "Never rank competitors as best or worst. "
             "Then create no more than " + str(candidate_limit) + " independently framed "
             "RITZZ topic opportunities from those patterns. Do not copy or paraphrase any "
             "competitor title. Move to a broader curiosity, mechanism, origin, consequence, "
@@ -172,8 +183,13 @@ class CompetitorOpportunityGenerator:
                 for video in videos
                 if video.channel_id or video.channel_title
             }
-            if len(evidence_ids) < 2 or len(channels) < 2:
+            if not evidence_ids or not channels:
                 continue
+            confidence = (
+                "HIGH" if len(evidence_ids) >= 3 and len(channels) >= 2
+                else "MEDIUM" if len(evidence_ids) >= 2 and len(channels) >= 2
+                else "LOW"
+            )
             patterns.append(CompetitorTopicPattern(
                 topic=proposal.core_question,
                 video_count=len(evidence_ids),
@@ -182,6 +198,12 @@ class CompetitorOpportunityGenerator:
                     video.channel_title or video.channel_id or "unknown"
                     for video in videos
                 }),
+                channel_groups=sorted({
+                    video.channel_group
+                    for video in videos
+                    if video.channel_group
+                }),
+                confidence=confidence,
                 video_ids=sorted({
                     video.video_id for video in videos if video.video_id
                 }),

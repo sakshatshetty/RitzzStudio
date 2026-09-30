@@ -44,21 +44,37 @@ Topic duplicate prevention reads the durable repository inventory at
 do not reserve or permanently exclude their selected topics. A future approved
 V1 release will update the inventory with the final topic and publication data.
 
-Pipeline topic discovery starts from enabled channel IDs in
-`config/competitors.json` (override with `RITZZ_COMPETITORS_FILE`). The
-registry is intentionally empty until RITZZ's competitor set is configured;
-discovery fails with a clear setup diagnostic rather than inventing channels
-or substituting generic trends. Channels remain editable in JSON without
-Python changes and are grouped as core, adjacent, or emerging.
+Pipeline topic discovery starts from enabled channels in
+`config/competitors.json` (override with `RITZZ_COMPETITORS_FILE`). The registry
+has three distinct groups: `format_competitors` (similar illustrated/explainer
+formats), `topic_competitors` (overlapping subjects), and `emerging_format`
+(newer channels using relevant formats). Each entry may use `channel_id`,
+`channel_handle`, or `channel_url`; vidIQ resolves handles/URLs for its
+channel-scoped video tools, so manually supplied UC IDs are not required. When
+the advertised video-tool schema accepts handles/URLs, the provider passes
+those references directly instead of spending credits on a separate metadata
+lookup. Otherwise, available channel metadata tools can verify identity and
+retain the provider's channel name/description/type. An empty registry never
+invents competitor evidence; the pipeline can still try explicitly secondary
+discovery sources.
 
 The adapter discovers MCP tools and their argument schemas at runtime. It
-uses channel-scoped outlier research (`channelIds` when supported) and falls
-back to channel-scoped recent/popular video research only if available. The
-lookback, video limit, and provider outlier-score threshold are configured by
+queries each competitor group separately, starting with format competitors,
+and uses channel-scoped outlier research (`channelIds` when supported) before
+falling back to channel-scoped recent/popular video research only if available.
+Evidence retains its group, and diagnostics report configured, resolved,
+queried, researched, inspected-video, and successful-outlier counts by group.
+Successful channel identity resolution is based on provider metadata or a
+successful provider query; attempted but failed provider calls remain errors.
+The lookback, video limit, and provider outlier-score threshold are configured by
 `RITZZ_COMPETITOR_LOOKBACK_DAYS`, `RITZZ_COMPETITOR_VIDEO_LIMIT`, and
 `RITZZ_OUTLIER_MIN_SCORE`. Provider outlier scores are preferred; views are
 considered an outlier only against a supported baseline from that same
 competitor channel. Raw views alone are not success evidence.
+vidIQ credit exhaustion is reported explicitly as `INSUFFICIENT_CREDITS`;
+paid fallback calls are skipped after that response. The observed outlier tool
+costs 5 credits per group query, so confirm the account balance covers the
+enabled group queries before running discovery.
 
 Repeated patterns must cite at least two successful videos from at least two
 competitor channels. A structured generator proposes original RITZZ questions
@@ -68,9 +84,9 @@ generated finalists. A keyword-research provider error is recorded as
 `PROVIDER_ERROR`; it does not discard competitor-derived candidates. Demand
 and competition remain explicitly unavailable when vidIQ supplies no values.
 The existing configurable trending/rising/evergreen sources remain secondary
-fallbacks when configured competitors are present but do not yield four
-candidate ideas; their failure cannot prevent the competitor path from
-running.
+fallbacks when competitor-derived ideas do not fill the candidate pool or
+competitors are not configured. Their results are labeled as secondary
+provider evidence, never as competitor evidence.
 
 The final gate requires RITZZ-fit `PASS`, editorial `PASS`, no blocking niche
 or inventory reason, no exact/near duplicate, and a `RECOMMENDED` evidence and
@@ -92,8 +108,9 @@ tool-level errors are reported by category (such as access denied, quota
 limit, or argument validation) without writing provider response values to
 the artifact.
 
-Competitor diagnostics show enabled channels, queried channels, videos
-inspected, successful outliers, patterns extracted, candidates generated,
+Competitor diagnostics show enabled channels and, by group, configured,
+resolved, queried, researched channels, videos inspected, and successful
+outliers; they also show patterns extracted, candidates generated,
 demand-enriched candidates, fit/editorial pass counts, duplicate exclusions,
 and final count. Each provider operation records its selected tool, status,
 error category, and fallback behavior without logging raw provider error text
@@ -105,6 +122,12 @@ existing analytics snapshots only; absent or invalid M7 data is reported and
 does not stop discovery. Historical sample size/confidence and lexical topic
 matches are evidence only and cannot override any hard gate. The human issue
 approval and numbered selection mechanism are unchanged.
+
+Editorial scoring separately assesses fit with RITZZ's static 2D
+stickman/cartoon style, hard cuts, and one-word callouts. Topics that
+fundamentally depend on footage or camera motion are held for review unless
+they can be explained convincingly through static illustrations; format-fit
+scores below 55 cannot pass the RITZZ-fit gate.
 
 ## Repository setup
 

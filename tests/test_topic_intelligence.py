@@ -114,6 +114,38 @@ def test_provider_outlier_research_uses_configured_channel_arguments(tmp_path):
     assert report.outliers[0].title == "A mystery"
 
 
+def test_competitor_registry_accepts_handles_urls_and_separate_groups(tmp_path):
+    registry = tmp_path / "competitors.json"
+    registry.write_text(json.dumps({
+        "format_competitors": [{"channel_handle": "@HistoryDoodles"}],
+        "topic_competitors": [{"channel_url": "https://www.youtube.com/@HistoryScience"}],
+        "emerging_format": [{"channel_id": "UCemerging"}],
+    }))
+    provider = VidiqMcpProvider(
+        api_key="test-key",
+        competitor_registry_path=registry,
+    )
+
+    competitors, warnings = provider._load_competitor_registry()
+
+    assert warnings == []
+    assert [item["group"] for item in competitors] == [
+        "format_competitors",
+        "topic_competitors",
+        "emerging_format",
+    ]
+    assert [item["channel_ref"] for item in competitors] == [
+        "@HistoryDoodles",
+        "https://www.youtube.com/@HistoryScience",
+        "UCemerging",
+    ]
+    assert [item["reference_type"] for item in competitors] == [
+        "channel_handle",
+        "channel_url",
+        "channel_id",
+    ]
+
+
 def test_provider_collects_configured_channel_video_performance_when_capability_exists(
     tmp_path,
 ):
@@ -243,6 +275,7 @@ def test_competitor_topics_repeated_across_channels_are_summarized():
                 "videoTopics": ["Ancient Engineering"],
                 "channelId": "channel-1",
                 "channelTitle": "History Lab",
+                "channelGroup": "format_competitors",
                 "viewCount": 900,
                 "breakoutScore": 72,
             },
@@ -252,6 +285,7 @@ def test_competitor_topics_repeated_across_channels_are_summarized():
                 "videoTopics": ["Ancient Engineering"],
                 "channelId": "channel-2",
                 "channelTitle": "Curiosity Works",
+                "channelGroup": "topic_competitors",
                 "viewCount": 800,
                 "breakoutScore": 68,
             },
@@ -261,6 +295,10 @@ def test_competitor_topics_repeated_across_channels_are_summarized():
     assert len(report.topic_patterns) == 1
     assert report.topic_patterns[0].video_count == 2
     assert report.topic_patterns[0].channel_count == 2
+    assert report.topic_patterns[0].channel_groups == [
+        "format_competitors",
+        "topic_competitors",
+    ]
 
 
 def test_raw_views_alone_do_not_create_successful_topic_patterns():
@@ -337,6 +375,7 @@ def test_pipeline_discovery_uses_ordered_multi_source_fallbacks():
         def __init__(self):
             super().__init__(api_key="fixture")
             self.calls = []
+            self._load_competitor_registry = lambda: ([], [])
             self.tools = [
                 {
                     "name": "trending_videos",
@@ -792,6 +831,7 @@ def test_editorial_information_is_not_treated_as_a_filter_reason():
         curiosity=82,
         evergreen=70,
         visual=80,
+        format_fit=82,
         researchability=75,
         differentiation=70,
         saturation=65,
@@ -887,6 +927,7 @@ def test_pipeline_does_not_promote_editorial_review_or_fail_candidates(tmp_path)
                     curiosity=80,
                     evergreen=80,
                     visual=80,
+                    format_fit=80,
                     researchability=80,
                     differentiation=80,
                     saturation=80,
@@ -949,6 +990,18 @@ def test_ritzz_fit_pass_requires_editorial_pass_and_configured_score():
             "audience_fit": 50,
         },
     )
+    low_format_fit = build_ritzz_fit_result(
+        item,
+        editorial_status="PASS",
+        editorial_scores={
+            "curiosity": 90,
+            "researchability": 90,
+            "visual": 90,
+            "evergreen": 90,
+            "audience_fit": 90,
+            "format_fit": 54,
+        },
+    )
     editorial_review = build_ritzz_fit_result(
         item,
         editorial_status="REVIEW",
@@ -958,6 +1011,8 @@ def test_ritzz_fit_pass_requires_editorial_pass_and_configured_score():
     assert assessment.fit_status == "PASS"
     assert assessment.story_type == "MYSTERY"
     assert low_score.fit_status == "REVIEW"
+    assert low_format_fit.fit_status == "REVIEW"
+    assert low_format_fit.format_fit == 54
     assert editorial_review.fit_status == "REVIEW"
 
 
@@ -979,10 +1034,21 @@ def test_competitor_evidence_cannot_override_ritzz_fit_fail(tmp_path):
                 }],
             )
 
+    class EmptyCompetitorGenerator:
+        def generate(self, report, *, candidate_limit=8):
+            return [], [], {
+                "videos_inspected": len(report.outliers),
+                "successful_outlier_videos": 1,
+                "topic_patterns_extracted": 0,
+                "generated_candidates": 0,
+                "rejected_copied_angles": 0,
+            }
+
     report = TopicIntelligenceEngine(
         provider=ProviderWithStrongCompetitorEvidence(),
         cache_dir=tmp_path,
         editorial_evaluator=FakeEditorialEvaluator(),
+        competitor_opportunity_generator=EmptyCompetitorGenerator(),
     ).discover(TopicDiscoveryRequest(pipeline_topic_gate=True))
 
     assert report.candidates == []
@@ -1005,6 +1071,7 @@ def test_pipeline_does_not_lower_evidence_gate_to_reach_four(tmp_path):
                     curiosity=20,
                     evergreen=20,
                     visual=20,
+                    format_fit=20,
                     researchability=20,
                     differentiation=20,
                     saturation=20,
@@ -1392,6 +1459,36 @@ def test_provider_reports_mcp_tool_execution_errors_without_response_values():
     assert "authentication or access denied" in str(exc.value)
 
 
+def test_provider_classifies_vidiq_credit_exhaustion_without_exposing_response_text():
+    class CreditErrorSession:
+        def post(self, url, **kwargs):
+            body = kwargs["json"]
+            return FakeResponse({
+                "jsonrpc": "2.0",
+                "id": body["id"],
+                "result": {
+                    "isError": True,
+                    "content": [{
+                        "type": "text",
+                        "text": "Not enough credits. This tool costs 5 credits. No credits were charged.",
+                    }],
+                },
+            })
+
+    provider = VidiqMcpProvider(api_key="fixture", session=CreditErrorSession())
+    provider._initialized = True
+
+    with pytest.raises(ProviderUnavailableError) as exc:
+        provider._rpc(
+            "tools/call",
+            {"name": "vidiq_outliers", "arguments": {"channelIds": ["@history"]}},
+        )
+
+    assert exc.value.error_type == "INSUFFICIENT_CREDITS"
+    assert "insufficient vidIQ credits" in str(exc.value)
+    assert "No credits were charged" not in str(exc.value)
+
+
 def test_missing_key_is_clear_and_does_not_make_network_call():
     provider = VidiqMcpProvider(api_key=None)
     with pytest.raises(ProviderUnavailableError, match="VIDIQ_MCP_API_KEY"):
@@ -1436,6 +1533,7 @@ class FakeEditorialEvaluator:
                 curiosity=80,
                 evergreen=70,
                 visual=75,
+                format_fit=85,
                 researchability=90,
                 differentiation=60,
                 saturation=65,
@@ -1444,6 +1542,45 @@ class FakeEditorialEvaluator:
             )
             for item in candidates
         ]
+
+
+def test_engine_uses_secondary_discovery_when_no_competitors_are_configured(tmp_path):
+    class SecondaryProvider(FakeProvider):
+        def __init__(self):
+            super().__init__()
+            self.secondary_calls = 0
+
+        def discover_competitor_research(self, query, limit=10):
+            return build_market_intelligence_report(
+                query,
+                [],
+                warnings=["No competitors configured."],
+            )
+
+        def discover_pipeline_candidates(self, request):
+            self.secondary_calls += 1
+            topics = (
+                "Why did ancient builders align temples with the sun?",
+                "How did old cities manage clean water?",
+                "Why were medieval clocks placed in towers?",
+                "How did sailors navigate before compasses?",
+            )
+            return [
+                candidate(topic, search_volume=200)
+                for topic in topics
+            ], {"source_counts": {"trending": {"raw": 4, "unique": 4}}}, None
+
+    provider = SecondaryProvider()
+    report = TopicIntelligenceEngine(
+        provider=provider,
+        cache_dir=tmp_path,
+        editorial_evaluator=FakeEditorialEvaluator(),
+    ).discover(TopicDiscoveryRequest(pipeline_topic_gate=True))
+
+    assert provider.secondary_calls == 1
+    assert len(report.candidates) == 4
+    assert report.discovery_diagnostics["secondary_candidate_count"] == 4
+    assert report.discovery_diagnostics["competitor_channels_configured"] == 0
 
 
 def test_engine_attaches_competitor_evidence_separately_from_ritzz_signals(tmp_path):
@@ -1540,6 +1677,7 @@ def test_editorial_assessments_are_applied_separately_from_provider_evidence():
         curiosity=88,
         evergreen=80,
         visual=70,
+        format_fit=85,
         researchability=85,
         differentiation=75,
         saturation=60,

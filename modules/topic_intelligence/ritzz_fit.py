@@ -44,6 +44,7 @@ def build_ritzz_fit_result(
     story_depth = scores.get("story_depth")
     originality = scores.get("originality", scores.get("differentiation"))
     visual = scores.get("visual")
+    format_fit = scores.get("format_fit")
     evergreen = scores.get("evergreen")
     audience = scores.get("audience_fit")
     score_values = [
@@ -56,6 +57,7 @@ def build_ritzz_fit_result(
             visual,
             evergreen,
             audience,
+            format_fit,
         )
         if value is not None
     ]
@@ -66,6 +68,8 @@ def build_ritzz_fit_result(
         status, reason = prefilter
     elif editorial_status == "FAIL":
         status, reason = "FAIL", "Editorial assessment rejected the topic; competitor and demand evidence cannot override this."
+    elif format_fit is not None and format_fit < 55:
+        status, reason = "REVIEW", "The topic has low fit with RITZZ's static 2D illustrated format."
     elif editorial_status != "PASS":
         status, reason = "REVIEW", "Editorial assessment did not pass; RITZZ fit remains unconfirmed."
     elif fit_score is None or fit_score < pass_threshold:
@@ -82,6 +86,7 @@ def build_ritzz_fit_result(
         story_depth=story_depth,
         originality=originality,
         visual_potential=visual,
+        format_fit=format_fit,
         evergreen_potential=evergreen,
         audience_value=audience,
         temporary_trend_dependency=scores.get(

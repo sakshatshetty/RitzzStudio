@@ -32,6 +32,7 @@ class CandidateEditorialAssessment(BaseModel):
     curiosity: float = Field(ge=0, le=100)
     evergreen: float = Field(ge=0, le=100)
     visual: float = Field(ge=0, le=100)
+    format_fit: float = Field(ge=0, le=100)
     researchability: float = Field(ge=0, le=100)
     differentiation: float = Field(ge=0, le=100)
     saturation: float = Field(ge=0, le=100, description="100 means little existing-content saturation")
@@ -51,7 +52,7 @@ class CandidateEditorialAssessments(BaseModel):
 class EditorialEvaluator:
     """Use the configured OpenAI model for preliminary editorial judgment only."""
 
-    prompt_version = "ritzz-editorial-assessment-v2"
+    prompt_version = "ritzz-editorial-assessment-v3"
 
     def __init__(self, client=None) -> None:
         self.client = client or OpenAI(api_key=OPENAI_API_KEY)
@@ -87,7 +88,15 @@ class EditorialEvaluator:
             "A broad entity or institution is not automatically a suitable topic; it needs a specific explanatory question or mystery. "
             "Return exactly one assessment for every candidate ID. Score audience fit, "
             "curiosity, evergreen potential, visual storytelling, researchability, "
-            "differentiation, and low saturation from 0 to 100. A higher saturation "
+            "RITZZ visual-format fit, differentiation, and low saturation from 0 to 100. "
+            "Assess format_fit specifically for an 8-minute curiosity explainer made "
+            "with static 2D stickman/cartoon illustrations, hard cuts, simple symbolic "
+            "props, maps and diagrams, and occasional one-word uppercase editorial "
+            "callouts. No footage, pan, zoom, camera movement, or transitions are available. "
+            "A low format_fit means the idea fundamentally depends on footage/action that "
+            "cannot be convincingly explained through those static illustrations; score "
+            "below 55 must not receive PASS. Prefer topics with strong visual explanations. "
+            "A higher saturation "
             "score means less saturated. Use only the topic and supplied evidence; "
             "classify story_type and score temporary_trend_dependency from 0 "
             "(not trend-dependent) to 100 (entirely dependent on a temporary trend). "
@@ -158,6 +167,7 @@ def apply_editorial_assessments(
             "curiosity": assessment.curiosity,
             "evergreen": assessment.evergreen,
             "visual": assessment.visual,
+            "format_fit": assessment.format_fit,
             "researchability": assessment.researchability,
             "differentiation": assessment.differentiation,
             "saturation": assessment.saturation,

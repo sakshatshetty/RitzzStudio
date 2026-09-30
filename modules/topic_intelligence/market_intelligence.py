@@ -28,6 +28,8 @@ class CompetitorTopicPattern(BaseModel):
     video_count: int
     channel_count: int
     channels: list[str] = Field(default_factory=list)
+    channel_groups: list[str] = Field(default_factory=list)
+    confidence: str = "LOW"
     video_ids: list[str] = Field(default_factory=list)
     observed_pattern: str | None = None
     topic_category: str | None = None
@@ -45,6 +47,8 @@ class OutlierVideo(BaseModel):
     channel_id: str | None = None
     channel_title: str | None = None
     channel_group: str | None = None
+    channel_priority: str | None = None
+    channel_role: str | None = None
     channel_subscribers: int | None = None
     views: int | None = None
     likes: int | None = None
@@ -69,7 +73,7 @@ class MarketIntelligenceReport(BaseModel):
     provider: str = "vidIQ MCP"
     retrieved_at: str
     competitor_topic_performance_available: bool = False
-    channels: list[dict[str, str | int | float | None]] = Field(default_factory=list)
+    channels: list[dict[str, str | int | float | bool | None]] = Field(default_factory=list)
     outliers: list[OutlierVideo] = Field(default_factory=list)
     topic_patterns: list[CompetitorTopicPattern] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
@@ -77,6 +81,7 @@ class MarketIntelligenceReport(BaseModel):
     competitors_queried: int = 0
     videos_inspected: int = 0
     successful_outlier_count: int = 0
+    competitor_group_diagnostics: dict[str, dict[str, int]] = Field(default_factory=dict)
     operations: list[dict[str, str]] = Field(default_factory=list)
 
 
@@ -169,6 +174,8 @@ def normalize_outlier(
         channel_id=_optional_string(get("channelId", "channel_id")),
         channel_title=_optional_string(get("channelTitle", "channelName", "channel")),
         channel_group=_optional_string(get("channelGroup", "competitorGroup")),
+        channel_priority=_optional_string(get("channelPriority", "priority")),
+        channel_role=_optional_string(get("channelRole", "role")),
         channel_subscribers=_integer(get("subscriberCount", "channelSubscribers", "subscribers")),
         views=_integer(get("viewCount", "views", "videoViews")),
         likes=_integer(get("likeCount", "likes")),
@@ -306,6 +313,8 @@ def competitor_evidence_for_video(video: OutlierVideo, source: str, collected_at
             "name": video.channel_title,
             "subscribers": video.channel_subscribers,
             "group": video.channel_group,
+            "priority": video.channel_priority,
+            "role": video.channel_role,
         }.items()
         if value is not None
     }
@@ -395,6 +404,18 @@ def _topic_patterns(outliers: list[OutlierVideo]) -> list[CompetitorTopicPattern
                 video.channel_title or video.channel_id or "unknown"
                 for video in videos
             }),
+            channel_groups=sorted({
+                video.channel_group
+                for video in videos
+                if video.channel_group
+            }),
+            confidence=(
+                "HIGH"
+                if len(videos) >= 3 and len({video.channel_id or video.channel_title for video in videos}) >= 2
+                else "MEDIUM"
+                if len(videos) >= 2 and len({video.channel_id or video.channel_title for video in videos}) >= 2
+                else "LOW"
+            ),
             video_ids=sorted({video.video_id for video in videos if video.video_id}),
         )
         for key, videos in grouped.items()

@@ -23,11 +23,6 @@ from modules.topic_intelligence.models import (
 
 
 def _candidate_markdown(index: int, candidate) -> str:
-    score = (
-        f"{candidate.opportunity_score:.1f}/100"
-        if candidate.opportunity_score is not None
-        else "unscored"
-    )
     rationale = "; ".join(candidate.rationale[:2]) or "No additional rationale recorded."
     demand_signals = "; ".join(
         f"{name}: {metric.value} ({metric.source})"
@@ -51,7 +46,8 @@ def _candidate_markdown(index: int, candidate) -> str:
         ) or "baseline unavailable"
         signal = evidence.outlier_signal.get("classification", "not established")
         competitor_lines.append(
-            f"  - {evidence.channel.get('name') or evidence.channel.get('id') or 'Unknown channel'}: "
+            f"  - [{evidence.channel_group or 'group unavailable'}] "
+            f"{evidence.channel.get('name') or evidence.channel.get('id') or 'Unknown channel'}: "
             f"{evidence.video.get('title') or 'Untitled video'} "
             f"(topic: {evidence.topic or 'not provided'}; observed: {observed}; "
             f"baseline: {baseline}; outlier signal: {signal}; source: {evidence.source}; "
@@ -64,7 +60,9 @@ def _candidate_markdown(index: int, candidate) -> str:
     )
     pattern_summary = "; ".join(
         f"{pattern.topic}: {pattern.video_count} videos across "
-        f"{pattern.channel_count} channels"
+        f"{pattern.channel_count} channels "
+        f"(groups: {', '.join(pattern.channel_groups) or 'not recorded'}; "
+        f"confidence: {pattern.confidence})"
         for pattern in candidate.competitor_topic_patterns
     ) or "No repeated competitor-topic pattern matched this candidate."
     return (
@@ -72,7 +70,7 @@ def _candidate_markdown(index: int, candidate) -> str:
         f"- VidIQ topic signal: {candidate.topic}\n"
         f"- Candidate ID: `{candidate.candidate_id}`\n"
         f"- Type: `{candidate.opportunity_type}`\n"
-        f"- Opportunity score: `{score}`\n"
+        f"- RITZZ inventory: `{candidate.inventory_status}`\n"
         f"- Editorial fit: `{candidate.editorial_status or 'REVIEW'}`\n"
         f"- Evidence status: `{candidate.validation_status}`\n"
         f"- Explainer angle: {candidate.angle or 'Not provided.'}\n"
@@ -86,6 +84,8 @@ def _candidate_markdown(index: int, candidate) -> str:
         f"- RITZZ differentiation angle: {candidate.ritzz_differentiation_angle or 'Not provided.'}\n"
         f"- RITZZ fit: `{fit.fit_status if fit else 'REVIEW'}` "
         f"({fit.reason if fit else 'Not assessed.'})\n"
+        f"- RITZZ static visual-format fit: "
+        f"`{fit.format_fit if fit and fit.format_fit is not None else 'not scored'}`\n"
         f"- RITZZ historical evidence: `{candidate.ritzz_learning_signals.get('sample_size', 'INSUFFICIENT')}` "
         f"sample; {len(candidate.ritzz_learning_signals.get('topic_signals', []))} matching historical topic record(s).\n"
         f"- Competitor video performance available: "
@@ -131,6 +131,7 @@ def discover_four_candidates(
     ]
     if not discovery_notes:
         discovery_notes = [f"{request.trend_topic or 'unscoped'}: {len(candidates)} eligible candidate(s)"]
+    candidates.sort(key=lambda candidate: candidate.topic.casefold())
     candidates = candidates[:4]
     report.candidates = candidates
     report.shortlist_candidate_ids = [
@@ -205,6 +206,18 @@ def main() -> int:
             )
         for source, duplicate_count in exc.diagnostics.get("duplicate_counts", {}).items():
             diagnostic_markdown.append(f"- **{source} duplicates removed**: {duplicate_count}")
+        group_diagnostics = exc.diagnostics.get("competitor_group_diagnostics", {})
+        if group_diagnostics:
+            diagnostic_markdown.extend(["", "## Competitor-group evidence", ""])
+            for group, counts in group_diagnostics.items():
+                diagnostic_markdown.append(
+                    f"- **{group}**: configured={counts.get('configured', 0)}, "
+                    f"resolved={counts.get('resolved', 0)}, "
+                    f"queried={counts.get('queried', 0)}, "
+                    f"researched={counts.get('researched', 0)}, "
+                    f"videos={counts.get('videos_inspected', 0)}, "
+                    f"successful outliers={counts.get('successful_outliers', 0)}"
+                )
         diagnostic_markdown.extend(["", "## Filter-stage counts", ""])
         for stage in (
             "raw_candidates",
@@ -212,6 +225,7 @@ def main() -> int:
             "after_inventory_filter",
             "after_niche_filter",
             "after_ritzz_fit_prefilter",
+            "after_visual_fit",
             "after_editorial_filter",
             "after_near_duplicate_filter",
             "after_final_validation",
@@ -272,13 +286,24 @@ def main() -> int:
     candidates_file = output_directory / "topic_candidates.json"
     candidates_file.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
+    group_diagnostics = report.discovery_diagnostics.get(
+        "competitor_group_diagnostics",
+        {},
+    )
+    group_summary = "; ".join(
+        f"{group}: {counts.get('successful_outliers', 0)} successful outlier(s) "
+        f"from {counts.get('researched', 0)} researched channel(s)"
+        for group, counts in group_diagnostics.items()
+    ) or "No configured competitor-group evidence."
     lines = [
         "## RITZZ topic approval required",
         "",
         "Reply to the pipeline approval issue with exactly `1`, `2`, `3`, or `4`.",
+        "These numbers are selection labels only; candidates are not ranked.",
         "The selected candidate will be persisted before production continues.",
         "",
         "Discovery: " + "; ".join(discovery_notes),
+        "Competitor research: " + group_summary,
         "",
     ]
     lines.extend(_candidate_markdown(index, candidate) for index, candidate in enumerate(candidates, start=1))

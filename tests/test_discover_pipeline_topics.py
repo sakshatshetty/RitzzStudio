@@ -108,6 +108,26 @@ def test_approval_summary_separates_editorial_fit_from_evidence_status():
     assert "Evidence status: `REVIEW`" in summary
     assert "Competitor video performance available: `false`" in summary
     assert "No current demand/trend metric available." in summary
+    assert "Opportunity score" not in summary
+
+
+def test_final_topic_choices_are_presented_alphabetically_not_ranked():
+    request = TopicDiscoveryRequest(mode="TRENDING", trend_topic="history")
+    candidates = [
+        _candidate(1, "Zebra migration"),
+        _candidate(2, "Ancient sleep routines"),
+        _candidate(3, "Maps and distortion"),
+        _candidate(4, "Why castles had moats"),
+    ]
+
+    _, selected, _ = discover_four_candidates(
+        SequencedEngine([_report(request, candidates)]),
+        request,
+    )
+
+    assert [candidate.topic for candidate in selected] == sorted(
+        candidate.topic for candidate in candidates
+    )
 
 
 def test_failure_writes_machine_and_human_readable_diagnostics(tmp_path, monkeypatch):

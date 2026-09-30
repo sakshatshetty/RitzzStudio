@@ -8,6 +8,7 @@ import json
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 
@@ -23,6 +24,7 @@ from config.settings import (
 from modules.topic_intelligence.market_intelligence import (
     MarketIntelligenceReport,
     build_market_intelligence_report,
+    is_successful_outlier_video,
     normalize_outlier,
 )
 from modules.topic_intelligence.models import (
@@ -829,7 +831,8 @@ class VidiqMcpProvider:
         operations: list[dict[str, str]] = []
         if not configured_competitors:
             message = (
-                "No enabled competitor channel IDs are configured; add channels to "
+                "No enabled competitor channels are configured; add a channel_id, "
+                "channel_handle, or channel_url to "
                 f"{self.competitor_registry_path} or set RITZZ_COMPETITORS_FILE."
             )
             warnings.append(message)
@@ -839,7 +842,7 @@ class VidiqMcpProvider:
                 "status": "blocked",
                 "error_type": "NO_COMPETITORS_CONFIGURED",
                 "message": message,
-                "fallback_behavior": "No generic trend candidates are substituted for competitor evidence.",
+                "fallback_behavior": "The pipeline may try clearly labeled secondary discovery; no competitor evidence is fabricated.",
             })
             report = build_market_intelligence_report(
                 query,
@@ -853,20 +856,44 @@ class VidiqMcpProvider:
             report.operations = operations
             return report
 
-        supported_competitors = [
-            item for item in configured_competitors
-            if item.get("channel_id")
-        ]
-        skipped_channels = len(configured_competitors) - len(supported_competitors)
-        if skipped_channels:
-            warnings.append(
-                f"{skipped_channels} configured competitor(s) do not have a channel_id "
-                "and cannot be queried by the advertised channel-scoped tools."
-            )
+        supported_competitors = configured_competitors
+        group_diagnostics: dict[str, dict[str, int]] = {}
+        for group in (
+            "format_competitors",
+            "topic_competitors",
+            "emerging_format",
+            "core",
+            "adjacent",
+            "emerging",
+        ):
+            group_entries = [item for item in configured_competitors if item.get("group") == group]
+            if group_entries:
+                group_diagnostics[group] = {
+                    "configured": len(group_entries),
+                    "resolved": 0,
+                    "queried": 0,
+                    "researched": 0,
+                    "videos_inspected": 0,
+                    "successful_outliers": 0,
+                }
+        supported_competitors = self._verify_competitor_metadata(
+            tools,
+            supported_competitors,
+            operations,
+            warnings,
+            reference_tool=outlier_tool or channel_videos_tool,
+        )
+        grouped_competitors = self._group_competitors(supported_competitors)
         videos: list[dict[str, Any]] = []
         queried_ids: set[str] = set()
+        researched_ids: set[str] = set()
         outlier_error: ProviderUnavailableError | None = None
         if outlier_tool is not None and supported_competitors:
+            competitors_by_id = {
+                str(item["channel_id"]): item
+                for item in supported_competitors
+                if item.get("channel_id")
+            }
             properties = self._tool_properties(outlier_tool)
             channel_ids_field = next(
                 (
@@ -883,77 +910,129 @@ class VidiqMcpProvider:
                 None,
             )
             if channel_ids_field or channel_id_field:
-                if channel_ids_field:
-                    batches = [supported_competitors]
-                else:
-                    batches = [[entry] for entry in supported_competitors]
-                for batch_competitors in batches:
-                    arguments = self._market_arguments(
-                        outlier_tool,
-                        query,
-                        min(limit, RITZZ_COMPETITOR_VIDEO_LIMIT),
-                        competitors=batch_competitors,
+                report_limit = min(limit, RITZZ_COMPETITOR_VIDEO_LIMIT)
+                group_count = len(grouped_competitors)
+                shared_limit, limit_remainder = (
+                    divmod(report_limit, group_count)
+                    if group_count
+                    else (report_limit, 0)
+                )
+                for group_index, (group, group_entries) in enumerate(grouped_competitors):
+                    group_limit = max(
+                        1,
+                        shared_limit + (1 if group_index < limit_remainder else 0),
                     )
-                    if arguments is None:
-                        warnings.append(
-                            f"Advertised outlier tool '{outlier_tool['name']}' requires "
-                            "unsupported arguments for scoped video research."
-                        )
-                        operations.append({
-                            "source": "competitor_outliers",
-                            "tool": str(outlier_tool["name"]),
-                            "status": "unavailable",
-                            "error_type": "UNSUPPORTED_ARGUMENT_SCHEMA",
-                            "message": "Required tool fields could not be mapped safely.",
-                            "fallback_behavior": "Attempt channel-scoped video-list research.",
-                        })
-                        break
-                    try:
-                        response = self._rpc("tools/call", {
-                            "name": outlier_tool["name"],
-                            "arguments": arguments,
-                        })
-                        batch = self._extract_records(response)
-                        if len(batch_competitors) == 1:
-                            competitor = batch_competitors[0]
-                            for record in batch:
-                                record.setdefault(
-                                    "channelId",
-                                    competitor["channel_id"],
+                    max_items = 50
+                    if channel_ids_field:
+                        definition = properties.get(channel_ids_field, {})
+                        if isinstance(definition, dict):
+                            try:
+                                max_items = max(
+                                    1,
+                                    min(max_items, int(definition.get("maxItems", 50))),
                                 )
-                                record.setdefault("channelTitle", competitor.get("name"))
-                                record.setdefault("channelGroup", competitor.get("group"))
-                        videos.extend(batch)
+                            except (TypeError, ValueError):
+                                max_items = 50
+                    batch_size = max_items if channel_ids_field else 1
+                    for start in range(0, len(group_entries), batch_size):
+                        batch_competitors = group_entries[start:start + batch_size]
+                        arguments = self._market_arguments(
+                            outlier_tool,
+                            query,
+                            group_limit,
+                            competitors=batch_competitors,
+                        )
+                        if arguments is None:
+                            warnings.append(
+                                f"Advertised outlier tool '{outlier_tool['name']}' requires "
+                                "unsupported arguments for scoped video research."
+                            )
+                            operations.append({
+                                "source": "competitor_outliers",
+                                "tool": str(outlier_tool["name"]),
+                                "status": "unavailable",
+                                "error_type": "UNSUPPORTED_ARGUMENT_SCHEMA",
+                                "message": "Required tool fields could not be mapped safely.",
+                                "fallback_behavior": "Attempt channel-scoped video-list research.",
+                            })
+                            break
                         queried_ids.update(
-                            str(entry["channel_id"]) for entry in batch_competitors
+                            f"{group}:{entry['channel_ref']}" for entry in batch_competitors
                         )
-                        operations.append({
-                            "source": "competitor_outliers",
-                            "tool": str(outlier_tool["name"]),
-                            "status": "success" if batch else "valid_zero_results",
-                            "error_type": "NONE" if batch else "VALID_ZERO_RESULTS",
-                            "message": (
-                                f"Returned {len(batch)} video record(s) for "
-                                f"{len(batch_competitors)} configured channel(s)."
-                            ),
-                            "fallback_behavior": (
-                                "No fallback required." if batch
-                                else "Try channel-scoped recent/popular video lists."
-                            ),
-                        })
-                    except ProviderUnavailableError as exc:
-                        outlier_error = exc
-                        operations.append({
-                            "source": "competitor_outliers",
-                            "tool": str(outlier_tool["name"]),
-                            "status": "failed",
-                            "error_type": exc.error_type,
-                            "message": str(exc),
-                            "fallback_behavior": "Try channel-scoped recent/popular video lists.",
-                        })
-                        warnings.append(
-                            f"vidIQ competitor outlier operation failed: {exc}"
-                        )
+                        try:
+                            response = self._rpc("tools/call", {
+                                "name": outlier_tool["name"],
+                                "arguments": arguments,
+                            })
+                            researched_ids.update(
+                                f"{group}:{entry['channel_ref']}"
+                                for entry in batch_competitors
+                            )
+                            batch = self._extract_records(response)
+                            for record in batch:
+                                record_channel_id = self._record_channel_id(record)
+                                matching_competitor = competitors_by_id.get(
+                                    str(record_channel_id)
+                                )
+                                if matching_competitor is not None:
+                                    record["channelGroup"] = matching_competitor.get("group")
+                                    record.setdefault(
+                                        "channelPriority",
+                                        matching_competitor.get("priority"),
+                                    )
+                                    record.setdefault(
+                                        "channelRole",
+                                        matching_competitor.get("role"),
+                                    )
+                                elif not record.get("channelGroup"):
+                                    record["channelGroup"] = group
+                                if matching_competitor is not None:
+                                    record.setdefault(
+                                        "channelTitle",
+                                        matching_competitor.get("name"),
+                                    )
+                                if len(batch_competitors) == 1:
+                                    competitor = batch_competitors[0]
+                                    record.setdefault("channelId", competitor["channel_id"])
+                                    record.setdefault("channelTitle", competitor.get("name"))
+                            videos.extend(batch)
+                            operations.append({
+                                "source": "competitor_outliers",
+                                "tool": str(outlier_tool["name"]),
+                                "status": "success" if batch else "valid_zero_results",
+                                "error_type": "NONE" if batch else "VALID_ZERO_RESULTS",
+                                "message": (
+                                    f"Group '{group}' returned {len(batch)} video record(s) "
+                                    f"for {len(batch_competitors)} configured channel(s)."
+                                ),
+                                "fallback_behavior": (
+                                    "No fallback required." if batch
+                                    else "Try channel-scoped recent/popular video lists."
+                                ),
+                            })
+                        except ProviderUnavailableError as exc:
+                            outlier_error = exc
+                            operations.append({
+                                "source": "competitor_outliers",
+                                "tool": str(outlier_tool["name"]),
+                                "status": "failed",
+                                "error_type": exc.error_type,
+                                "message": str(exc),
+                                "fallback_behavior": (
+                                    "Skip paid fallbacks because vidIQ credits are insufficient."
+                                    if exc.error_type == "INSUFFICIENT_CREDITS"
+                                    else "Try channel-scoped recent/popular video lists."
+                                ),
+                            })
+                            warnings.append(
+                                f"vidIQ competitor outlier operation failed for group "
+                                f"'{group}': {exc}"
+                            )
+                            break
+                    if (
+                        outlier_error
+                        and outlier_error.error_type == "INSUFFICIENT_CREDITS"
+                    ):
                         break
             else:
                 warnings.append(
@@ -967,7 +1046,14 @@ class VidiqMcpProvider:
             video.breakout_score is not None or video.relative_performance is not None
             for video in (normalize_outlier(record) for record in videos)
         )
-        if not has_comparable_performance and channel_videos_tool is not None:
+        if (
+            not has_comparable_performance
+            and channel_videos_tool is not None
+            and not (
+                outlier_error
+                and outlier_error.error_type == "INSUFFICIENT_CREDITS"
+            )
+        ):
             for competitor in supported_competitors:
                 channel_id = str(competitor["channel_id"])
                 call_records = []
@@ -984,10 +1070,16 @@ class VidiqMcpProvider:
                         )
                         break
                     try:
+                        queried_ids.add(
+                            f"{competitor.get('group')}:{competitor['channel_ref']}"
+                        )
                         response = self._rpc("tools/call", {
                             "name": channel_videos_tool["name"],
                             "arguments": arguments,
                         })
+                        researched_ids.add(
+                            f"{competitor.get('group')}:{competitor['channel_ref']}"
+                        )
                         call_records.extend(self._extract_records(response))
                     except ProviderUnavailableError as exc:
                         operations.append({
@@ -1007,20 +1099,35 @@ class VidiqMcpProvider:
                     record.setdefault("channelId", channel_id)
                     record.setdefault("channelTitle", competitor.get("name"))
                     record.setdefault("channelGroup", competitor.get("group"))
+                    record.setdefault("channelPriority", competitor.get("priority"))
+                    record.setdefault("channelRole", competitor.get("role"))
                 videos.extend(call_records)
-                if call_records:
-                    queried_ids.add(channel_id)
+                group = str(competitor.get("group") or "unknown")
                 operations.append({
                     "source": "competitor_channel_videos",
                     "tool": str(channel_videos_tool["name"]),
                     "status": "success" if call_records else "valid_zero_results",
                     "error_type": "NONE" if call_records else "VALID_ZERO_RESULTS",
                     "message": (
-                        f"Returned {len(call_records)} recent/popular video record(s) "
+                        f"Group '{group}' returned {len(call_records)} recent/popular video record(s) "
                         f"for {competitor.get('name') or channel_id}."
                     ),
                     "fallback_behavior": "Channel baseline is calculated only with sufficient returned metrics.",
                 })
+        elif (
+            not has_comparable_performance
+            and channel_videos_tool is not None
+            and outlier_error
+            and outlier_error.error_type == "INSUFFICIENT_CREDITS"
+        ):
+            operations.append({
+                "source": "competitor_channel_videos",
+                "tool": str(channel_videos_tool["name"]),
+                "status": "blocked",
+                "error_type": "INSUFFICIENT_CREDITS",
+                "message": "Skipped paid fallback research because vidIQ reported insufficient credits.",
+                "fallback_behavior": "Add vidIQ credits before retrying competitor research.",
+            })
         elif videos and supported_competitors:
             channel_by_id = {
                 str(entry["channel_id"]): entry for entry in supported_competitors
@@ -1036,24 +1143,74 @@ class VidiqMcpProvider:
             warnings.append(
                 "No channel-scoped video research capability is advertised by vidIQ MCP."
             )
+        selected_records = self._limit_video_records_by_group(
+            self._deduplicate_video_records(videos),
+            min(limit, RITZZ_COMPETITOR_VIDEO_LIMIT),
+            [group for group, _ in grouped_competitors],
+        )
+        normalized_videos = [
+            normalize_outlier(record)
+            for record in selected_records
+        ]
+        for group, stats in group_diagnostics.items():
+            stats["queried"] = sum(
+                1 for reference in queried_ids
+                if reference.startswith(f"{group}:")
+            )
+            stats["researched"] = sum(
+                1 for reference in researched_ids
+                if reference.startswith(f"{group}:")
+            )
+            stats["resolved"] = sum(
+                1 for item in supported_competitors
+                if item.get("group") == group
+                and (
+                    item.get("metadata_status") == "verified"
+                    or f"{group}:{item['channel_ref']}" in researched_ids
+                )
+            )
+        for video in normalized_videos:
+            group = video.channel_group
+            if group is not None:
+                stats = group_diagnostics.setdefault(group, {
+                    "configured": 0,
+                    "queried": 0,
+                    "videos_inspected": 0,
+                    "successful_outliers": 0,
+                })
+                stats["videos_inspected"] += 1
+                if is_successful_outlier_video(video, RITZZ_OUTLIER_MIN_SCORE):
+                    stats["successful_outliers"] += 1
+        channel_records = [
+            {
+                "id": item.get("channel_id"),
+                "configured_ref": item.get("channel_ref"),
+                "name": item.get("name"),
+                "group": item.get("group"),
+                "priority": item.get("priority"),
+                "role": item.get("role"),
+                "reason": item.get("reason"),
+                "metadata_status": item.get("metadata_status"),
+                "handle": item.get("metadata_handle"),
+                "description": item.get("metadata_description"),
+                "channel_type": item.get("metadata_channel_type"),
+                "faceless": item.get("metadata_faceless"),
+            }
+            for item in supported_competitors
+        ]
         report = build_market_intelligence_report(
             query,
-            self._deduplicate_video_records(videos)[: min(limit, RITZZ_COMPETITOR_VIDEO_LIMIT)],
-            channels=[
-                {
-                    "id": item.get("channel_id"),
-                    "name": item.get("name"),
-                    "group": item.get("group"),
-                }
-                for item in supported_competitors
-            ],
+            [video.model_dump(mode="json", by_alias=True) for video in normalized_videos],
+            channels=channel_records,
             source="vidIQ MCP",
             performance_tool_available=outlier_tool is not None or bool(videos),
             warnings=warnings,
         )
+        report.channels = channel_records
         report.configured_competitor_count = len(configured_competitors)
         report.competitors_queried = len(queried_ids)
         report.videos_inspected = len(report.outliers)
+        report.competitor_group_diagnostics = group_diagnostics
         report.operations = operations
         if outlier_error and not report.outliers:
             report.warnings.append(
@@ -1074,29 +1231,444 @@ class VidiqMcpProvider:
             return [], [f"Competitor registry could not be read: {exc}"]
         if not isinstance(payload, dict):
             return [], ["Competitor registry must be a JSON object."]
+        if any(
+            key in payload
+            for key in ("format_competitors", "topic_competitors", "emerging_format")
+        ):
+            groups = (
+                "format_competitors",
+                "topic_competitors",
+                "emerging_format",
+            )
+        else:
+            groups = ("core", "adjacent", "emerging")
         competitors = []
-        for group in ("core", "adjacent", "emerging"):
+        warnings = []
+        for group in groups:
             entries = payload.get(group, [])
             if not isinstance(entries, list):
                 return [], [f"Competitor registry group '{group}' must be a list."]
             for entry in entries:
                 if not isinstance(entry, dict) or entry.get("enabled", True) is False:
                     continue
-                if not any(entry.get(key) for key in ("channel_id", "channel", "handle")):
+                channel_ref = next(
+                    (
+                        str(entry[key]).strip()
+                        for key in (
+                            "channel_id",
+                            "channel_handle",
+                            "channel_url",
+                            "channel",
+                            "handle",
+                        )
+                        if entry.get(key)
+                    ),
+                    None,
+                )
+                if not channel_ref:
+                    warnings.append(
+                        f"Enabled entry in competitor group '{group}' has no "
+                        "channel_id, channel_handle, or channel_url; it was skipped."
+                    )
                     continue
-                channel_id = entry.get("channel_id") or entry.get("channel")
+                reference_type = (
+                    "channel_id" if entry.get("channel_id")
+                    else "channel_handle" if entry.get("channel_handle") or entry.get("handle")
+                    else "channel_url" if entry.get("channel_url")
+                    else "channel"
+                )
+                channel_url_id = re.search(
+                    r"(?:youtube\.com/)?channel/(UC[\w-]+)",
+                    channel_ref,
+                    re.IGNORECASE,
+                )
+                if reference_type == "channel_url" and channel_url_id:
+                    channel_ref = channel_url_id.group(1)
+                    reference_type = "channel_id"
                 competitors.append({
                     **entry,
-                    "channel_id": str(channel_id).strip() if channel_id else None,
+                    "channel_id": channel_ref,
+                    "channel_ref": channel_ref,
+                    "reference_type": reference_type,
                     "group": group,
                 })
-        return competitors, []
+        return competitors, warnings
+
+    @staticmethod
+    def _group_competitors(
+        competitors: list[dict[str, Any]],
+    ) -> list[tuple[str, list[dict[str, Any]]]]:
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for competitor in competitors:
+            grouped.setdefault(str(competitor.get("group") or "unknown"), []).append(competitor)
+        preferred_order = (
+            "format_competitors",
+            "topic_competitors",
+            "emerging_format",
+            "core",
+            "adjacent",
+            "emerging",
+        )
+        return [
+            (group, grouped.pop(group))
+            for group in preferred_order
+            if group in grouped
+        ] + list(grouped.items())
+
+    @staticmethod
+    def _limit_video_records_by_group(
+        records: list[dict[str, Any]],
+        limit: int,
+        group_order: list[str],
+    ) -> list[dict[str, Any]]:
+        records_by_group: dict[str, list[dict[str, Any]]] = {}
+        for record in records:
+            group = str(record.get("channelGroup") or "unknown")
+            records_by_group.setdefault(group, []).append(record)
+        ordered_groups = [
+            group for group in group_order if group in records_by_group
+        ] + [
+            group for group in records_by_group if group not in group_order
+        ]
+        selected: list[dict[str, Any]] = []
+        while len(selected) < limit and ordered_groups:
+            remaining_groups = []
+            for group in ordered_groups:
+                group_records = records_by_group[group]
+                if group_records and len(selected) < limit:
+                    selected.append(group_records.pop(0))
+                if group_records:
+                    remaining_groups.append(group)
+            ordered_groups = remaining_groups
+        return selected
+
+    def _verify_competitor_metadata(
+        self,
+        tools: list[dict[str, Any]],
+        competitors: list[dict[str, Any]],
+        operations: list[dict[str, str]],
+        warnings: list[str],
+        *,
+        reference_tool: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        handle_tool = next(
+            (
+                tool for tool in tools
+                if "channel_search" in str(tool.get("name", "")).casefold()
+                and any(
+                    re.sub(r"[^a-z0-9]", "", str(name).casefold()) == "handle"
+                    for name in self._tool_properties(tool)
+                )
+            ),
+            None,
+        )
+        id_tool = next(
+            (
+                tool for tool in tools
+                if "channel" in str(tool.get("name", "")).casefold()
+                and "ids" in str(tool.get("name", "")).casefold()
+                and "outlier" not in str(tool.get("name", "")).casefold()
+                and any(
+                    re.sub(r"[^a-z0-9]", "", str(name).casefold()) == "channelids"
+                    for name in self._tool_properties(tool)
+                )
+            ),
+            None,
+        )
+        verified: list[dict[str, Any]] = []
+        id_competitors = [
+            competitor for competitor in competitors
+            if competitor.get("reference_type") == "channel_id"
+        ]
+        handle_competitors = [
+            competitor for competitor in competitors
+            if competitor.get("reference_type") != "channel_id"
+        ]
+        if id_tool is not None and id_competitors:
+            properties = self._tool_properties(id_tool)
+            ids_property = next(
+                (
+                    definition for name, definition in properties.items()
+                    if re.sub(r"[^a-z0-9]", "", str(name).casefold()) == "channelids"
+                ),
+                {},
+            )
+            try:
+                max_items = int(ids_property.get("maxItems", 50)) if isinstance(ids_property, dict) else 50
+            except (TypeError, ValueError):
+                max_items = 50
+            batch_size = max(1, min(max_items, 50))
+            for start in range(0, len(id_competitors), batch_size):
+                batch = id_competitors[start:start + batch_size]
+                arguments = self._channel_metadata_arguments(
+                    id_tool,
+                    str(batch[0]["channel_ref"]),
+                )
+                if arguments is not None:
+                    ids_field = next(
+                        name for name in properties
+                        if re.sub(r"[^a-z0-9]", "", str(name).casefold()) == "channelids"
+                    )
+                    arguments[ids_field] = [str(item["channel_id"]) for item in batch]
+                try:
+                    if arguments is None:
+                        raise ValueError("Channel metadata tool requires unsupported fields.")
+                    response = self._rpc("tools/call", {
+                        "name": id_tool["name"],
+                        "arguments": arguments,
+                    })
+                    records = self._extract_records(response)
+                except (ProviderUnavailableError, ValueError) as exc:
+                    for competitor in batch:
+                        competitor["metadata_status"] = "provider_error"
+                        verified.append(competitor)
+                    error_type = (
+                        exc.error_type if isinstance(exc, ProviderUnavailableError)
+                        else "UNSUPPORTED_ARGUMENT_SCHEMA"
+                    )
+                    warnings.append(f"vidIQ channel metadata lookup failed: {exc}")
+                    operations.append({
+                        "source": "competitor_channel_metadata",
+                        "tool": str(id_tool["name"]),
+                        "status": "failed",
+                        "error_type": error_type,
+                        "message": str(exc),
+                        "fallback_behavior": "Continue with configured canonical IDs and record verification unavailability.",
+                    })
+                    continue
+                records_by_id = {
+                    channel_id: record
+                    for record in records
+                    if (channel_id := self._record_channel_id(record)) is not None
+                }
+                for competitor in batch:
+                    metadata = records_by_id.get(str(competitor["channel_id"]))
+                    if metadata is None:
+                        competitor["metadata_status"] = "not_found"
+                        warnings.append(
+                            f"vidIQ returned no channel metadata for configured channel "
+                            f"{competitor['channel_ref']}; it was excluded from video research."
+                        )
+                        continue
+                    self._apply_channel_metadata(competitor, metadata)
+                    verified.append(competitor)
+                operations.append({
+                    "source": "competitor_channel_metadata",
+                    "tool": str(id_tool["name"]),
+                    "status": "success" if records else "valid_zero_results",
+                    "error_type": "NONE" if records else "CHANNEL_NOT_FOUND",
+                    "message": (
+                        f"Returned metadata for {len(records)} of "
+                        f"{len(batch)} configured channel(s)."
+                    ),
+                    "fallback_behavior": "Skip only channels that the metadata lookup confirmed absent.",
+                })
+        else:
+            for competitor in id_competitors:
+                competitor["metadata_status"] = "not_available"
+                verified.append(competitor)
+
+        for competitor in handle_competitors:
+            if reference_tool and self._tool_accepts_channel_references(reference_tool):
+                competitor["metadata_status"] = "provider_resolves_reference"
+                verified.append(competitor)
+                continue
+            if handle_tool is None:
+                competitor["metadata_status"] = "not_available"
+                verified.append(competitor)
+                continue
+            arguments = self._channel_metadata_arguments(
+                handle_tool,
+                self._channel_lookup_reference(str(competitor["channel_ref"])),
+            )
+            if arguments is None:
+                competitor["metadata_status"] = "unsupported_schema"
+                warnings.append(
+                    f"vidIQ channel metadata tool '{handle_tool['name']}' could not safely "
+                    f"verify {competitor['channel_ref']}."
+                )
+                verified.append(competitor)
+                continue
+            try:
+                response = self._rpc("tools/call", {
+                    "name": handle_tool["name"],
+                    "arguments": arguments,
+                })
+                records = self._extract_records(response)
+            except ProviderUnavailableError as exc:
+                competitor["metadata_status"] = "provider_error"
+                warnings.append(
+                    f"vidIQ channel metadata lookup failed for "
+                    f"{competitor['channel_ref']}: {exc}"
+                )
+                operations.append({
+                    "source": "competitor_channel_metadata",
+                    "tool": str(handle_tool["name"]),
+                    "status": "failed",
+                    "error_type": exc.error_type,
+                    "message": str(exc),
+                    "fallback_behavior": "Use the configured handle/URL directly only where video tools support it.",
+                })
+                verified.append(competitor)
+                continue
+            if not records:
+                competitor["metadata_status"] = "not_found"
+                warnings.append(
+                    f"vidIQ returned no channel metadata for configured channel "
+                    f"{competitor['channel_ref']}; it was excluded from video research."
+                )
+                operations.append({
+                    "source": "competitor_channel_metadata",
+                    "tool": str(handle_tool["name"]),
+                    "status": "valid_zero_results",
+                    "error_type": "CHANNEL_NOT_FOUND",
+                    "message": f"No channel metadata returned for {competitor['channel_ref']}.",
+                    "fallback_behavior": "Skip the unverified channel and continue with other groups.",
+                })
+                continue
+            self._apply_channel_metadata(competitor, records[0])
+            operations.append({
+                "source": "competitor_channel_metadata",
+                "tool": str(handle_tool["name"]),
+                "status": "success",
+                "error_type": "NONE",
+                "message": f"Verified configured channel {competitor['channel_ref']}.",
+                "fallback_behavior": "Use provider metadata as channel identity evidence.",
+            })
+            verified.append(competitor)
+        return verified
+
+    @classmethod
+    def _apply_channel_metadata(
+        cls,
+        competitor: dict[str, Any],
+        metadata: dict[str, Any],
+    ) -> None:
+        canonical_id = cls._record_channel_id(metadata)
+        if canonical_id:
+            competitor["channel_id"] = canonical_id
+        competitor["metadata_status"] = "verified"
+        competitor["metadata_name"] = cls._metadata_value(
+            metadata,
+            "channelTitle",
+            "channelName",
+            "title",
+            "name",
+        )
+        competitor["metadata_handle"] = cls._metadata_value(
+            metadata,
+            "handle",
+            "channelHandle",
+            "customUrl",
+        )
+        competitor["metadata_description"] = cls._metadata_value(
+            metadata,
+            "description",
+            "channelDescription",
+        )
+        competitor["metadata_channel_type"] = cls._metadata_value(
+            metadata,
+            "channelType",
+            "type",
+        )
+        competitor["metadata_faceless"] = cls._metadata_value(
+            metadata,
+            "faceless",
+            "isFaceless",
+        )
+        if competitor.get("metadata_name") and not competitor.get("name"):
+            competitor["name"] = competitor["metadata_name"]
+
+    @staticmethod
+    def _channel_lookup_reference(channel_ref: str) -> str:
+        parsed = urlparse(channel_ref)
+        if not parsed.netloc.casefold().endswith("youtube.com"):
+            return channel_ref
+        parts = [part for part in parsed.path.split("/") if part]
+        if not parts:
+            return channel_ref
+        if parts[0].startswith("@"):
+            return parts[0]
+        if parts[0] in {"c", "user"} and len(parts) > 1:
+            return parts[1]
+        return channel_ref
+
+    @classmethod
+    def _channel_metadata_arguments(
+        cls,
+        tool: dict[str, Any],
+        channel_ref: str,
+    ) -> dict[str, Any] | None:
+        schema = tool.get("inputSchema", {})
+        required = schema.get("required", []) if isinstance(schema, dict) else []
+        arguments: dict[str, Any] = {}
+        for name, definition in cls._tool_properties(tool).items():
+            key = re.sub(r"[^a-z0-9]", "", str(name).casefold())
+            enum = definition.get("enum", []) if isinstance(definition, dict) else []
+            default = definition.get("default") if isinstance(definition, dict) else None
+            if key == "handle":
+                arguments[name] = channel_ref
+            elif key == "handlematch":
+                if enum and "exact" not in enum:
+                    return None
+                arguments[name] = "exact"
+            elif key == "channelids":
+                arguments[name] = [channel_ref]
+            elif key == "channelid":
+                arguments[name] = channel_ref
+            elif key in {"limit", "maxresults", "count"}:
+                arguments[name] = 1
+            elif default is not None:
+                arguments[name] = default
+            elif name in required:
+                return None
+        return arguments
+
+    @staticmethod
+    def _metadata_value(
+        record: dict[str, Any],
+        *names: str,
+    ) -> str | int | float | bool | None:
+        normalized = {
+            re.sub(r"[^a-z0-9]", "", str(key).casefold()): value
+            for key, value in record.items()
+        }
+        value = next(
+            (
+                normalized[re.sub(r"[^a-z0-9]", "", name.casefold())]
+                for name in names
+                if normalized.get(re.sub(r"[^a-z0-9]", "", name.casefold())) is not None
+            ),
+            None,
+        )
+        return value if isinstance(value, (str, int, float, bool)) else None
 
     @staticmethod
     def _tool_properties(tool: dict[str, Any]) -> dict[str, Any]:
         schema = tool.get("inputSchema", {})
         properties = schema.get("properties", {}) if isinstance(schema, dict) else {}
         return properties if isinstance(properties, dict) else {}
+
+    @classmethod
+    def _tool_accepts_channel_references(cls, tool: dict[str, Any]) -> bool:
+        properties = cls._tool_properties(tool)
+        for name, definition in properties.items():
+            if re.sub(r"[^a-z0-9]", "", str(name).casefold()) not in {
+                "channelid",
+                "channelids",
+            } or not isinstance(definition, dict):
+                continue
+            item_schema = definition.get("items", {})
+            descriptions = [
+                str(tool.get("description", "")),
+                str(definition.get("description", "")),
+            ]
+            if isinstance(item_schema, dict):
+                descriptions.append(str(item_schema.get("description", "")))
+            description = " ".join(descriptions).casefold()
+            if any(term in description for term in ("handle", "username", "channel url", "channel urls")):
+                return True
+        return False
 
     @classmethod
     def _find_video_capability_tool(
@@ -1326,11 +1898,16 @@ class VidiqMcpProvider:
         if method == "tools/call" and isinstance(result, dict) and result.get("isError") is True:
             tool_name = params.get("name", "unknown")
             error_kind = self._tool_error_kind(result)
+            error_type = (
+                "INSUFFICIENT_CREDITS"
+                if error_kind == "insufficient vidIQ credits"
+                else "PROVIDER_ERROR"
+            )
             raise ProviderUnavailableError(
                 f"vidIQ MCP tool '{tool_name}' reported an execution error "
                 f"({error_kind}) "
                 f"(response schema: {self._response_schema(result)}).",
-                error_type="PROVIDER_ERROR",
+                error_type=error_type,
                 tool=str(tool_name),
             )
         return result
@@ -1753,6 +2330,8 @@ class VidiqMcpProvider:
             for block in result.get("content", [])
             if isinstance(block, dict) and isinstance(block.get("text"), str)
         ).casefold()
+        if any(term in text for term in ("not enough credits", "insufficient credits", "no credits")):
+            return "insufficient vidIQ credits"
         if any(term in text for term in ("unauthorized", "forbidden", "invalid api key", "invalid credentials", "authentication")):
             return "authentication or access denied"
         if any(term in text for term in ("rate limit", "too many requests", "quota exceeded")):

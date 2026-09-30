@@ -12,6 +12,7 @@ OpportunityType = Literal["TRENDING", "EVERGREEN", "TREND_TO_EVERGREEN"]
 EditorialStatus = Literal["PASS", "REVIEW", "FAIL"]
 ValidationStatus = Literal["RECOMMENDED", "REVIEW", "REJECTED"]
 RitzzFitStatus = Literal["PASS", "REVIEW", "FAIL"]
+InventoryStatus = Literal["ELIGIBLE", "DUPLICATE", "NOT_CHECKED"]
 StoryType = Literal[
     "WHY",
     "HOW",
@@ -37,6 +38,7 @@ class RitzzFitResult(BaseModel):
     story_depth: float | None = Field(default=None, ge=0, le=100)
     originality: float | None = Field(default=None, ge=0, le=100)
     visual_potential: float | None = Field(default=None, ge=0, le=100)
+    format_fit: float | None = Field(default=None, ge=0, le=100)
     evergreen_potential: float | None = Field(default=None, ge=0, le=100)
     audience_value: float | None = Field(default=None, ge=0, le=100)
     temporary_trend_dependency: float | None = Field(default=None, ge=0, le=100)
@@ -83,6 +85,7 @@ class OpportunityCandidate(BaseModel):
     filter_reasons: list[str] = Field(default_factory=list)
     validation_status: ValidationStatus = "REVIEW"
     validation_reasons: list[str] = Field(default_factory=list)
+    inventory_status: InventoryStatus = "NOT_CHECKED"
     provider: str
     discovery_sources: list[str] = Field(default_factory=list)
     discovered_at: str = Field(

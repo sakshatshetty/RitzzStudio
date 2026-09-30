@@ -23,7 +23,10 @@ from modules.topic_intelligence.models import (
     OpportunityCandidate,
     TopicDiscoveryRequest,
 )
-from modules.topic_intelligence.providers.base import TopicDemandEnrichment
+from modules.topic_intelligence.providers.base import (
+    ProviderUnavailableError,
+    TopicDemandEnrichment,
+)
 from modules.topic_intelligence.providers.vidiq_mcp import VidiqMcpProvider
 
 
@@ -50,8 +53,9 @@ def _video(
     score=None,
     views=1000,
     baseline: int | None = 100,
+    group: str | None = None,
 ):
-    return normalize_outlier({
+    record = {
         "videoId": video_id,
         "channelId": channel_id,
         "channelTitle": f"Channel {channel_id}",
@@ -60,7 +64,10 @@ def _video(
         "viewCount": views,
         "baselineViews": baseline,
         "outlierScore": score,
-    })
+    }
+    if group:
+        record["channelGroup"] = group
+    return normalize_outlier(record)
 
 
 def _generation_batch(topic="Why Did Humans Stop Sleeping in Two Shifts?"):
@@ -91,8 +98,20 @@ def test_original_topics_require_repeated_success_across_multiple_channels():
         retrieved_at="2026-09-30T00:00:00+00:00",
         competitor_topic_performance_available=True,
         outliers=[
-            _video("video-a", "channel-a", "Why Ancient People Slept in Two Shifts", score=4),
-            _video("video-b", "channel-b", "The Strange Way Medieval People Slept", score=6),
+            _video(
+                "video-a",
+                "channel-a",
+                "Why Ancient People Slept in Two Shifts",
+                score=4,
+                group="format_competitors",
+            ),
+            _video(
+                "video-b",
+                "channel-b",
+                "The Strange Way Medieval People Slept",
+                score=6,
+                group="topic_competitors",
+            ),
             _video("video-normal", "channel-c", "A Normal Topic", score=1, baseline=1000),
         ],
     )
@@ -105,12 +124,49 @@ def test_original_topics_require_repeated_success_across_multiple_channels():
     assert len(patterns) == 1
     assert patterns[0].channel_count == 2
     assert patterns[0].video_count == 2
+    assert patterns[0].channel_groups == [
+        "format_competitors",
+        "topic_competitors",
+    ]
     assert candidates[0].topic == "Why Did Humans Stop Sleeping in Two Shifts?"
     assert candidates[0].ritzz_differentiation_angle
     assert len(candidates[0].competitor_evidence) == 2
+    assert {
+        item.channel_group for item in candidates[0].competitor_evidence
+    } == {"format_competitors", "topic_competitors"}
     supplied = json.loads(client.responses.inputs[0]["input"][1]["content"])
     assert {item["evidence_id"] for item in supplied} == {"video-a", "video-b"}
     assert diagnostics["successful_outlier_videos"] == 2
+
+
+def test_single_competitor_video_can_seed_a_low_confidence_topic():
+    batch = _generation_batch()
+    batch.patterns[0].evidence_ids = ["video-a"]
+    report = MarketIntelligenceReport(
+        query="history curiosity",
+        retrieved_at="2026-09-30T00:00:00+00:00",
+        competitor_topic_performance_available=True,
+        outliers=[
+            _video(
+                "video-a",
+                "channel-a",
+                "Why Ancient People Slept in Two Shifts",
+                score=4,
+                group="format_competitors",
+            )
+        ],
+    )
+
+    candidates, patterns, diagnostics = CompetitorOpportunityGenerator(
+        client=FakeGeneratorClient(batch)
+    ).generate(report)
+
+    assert diagnostics["successful_outlier_videos"] == 1
+    assert len(patterns) == 1
+    assert patterns[0].confidence == "LOW"
+    assert patterns[0].video_count == 1
+    assert len(candidates) == 1
+    assert candidates[0].competitor_topic_patterns[0].confidence == "LOW"
 
 
 def test_competitor_title_copy_is_rejected():
@@ -134,7 +190,7 @@ def test_competitor_title_copy_is_rejected():
     assert diagnostics["rejected_copied_angles"] == 1
 
 
-def test_single_channel_pattern_is_not_promoted_to_a_ritzz_idea():
+def test_single_channel_pattern_is_retained_with_low_confidence():
     report = MarketIntelligenceReport(
         query="history curiosity",
         retrieved_at="2026-09-30T00:00:00+00:00",
@@ -148,9 +204,11 @@ def test_single_channel_pattern_is_not_promoted_to_a_ritzz_idea():
         client=FakeGeneratorClient(_generation_batch())
     ).generate(report)
 
-    assert candidates == []
-    assert patterns == []
-    assert diagnostics["topic_patterns_extracted"] == 0
+    assert len(candidates) == 1
+    assert len(patterns) == 1
+    assert patterns[0].confidence == "LOW"
+    assert patterns[0].channel_count == 1
+    assert diagnostics["topic_patterns_extracted"] == 1
 
 
 def test_missing_success_metrics_do_not_become_outliers_or_generated_ideas():
@@ -272,14 +330,174 @@ def test_configured_channel_outlier_query_uses_runtime_schema_channel_ids(tmp_pa
     assert report.configured_competitor_count == 2
     assert report.competitors_queried == 2
     assert report.videos_inspected == 2
-    method, params = provider.calls[0]
-    assert method == "tools/call"
-    assert params["name"] == "provider_outlier_operation"
-    assert params["arguments"]["channelIds"] == ["channel-a", "channel-b"]
-    assert "keyword" not in params["arguments"]
-    assert params["arguments"]["publishedWithin"] == "oneYear"
-    assert params["arguments"]["minOutlierScore"] == 2
+    assert [method for method, _ in provider.calls] == ["tools/call", "tools/call"]
+    calls = [params for _, params in provider.calls]
+    assert [call["arguments"]["channelIds"] for call in calls] == [
+        ["channel-a"],
+        ["channel-b"],
+    ]
+    assert all(call["name"] == "provider_outlier_operation" for call in calls)
+    assert all("keyword" not in call["arguments"] for call in calls)
+    assert all(call["arguments"]["publishedWithin"] == "oneYear" for call in calls)
+    assert all(call["arguments"]["minOutlierScore"] == 2 for call in calls)
     assert report.outliers[0].breakout_score == 9
+    assert {
+        video.video_id: video.channel_group
+        for video in report.outliers
+    } == {"video-a": "core", "video-b": "adjacent"}
+
+
+def test_new_competitor_groups_skip_paid_handle_lookups_when_outliers_resolve_references(tmp_path):
+    registry = tmp_path / "competitors.json"
+    registry.write_text(json.dumps({
+        "format_competitors": [{"channel_handle": "@FormatHistory"}],
+        "topic_competitors": [{
+            "channel_url": "https://www.youtube.com/@TopicHistory"
+        }],
+        "emerging_format": [{"channel_handle": "@EmergingHistory"}],
+    }))
+
+    class GroupedProvider(VidiqMcpProvider):
+        def __init__(self):
+            super().__init__(api_key="fixture", competitor_registry_path=registry)
+            self.calls = []
+            self._tools_cache = [
+                {
+                    "name": "vidiq_channel_search",
+                    "inputSchema": {
+                        "properties": {
+                            "handle": {"type": "string"},
+                            "handleMatch": {"type": "string", "enum": ["exact", "fuzzy"]},
+                            "limit": {"type": "integer"},
+                        },
+                    },
+                },
+                {
+                    "name": "vidiq_outliers",
+                    "description": "Find breakout and overperforming videos",
+                    "inputSchema": {
+                        "properties": {
+                            "channelIds": {
+                                "type": "array",
+                                "maxItems": 50,
+                                "description": "Channel IDs, handles, or channel URLs.",
+                                "items": {"type": "string"},
+                            },
+                            "limit": {"type": "integer"},
+                        },
+                        "required": ["channelIds"],
+                    },
+                },
+            ]
+            self.channel_ids = {
+                "@FormatHistory": "UC-format",
+                "https://www.youtube.com/@TopicHistory": "UC-topic",
+                "@EmergingHistory": "UC-emerging",
+            }
+
+        def _rpc(self, method, params):
+            self.calls.append(params)
+            if params["name"] == "vidiq_channel_search":
+                reference = params["arguments"]["handle"]
+                channel_id = self.channel_ids[reference]
+                return {"structuredContent": {"channels": [{
+                    "channelId": channel_id,
+                    "channelTitle": f"Verified {reference}",
+                    "handle": reference,
+                    "description": "History explainers",
+                    "channelType": "long",
+                    "faceless": True,
+                }]}}
+            reference = params["arguments"]["channelIds"][0]
+            channel_id = self.channel_ids[reference]
+            return {"structuredContent": {"videos": [{
+                "videoId": f"video-{channel_id}",
+                "channelId": channel_id,
+                "videoTitle": f"Why {channel_id} changed history",
+                "viewCount": 10000,
+                "breakoutScore": 90,
+            }]}}
+
+    provider = GroupedProvider()
+    report = provider.discover_competitor_research("history", limit=10)
+
+    assert [call["name"] for call in provider.calls] == ["vidiq_outliers"] * 3
+    assert {
+        video.channel_id: video.channel_group
+        for video in report.outliers
+    } == {
+        "UC-format": "format_competitors",
+        "UC-topic": "topic_competitors",
+        "UC-emerging": "emerging_format",
+    }
+    assert all(
+        channel["metadata_status"] == "provider_resolves_reference"
+        for channel in report.channels
+    )
+    assert report.competitor_group_diagnostics == {
+        "format_competitors": {
+            "configured": 1,
+            "resolved": 1,
+            "queried": 1,
+            "researched": 1,
+            "videos_inspected": 1,
+            "successful_outliers": 1,
+        },
+        "topic_competitors": {
+            "configured": 1,
+            "resolved": 1,
+            "queried": 1,
+            "researched": 1,
+            "videos_inspected": 1,
+            "successful_outliers": 1,
+        },
+        "emerging_format": {
+            "configured": 1,
+            "resolved": 1,
+            "queried": 1,
+            "researched": 1,
+            "videos_inspected": 1,
+            "successful_outliers": 1,
+        },
+    }
+
+
+def test_handle_is_passed_to_outlier_tool_when_metadata_lookup_is_unavailable(tmp_path):
+    registry = tmp_path / "competitors.json"
+    registry.write_text(json.dumps({
+        "format_competitors": [{"channel_handle": "@FormatHistory"}],
+        "topic_competitors": [],
+        "emerging_format": [],
+    }))
+
+    class HandleProvider(VidiqMcpProvider):
+        def __init__(self):
+            super().__init__(api_key="fixture", competitor_registry_path=registry)
+            self.calls = []
+            self._tools_cache = [{
+                "name": "vidiq_outliers",
+                "description": "Find breakout videos",
+                "inputSchema": {
+                    "properties": {
+                        "channelIds": {"type": "array", "items": {"type": "string"}},
+                        "limit": {"type": "integer"},
+                    },
+                    "required": ["channelIds"],
+                },
+            }]
+
+        def _rpc(self, method, params):
+            self.calls.append(params)
+            return {"structuredContent": {"videos": []}}
+
+    provider = HandleProvider()
+    report = provider.discover_competitor_research("history", limit=5)
+
+    assert provider.calls[0]["arguments"]["channelIds"] == ["@FormatHistory"]
+    assert report.competitor_group_diagnostics["format_competitors"]["queried"] == 1
+    assert report.competitor_group_diagnostics["format_competitors"]["researched"] == 1
+    assert report.competitor_group_diagnostics["format_competitors"]["resolved"] == 1
+    assert report.channels[0]["metadata_status"] == "not_available"
 
 
 def test_empty_competitor_registry_does_not_substitute_unscoped_ideas(tmp_path):
@@ -373,6 +591,63 @@ def test_channel_video_fallback_supplies_metrics_for_title_only_outlier_results(
         "vidiq_channel_videos",
         "vidiq_channel_videos",
     ]
+
+
+def test_insufficient_outlier_credits_block_paid_channel_video_fallback(tmp_path):
+    registry = tmp_path / "competitors.json"
+    registry.write_text(json.dumps({
+        "format_competitors": [{"channel_handle": "@FormatHistory"}],
+        "topic_competitors": [{"channel_handle": "@TopicHistory"}],
+        "emerging_format": [],
+    }))
+
+    class CreditLimitedProvider(VidiqMcpProvider):
+        def __init__(self):
+            super().__init__(api_key="fixture", competitor_registry_path=registry)
+            self.calls = []
+            self._tools_cache = [
+                {
+                    "name": "vidiq_outliers",
+                    "description": "Channel-scoped outlier video research",
+                    "inputSchema": {
+                        "properties": {
+                            "channelIds": {"type": "array", "items": {"type": "string"}},
+                        },
+                        "required": ["channelIds"],
+                    },
+                },
+                {
+                    "name": "vidiq_channel_videos",
+                    "description": "List recent and popular channel videos",
+                    "inputSchema": {
+                        "properties": {
+                            "channelId": {"type": "string"},
+                            "videoFormat": {"type": "string", "enum": ["long"]},
+                            "popular": {"type": "boolean"},
+                        },
+                        "required": ["channelId", "videoFormat", "popular"],
+                    },
+                },
+            ]
+
+        def _rpc(self, _method, params):
+            assert _method == "tools/call"
+            self.calls.append(params["name"])
+            raise ProviderUnavailableError(
+                "vidIQ reports insufficient credits.",
+                error_type="INSUFFICIENT_CREDITS",
+            )
+
+    provider = CreditLimitedProvider()
+    report = provider.discover_competitor_research("history", limit=5)
+
+    assert provider.calls == ["vidiq_outliers"]
+    assert any(
+        operation["error_type"] == "INSUFFICIENT_CREDITS"
+        and operation["status"] == "blocked"
+        for operation in report.operations
+    )
+    assert report.competitor_group_diagnostics["topic_competitors"]["queried"] == 0
 
 
 def test_keyword_provider_error_is_optional_for_competitor_candidate_generation(tmp_path):
@@ -506,6 +781,7 @@ def test_keyword_provider_error_is_optional_for_competitor_candidate_generation(
                 curiosity=90,
                 evergreen=90,
                 visual=90,
+                format_fit=90,
                 researchability=90,
                 differentiation=90,
                 saturation=80,
