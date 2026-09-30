@@ -36,8 +36,31 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  preflight:
+    name: Validate pipeline prerequisites
+    runs-on: ubuntu-latest
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      VIDIQ_MCP_API_KEY: ${{ secrets.VIDIQ_MCP_API_KEY }}
+      ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+      RITZZ_VOICE_ID: ${{ secrets.RITZZ_VOICE_ID }}
+      GOOGLE_CLIENT_SECRETS_B64: ${{ secrets.GOOGLE_CLIENT_SECRETS_B64 }}
+      GOOGLE_TOKEN_B64: ${{ secrets.GOOGLE_TOKEN_B64 }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate required secrets and OAuth JSON
+        run: python scripts/validate_pipeline_prerequisites.py
+
   validate:
     name: Validate RITZZ pipeline
+    needs: preflight
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -97,6 +120,7 @@ jobs:
           name: ritzz-pipeline-validation-${{ github.run_id }}
           path: .pipeline-artifacts/
           if-no-files-found: error
+          include-hidden-files: true
 
   discover-topics:
     name: Discover four trending topics
@@ -133,6 +157,7 @@ jobs:
           name: ritzz-topic-candidates-${{ github.run_id }}
           path: .pipeline-artifacts/
           if-no-files-found: error
+          include-hidden-files: true
 
       - name: Create browser approval issue
         id: create-approval-issue
@@ -218,6 +243,7 @@ jobs:
           name: ritzz-approved-topic-${{ github.run_id }}
           path: .pipeline-artifacts/topic_selection.json
           if-no-files-found: error
+          include-hidden-files: true
 
   topic-approval:
     name: Approve selected topic
@@ -298,6 +324,7 @@ jobs:
           name: ritzz-content-project-${{ github.run_id }}
           path: .pipeline-artifacts/
           if-no-files-found: error
+          include-hidden-files: true
 
   voice-generation:
     name: Generate and validate narration
@@ -353,6 +380,7 @@ jobs:
           name: ritzz-voice-project-${{ github.run_id }}
           path: .pipeline-artifacts/
           if-no-files-found: error
+          include-hidden-files: true
 
   pipeline-placeholder:
     name: Production stages pending M8 implementation
@@ -418,6 +446,7 @@ jobs:
           name: ritzz-image-project-${{ github.run_id }}
           path: .pipeline-artifacts/
           if-no-files-found: error
+          include-hidden-files: true
 
   render-video:
     name: Render and run technical QA
@@ -470,6 +499,7 @@ jobs:
           name: ritzz-rendered-project-${{ github.run_id }}
           path: .pipeline-artifacts/
           if-no-files-found: error
+          include-hidden-files: true
 
   video-approval:
     name: Human approval for generated test video
@@ -591,7 +621,8 @@ jobs:
       - name: Archive storyboard project artifacts
         shell: bash
         run: |
-          tar -czf .pipeline-artifacts/storyboard-project.tar.gz -C projects "${{ steps.project.outputs.project_id }}"
+          project_name=$(find projects -mindepth 1 -maxdepth 1 -type d -name "${{ steps.project.outputs.project_id }}_*" -printf "%f\n" | head -n 1)
+          tar -czf .pipeline-artifacts/storyboard-project.tar.gz -C projects "$project_name"
 
       - name: Upload storyboard artifacts
         uses: actions/upload-artifact@v4
@@ -599,3 +630,4 @@ jobs:
           name: ritzz-storyboard-project-${{ github.run_id }}
           path: .pipeline-artifacts/
           if-no-files-found: error
+          include-hidden-files: true
