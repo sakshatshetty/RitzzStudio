@@ -5,7 +5,10 @@ from modules.topic_intelligence.models import (
     OpportunityReport,
     TopicDiscoveryRequest,
 )
-from scripts.discover_pipeline_topics import discover_four_candidates
+from scripts.discover_pipeline_topics import (
+    _candidate_markdown,
+    discover_four_candidates,
+)
 
 
 def _candidate(number: int, topic: str) -> OpportunityCandidate:
@@ -13,6 +16,7 @@ def _candidate(number: int, topic: str) -> OpportunityCandidate:
         candidate_id=f"candidate-{number}",
         topic=topic,
         provider="vidiq_mcp",
+        editorial_status="PASS",
         validation_status="RECOMMENDED",
     )
 
@@ -39,7 +43,7 @@ class SequencedEngine:
 def test_short_category_discovery_backfills_distinct_unscoped_topics():
     request = TopicDiscoveryRequest(mode="TRENDING", trend_topic="history")
     category_candidates = [_candidate(1, "Topic One"), _candidate(2, "Topic Two")]
-    category_candidates[1].validation_status = "REVIEW"
+    category_candidates[1].editorial_status = "REVIEW"
     category_report = _report(request, category_candidates)
     broader_request = request.model_copy(update={"trend_topic": None, "force_refresh": True})
     broader_report = _report(
@@ -76,3 +80,18 @@ def test_insufficient_results_after_fallback_reports_clear_error():
 
     with pytest.raises(RuntimeError, match="only 2 distinct candidates after fallback"):
         discover_four_candidates(SequencedEngine([category_report, broader_report]), request)
+
+
+def test_approval_summary_separates_editorial_fit_from_evidence_status():
+    candidate = _candidate(1, "Why do cats purr?")
+    candidate.proposed_title = "Why Cats Purr: The Surprising Science"
+    candidate.angle = "Explain the biological purpose behind purring."
+    candidate.validation_status = "REVIEW"
+
+    summary = _candidate_markdown(1, candidate)
+
+    assert "Why Cats Purr: The Surprising Science" in summary
+    assert "Editorial fit: `PASS`" in summary
+    assert "Evidence status: `REVIEW`" in summary
+    assert "Competitor video performance available: `false`" in summary
+    assert "No current demand/trend metric available." in summary

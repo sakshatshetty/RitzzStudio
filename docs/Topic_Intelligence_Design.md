@@ -113,19 +113,43 @@ No missing metric should silently become zero. No estimated vidIQ value should b
 The market-intelligence layer uses vidIQ's supported MCP tools separately from
 keyword opportunity scoring:
 
-- `vidiq_similar_channels` can identify adjacent channels using the RITZZ niche and channel-size filters.
-- `vidiq_outliers` can find long-form videos that outperform their channel baseline by topic/query.
-- Each outlier preserves title, channel, subscribers, views, breakout score, engagement rate, velocity, tags, topics, and raw provider evidence.
+- The adapter checks `tools/list` before calling `vidiq_similar_channels` or
+  `vidiq_outliers`; it does not scrape channels or assume either capability is
+  enabled for the configured MCP account.
+- Available channel results and long-form video results retain channel, title,
+  topic, publication, and performance fields from the provider. Missing values
+  stay missing.
+- When the provider supplies a channel baseline, relative performance is
+  `video views / channel baseline views`. Otherwise, a baseline is computed
+  only from at least two peer videos among at least three returned videos from
+  the same channel; the report records the baseline method and sample size.
+  A ratio of at least 2.0 is labeled `strong_outlier`; lower ratios are
+  explicitly labeled above, at, or below baseline. A provider breakout score
+  is retained as a separate signal and is not treated as a view ratio.
+- Repeated provider topics across videos/channels are summarized in
+  `topic_patterns`. Candidate competitor examples are kept in
+  `competitor_evidence`, separate from the candidate's RITZZ/vidIQ discovery
+  `evidence`. Current demand, competition, and the RITZZ angle are exposed
+  from the candidate's current vidIQ/editorial fields rather than inferred
+  from competitor views. Numeric competition values retain their provider
+  value; the candidate notes that higher raw competition values reduce
+  attractiveness. Repeated topic coverage is reported as a possible saturation
+  signal, not a prediction.
+- `competitor_topic_performance_available` is false if video performance is
+  unsupported or absent. The report includes a warning and continues with any
+  channel/outlier evidence the provider did return.
+- Competitors are not ranked best-to-worst, and raw view counts alone are not
+  treated as success. No competitor metric is fabricated.
 - `vidiq_balance` exposes credit state before paid research is repeated frequently.
 
-This evidence is not yet converted directly into the opportunity score. First,
-collect repeated outlier reports and identify durable patterns such as title
-structures, topic families, video length, and channel size. A single viral video
-is inspiration, not proof that a topic will succeed for RITZZ.
+This evidence is not directly converted into the opportunity score. Repeated
+patterns are descriptive signals, not proof that a topic will succeed for
+RITZZ. The CLI competitor path is menu option 2 and saves the normalized report
+to `cache/topic_intelligence/market_intelligence.json`.
 
-The CLI competitor path is menu option 2. It accepts a topic-family query,
-shows the top three outliers by breakout evidence, and saves the normalized
-report to `cache/topic_intelligence/market_intelligence.json`.
+The topic-intelligence tests mock strong and absent relative outliers,
+repeated patterns across channels, missing metrics, and unavailable provider
+capabilities.
 
 ## 6. Opportunity data model
 

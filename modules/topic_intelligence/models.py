@@ -3,6 +3,11 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from modules.topic_intelligence.market_intelligence import (
+    CompetitorEvidence,
+    CompetitorTopicPattern,
+)
+
 OpportunityType = Literal["TRENDING", "EVERGREEN", "TREND_TO_EVERGREEN"]
 EditorialStatus = Literal["PASS", "REVIEW", "FAIL"]
 ValidationStatus = Literal["RECOMMENDED", "REVIEW", "REJECTED"]
@@ -16,7 +21,7 @@ class TopicDiscoveryRequest(BaseModel):
     trend_topic: str | None = None
     limit: int = Field(default=10, ge=1, le=50)
     force_refresh: bool = False
-    require_recommended_candidates: bool = False
+    pipeline_topic_gate: bool = False
 
 
 class EvidenceMetric(BaseModel):
@@ -53,6 +58,13 @@ class OpportunityCandidate(BaseModel):
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
     raw_evidence: dict = Field(default_factory=dict)
+    competitor_topic_performance_available: bool = False
+    competitor_evidence: list[CompetitorEvidence] = Field(default_factory=list)
+    competitor_topic_patterns: list[CompetitorTopicPattern] = Field(default_factory=list)
+    current_vidiq_demand_signals: dict[str, EvidenceMetric] = Field(default_factory=dict)
+    competition_saturation_signal: EvidenceMetric | None = None
+    competition_saturation_assessment: str | None = None
+    ritzz_differentiation_angle: str | None = None
 
 
 class OpportunityReport(BaseModel):

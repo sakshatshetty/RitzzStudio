@@ -17,9 +17,26 @@ def _print_outlier(index: int, video) -> None:
     views = f"{video.views:,}" if video.views is not None else "unavailable"
     breakout = f"{video.breakout_score:.1f}" if video.breakout_score is not None else "unavailable"
     print(f"{index}. {video.title}")
-    print(f"   Channel: {video.channel_title or 'unknown'}")
-    print(f"   Views: {views} | Breakout score: {breakout}")
-    print("   Signal: competitor success example, not a guaranteed RITZZ result")
+    print(f"   Topic: {video.topic or 'not provided'}")
+    print(
+        f"   Channel: {video.channel_title or 'unknown'} "
+        f"(subscribers: {video.channel_subscribers if video.channel_subscribers is not None else 'unavailable'})"
+    )
+    print(
+        f"   Views: {views} | Likes: {video.likes if video.likes is not None else 'unavailable'} "
+        f"| Comments: {video.comments if video.comments is not None else 'unavailable'} "
+        f"| Breakout score: {breakout}"
+    )
+    if video.relative_performance is not None:
+        print(
+            f"   Channel-relative views: {video.relative_performance:.2f}x "
+            f"baseline ({video.outlier_signal}; baseline method: {video.baseline_method or 'provider'})"
+        )
+    elif video.breakout_score is not None:
+        print("   Signal: vidIQ breakout score supplied; channel-relative baseline unavailable")
+    else:
+        print("   Signal: channel-relative performance unavailable")
+    print(f"   Published: {video.published_at or 'unavailable'}")
 
 
 def _print_candidate(index: int, candidate) -> None:
@@ -95,15 +112,38 @@ def main() -> None:
                 "RITZZ topic family [history mysteries science curiosity]: "
             ).strip() or "history mysteries science curiosity"
             try:
-                market_report = VidiqMcpProvider().discover_outliers(query, limit=10)
+                market_report = VidiqMcpProvider().discover_competitor_research(query, limit=10)
                 report_path = Path("cache") / "topic_intelligence" / "market_intelligence.json"
                 report_path.parent.mkdir(parents=True, exist_ok=True)
                 report_path.write_text(market_report.model_dump_json(indent=2), encoding="utf-8")
                 selected_outliers = top_outliers(market_report, limit=3)
-                print(f"\nTop competitor success examples for: {query}")
+                print(f"\nCompetitor research for: {query}")
+                print(
+                    "Competitor video performance available: "
+                    f"{str(market_report.competitor_topic_performance_available).lower()}"
+                )
+                for warning in market_report.warnings:
+                    print(f"Note: {warning}")
+                if market_report.channels:
+                    print("\nRelevant competitor channels:")
+                    for channel in market_report.channels:
+                        subscribers = channel.get("subscribers")
+                        print(
+                            f"- {channel.get('name') or channel.get('id') or 'Unknown channel'} "
+                            f"(subscribers: {subscribers if subscribers is not None else 'unavailable'})"
+                        )
+                if market_report.topic_patterns:
+                    print("\nRepeated competitor topic patterns:")
+                    for pattern in market_report.topic_patterns:
+                        print(
+                            f"- {pattern.topic}: {pattern.video_count} videos across "
+                            f"{pattern.channel_count} channels"
+                        )
+                if selected_outliers:
+                    print("\nVideo examples by provider breakout signal:")
                 for index, video in enumerate(selected_outliers, start=1):
                     _print_outlier(index, video)
-                print("\nChoose an idea number, or type M to enter a different topic.")
+                print("\nChoose a video topic number, or type M to enter a different topic.")
                 choice = input("> ").strip()
                 if choice.casefold() == "m":
                     topic = _manual_topic()

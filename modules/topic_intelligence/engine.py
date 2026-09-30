@@ -10,17 +10,61 @@ from modules.topic_intelligence.editorial import (
 )
 from modules.topic_intelligence.evaluator import rank_candidates
 from modules.topic_intelligence.inventory import ContentInventoryManager, inventory_path
-from modules.topic_intelligence.market_intelligence import MarketIntelligenceReport
-from modules.topic_intelligence.models import OpportunityReport, TopicDiscoveryRequest
+from modules.topic_intelligence.market_intelligence import (
+    MarketIntelligenceReport,
+    build_market_intelligence_report,
+    relevant_competitor_evidence,
+    relevant_competitor_patterns,
+)
+from modules.topic_intelligence.models import (
+    OpportunityCandidate,
+    OpportunityReport,
+    TopicDiscoveryRequest,
+)
 from modules.topic_intelligence.providers.base import (
     ProviderUnavailableError,
     TopicProvider,
 )
 from modules.topic_intelligence.providers.vidiq_mcp import VidiqMcpProvider
-from modules.topic_intelligence.validation import apply_niche_filter, validate_candidates
+from modules.topic_intelligence.validation import (
+    apply_niche_filter,
+    validate_candidates,
+)
 
 SCORING_VERSION = "ritzz-opportunity-v3"
 VALIDATION_VERSION = "ritzz-topic-validation-v2"
+COMPETITOR_RESEARCH_VERSION = "competitor-topic-performance-v1"
+
+
+def _competition_saturation_assessment(candidate: OpportunityCandidate) -> str:
+    metric = candidate.competition_saturation_signal
+    if metric is None or not metric.available or metric.value is None:
+        assessment = "Current vidIQ competition signal unavailable."
+    elif isinstance(metric.value, (int, float)):
+        assessment = (
+            f"Current vidIQ competition signal: {metric.value} {metric.unit or ''}; "
+            "higher raw competition values reduce attractiveness."
+        ).strip()
+    else:
+        level = str(metric.value).casefold()
+        if "high" in level:
+            assessment = "vidIQ labels competition high; this reduces topic attractiveness."
+        elif "medium" in level or "moderate" in level:
+            assessment = "vidIQ labels competition moderate; consider this competition pressure."
+        elif "low" in level:
+            assessment = "vidIQ labels competition low."
+        else:
+            assessment = f"Raw vidIQ competition signal: {metric.value}."
+    if candidate.competitor_topic_patterns:
+        channel_count = max(
+            pattern.channel_count
+            for pattern in candidate.competitor_topic_patterns
+        )
+        assessment += (
+            f" A repeated matching topic pattern appeared across {channel_count} "
+            "competitor channels; this may indicate saturation, not certain demand."
+        )
+    return assessment
 
 
 class TopicIntelligenceEngine:
@@ -44,6 +88,7 @@ class TopicIntelligenceEngine:
                 "provider": self.provider.name,
                 "scoring_version": SCORING_VERSION,
                 "validation_version": VALIDATION_VERSION,
+                "competitor_research_version": COMPETITOR_RESEARCH_VERSION,
             }, sort_keys=True).encode("utf-8")
         ).hexdigest()
         report_path = self.cache_dir / f"{cache_key}.json"
@@ -71,15 +116,106 @@ class TopicIntelligenceEngine:
             warnings.append(f"Only {len(candidates)} distinct inventory-safe candidate(s) were available; four were requested.")
         apply_niche_filter(candidates)
         competitor_report: MarketIntelligenceReport | None = None
+        competitor_report_payload: dict | None = None
+        discover_competitor_research = getattr(
+            self.provider, "discover_competitor_research", None
+        )
         discover_outliers = getattr(self.provider, "discover_outliers", None)
-        if callable(discover_outliers):
+        if callable(discover_competitor_research):
             try:
-                competitor_report = discover_outliers(
+                result = discover_competitor_research(
                     f"{request.trend_topic or request.niche} curiosity explainers",
                     limit=10,
                 )
+                if isinstance(result, MarketIntelligenceReport):
+                    competitor_report = result
+                else:
+                    dump_method = getattr(result, "model_dump", None)
+                    if callable(dump_method):
+                        payload = dump_method()
+                        if isinstance(payload, dict):
+                            competitor_report_payload = payload
             except ProviderUnavailableError as exc:
-                warnings.append(f"Competitor evidence was unavailable: {exc}")
+                competitor_report = build_market_intelligence_report(
+                    f"{request.trend_topic or request.niche} curiosity explainers",
+                    [],
+                    source=self.provider.name,
+                    performance_tool_available=False,
+                    warnings=[f"Competitor evidence was unavailable: {exc}"],
+                )
+        elif callable(discover_outliers):
+            try:
+                result = discover_outliers(
+                    f"{request.trend_topic or request.niche} curiosity explainers",
+                    limit=10,
+                )
+                if isinstance(result, MarketIntelligenceReport):
+                    competitor_report = result
+                else:
+                    dump_method = getattr(result, "model_dump", None)
+                    if callable(dump_method):
+                        payload = dump_method()
+                        if isinstance(payload, dict):
+                            competitor_report_payload = payload
+            except ProviderUnavailableError as exc:
+                competitor_report = build_market_intelligence_report(
+                    f"{request.trend_topic or request.niche} curiosity explainers",
+                    [],
+                    source=self.provider.name,
+                    performance_tool_available=False,
+                    warnings=[f"Competitor evidence was unavailable: {exc}"],
+                )
+        else:
+            competitor_report = build_market_intelligence_report(
+                f"{request.trend_topic or request.niche} curiosity explainers",
+                [],
+                source=self.provider.name,
+                performance_tool_available=False,
+                warnings=[f"Provider '{self.provider.name}' does not support competitor-video research."],
+            )
+        if isinstance(competitor_report, MarketIntelligenceReport):
+            for candidate in candidates:
+                candidate.competitor_topic_performance_available = (
+                    competitor_report.competitor_topic_performance_available
+                )
+                candidate.competitor_evidence = relevant_competitor_evidence(
+                    candidate.topic,
+                    competitor_report,
+                )
+                candidate.competitor_topic_patterns = relevant_competitor_patterns(
+                    candidate.topic,
+                    competitor_report,
+                )
+                candidate.current_vidiq_demand_signals = {
+                    key: candidate.evidence[key]
+                    for key in (
+                        "search_volume",
+                        "search_volume_score",
+                        "growth",
+                        "growth_percent",
+                        "growth_score",
+                        "trend_growth",
+                        "trend_score",
+                    )
+                    if key in candidate.evidence
+                }
+                candidate.competition_saturation_signal = next(
+                    (
+                        candidate.evidence[key]
+                        for key in (
+                            "competition",
+                            "competition_score",
+                            "competition_opportunity_score",
+                            "saturation",
+                            "saturation_score",
+                        )
+                        if key in candidate.evidence
+                    ),
+                    None,
+                )
+                candidate.competition_saturation_assessment = (
+                    _competition_saturation_assessment(candidate)
+                )
         editorial_scored = False
         try:
             assessments = self.editorial_evaluator.assess(candidates)
@@ -92,24 +228,39 @@ class TopicIntelligenceEngine:
                 "OpenAI editorial scoring was unavailable; candidates retain provider "
                 "signals only and the user should assess fit manually."
             )
+        if isinstance(competitor_report, MarketIntelligenceReport):
+            for candidate in candidates:
+                candidate.ritzz_differentiation_angle = candidate.angle
         ranked_all = rank_candidates(candidates)
         all_recommended_ids = validate_candidates(ranked_all)
-        if request.require_recommended_candidates:
+        if request.pipeline_topic_gate:
             ranked = [
                 candidate
                 for candidate in ranked_all
-                if candidate.validation_status == "RECOMMENDED"
+                if candidate.editorial_status == "PASS"
+                and not candidate.filter_reasons
+                and not any("near-duplicate" in reason.casefold() for reason in candidate.validation_reasons)
             ][:4]
-            shortlist_candidate_ids = [
-                candidate_id
-                for candidate_id in all_recommended_ids
-                if candidate_id in {candidate.candidate_id for candidate in ranked}
-            ]
+            shortlist_candidate_ids = [candidate.candidate_id for candidate in ranked]
             excluded_count = len(ranked_all) - len(ranked)
             if excluded_count:
                 warnings.append(
-                    f"Strict topic selection excluded {excluded_count} candidate(s) that did not pass the recommendation gate."
+                    f"Pipeline topic gate excluded {excluded_count} candidate(s) without editorial PASS, with niche/format concerns, or near-duplicates."
                 )
+                selected_ids = {candidate.candidate_id for candidate in ranked}
+                excluded_details = []
+                for candidate in ranked_all:
+                    if candidate.candidate_id in selected_ids:
+                        continue
+                    reasons = candidate.filter_reasons or candidate.validation_reasons
+                    reason_text = "; ".join(reasons[:2]) or "editorial status was not PASS"
+                    excluded_details.append(
+                        f"{candidate.topic[:80]} [editorial={candidate.editorial_status or 'unavailable'}; {reason_text}]"
+                    )
+                    if len(excluded_details) == 6:
+                        break
+                if excluded_details:
+                    warnings.append("Topic gate exclusions: " + " | ".join(excluded_details))
         else:
             ranked = ranked_all[:4]
             shortlist_candidate_ids = [
@@ -119,7 +270,7 @@ class TopicIntelligenceEngine:
             ]
         if len(ranked) < 4:
             warnings.append(
-                f"Only {len(ranked)} candidates passed the recommendation gate; four suitable options are required."
+                f"Only {len(ranked)} candidates passed the pipeline topic gate; four suitable options are required."
             )
         if any(candidate.score_completeness < 0.5 for candidate in ranked):
             warnings.append(
@@ -150,7 +301,11 @@ class TopicIntelligenceEngine:
             else None,
             scoring_version=SCORING_VERSION,
             shortlist_candidate_ids=shortlist_candidate_ids,
-            competitor_report=competitor_report.model_dump() if competitor_report else None,
+            competitor_report=(
+                competitor_report.model_dump()
+                if competitor_report
+                else competitor_report_payload
+            ),
         )
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         report_path.write_text(report.model_dump_json(indent=2), encoding="utf-8")

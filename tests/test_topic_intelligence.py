@@ -12,7 +12,17 @@ from modules.topic_intelligence.editorial import (
 )
 from modules.topic_intelligence.engine import TopicIntelligenceEngine
 from modules.topic_intelligence.evaluator import rank_candidates, score_candidate
-from modules.topic_intelligence.inventory import ContentInventoryEntry, ContentInventoryManager, normalize_topic
+from modules.topic_intelligence.inventory import (
+    ContentInventoryEntry,
+    ContentInventoryManager,
+    normalize_topic,
+)
+from modules.topic_intelligence.market_intelligence import (
+    build_market_intelligence_report,
+    normalize_outlier,
+    relevant_competitor_evidence,
+    top_outliers,
+)
 from modules.topic_intelligence.models import (
     EvidenceMetric,
     OpportunityCandidate,
@@ -20,7 +30,6 @@ from modules.topic_intelligence.models import (
 )
 from modules.topic_intelligence.providers.base import ProviderUnavailableError
 from modules.topic_intelligence.providers.vidiq_mcp import VidiqMcpProvider
-from modules.topic_intelligence.market_intelligence import normalize_outlier, top_outliers
 from modules.topic_intelligence.validation import validate_candidates
 
 
@@ -63,6 +72,20 @@ def test_provider_outlier_research_uses_supported_vidiq_arguments():
     def post(url, **kwargs):
         session.calls.append(kwargs)
         body = kwargs["json"]
+        if body["method"] == "tools/list":
+            return FakeResponse({"jsonrpc": "2.0", "id": body.get("id"), "result": {"tools": [{
+                "name": "vidiq_outliers",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "keyword": {"type": "string"},
+                        "contentType": {"type": "string"},
+                        "sort": {"type": "string"},
+                        "limit": {"type": "integer"},
+                    },
+                    "required": ["keyword", "contentType", "sort", "limit"],
+                },
+            }]}})
         if body["method"] == "tools/call":
             return FakeResponse({"jsonrpc": "2.0", "id": body.get("id"), "result": {"structuredContent": {
                 "videos": [{"videoId": "abc", "videoTitle": "A mystery", "viewCount": 123}]
@@ -79,6 +102,184 @@ def test_provider_outlier_research_uses_supported_vidiq_arguments():
         "keyword": "history mysteries", "contentType": "long", "sort": "score", "limit": 3,
     }
     assert report.outliers[0].title == "A mystery"
+
+
+def test_provider_collects_channels_and_video_performance_when_capabilities_exist():
+    class MockedVidiqProvider(VidiqMcpProvider):
+        def __init__(self):
+            super().__init__(api_key="fixture")
+            self.calls = []
+            self.tools = [
+                {
+                    "name": "vidiq_similar_channels",
+                    "inputSchema": {
+                        "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}},
+                        "required": ["query", "limit"],
+                    },
+                },
+                {
+                    "name": "vidiq_outliers",
+                    "inputSchema": {
+                        "properties": {
+                            "keyword": {"type": "string"},
+                            "contentType": {"type": "string"},
+                            "sort": {"type": "string"},
+                            "limit": {"type": "integer"},
+                        },
+                        "required": ["keyword", "contentType", "sort", "limit"],
+                    },
+                },
+            ]
+
+        def _rpc(self, method, params):
+            if method == "tools/list":
+                return {"tools": self.tools}
+            self.calls.append(params)
+            if params["name"] == "vidiq_similar_channels":
+                return {"structuredContent": {"channels": [{
+                    "channelId": "channel-1",
+                    "channelTitle": "Cat Science",
+                    "subscriberCount": 12000,
+                }]}}
+            return {"structuredContent": {"videos": [{
+                "videoId": "video-1",
+                "videoTitle": "Why Cats Purr",
+                "channelId": "channel-1",
+                "viewCount": 800,
+                "baselineViews": 100,
+            }]}}
+
+    provider = MockedVidiqProvider()
+    report = provider.discover_competitor_research("cat curiosity", limit=5)
+
+    assert report.competitor_topic_performance_available is True
+    assert report.channels[0]["name"] == "Cat Science"
+    assert report.outliers[0].relative_performance == 8
+    assert [call["name"] for call in provider.calls] == [
+        "vidiq_similar_channels",
+        "vidiq_outliers",
+    ]
+
+
+def test_competitor_video_with_strong_channel_relative_outlier():
+    report = build_market_intelligence_report(
+        "cat curiosity",
+        [
+            {
+                "videoId": "video-1",
+                "videoTitle": "Why Cats Purr",
+                "channelId": "channel-1",
+                "channelTitle": "Cat Science",
+                "viewCount": 1000,
+            },
+            {
+                "videoId": "video-2",
+                "videoTitle": "How Cats Communicate",
+                "channelId": "channel-1",
+                "channelTitle": "Cat Science",
+                "viewCount": 100,
+            },
+            {
+                "videoId": "video-3",
+                "videoTitle": "Why Cats Knead",
+                "channelId": "channel-1",
+                "channelTitle": "Cat Science",
+                "viewCount": 120,
+            },
+        ],
+    )
+
+    item = next(video for video in report.outliers if video.video_id == "video-1")
+    assert report.competitor_topic_performance_available is True
+    assert item.relative_performance == 1000 / 110
+    assert item.outlier_signal == "strong_outlier"
+    evidence = relevant_competitor_evidence("Why do cats purr?", report)[0]
+    assert evidence.channel["name"] == "Cat Science"
+    assert evidence.video["title"] == "Why Cats Purr"
+    assert evidence.baseline["views"] == 110
+    assert evidence.baseline["sample_size"] == 2
+    assert evidence.outlier_signal["metric"] == "video_views / competitor_channel_baseline_views"
+
+
+def test_competitor_video_below_strong_outlier_threshold_is_not_labeled_outlier():
+    report = build_market_intelligence_report(
+        "birds",
+        [{
+            "videoId": "video-1",
+            "videoTitle": "How Birds Migrate",
+            "channelId": "channel-1",
+            "viewCount": 130,
+            "baselineViews": 100,
+        }],
+    )
+
+    assert report.outliers[0].outlier_signal == "above_baseline"
+    assert report.outliers[0].relative_performance == 1.3
+
+
+def test_competitor_topics_repeated_across_channels_are_summarized():
+    report = build_market_intelligence_report(
+        "ancient engineering",
+        [
+            {
+                "videoId": "video-1",
+                "videoTitle": "How Ancient Engineers Moved Stone",
+                "videoTopics": ["Ancient Engineering"],
+                "channelId": "channel-1",
+                "channelTitle": "History Lab",
+                "viewCount": 900,
+                "breakoutScore": 72,
+            },
+            {
+                "videoId": "video-2",
+                "videoTitle": "Ancient Engineering Explained",
+                "videoTopics": ["Ancient Engineering"],
+                "channelId": "channel-2",
+                "channelTitle": "Curiosity Works",
+                "viewCount": 800,
+                "breakoutScore": 68,
+            },
+        ],
+    )
+
+    assert len(report.topic_patterns) == 1
+    assert report.topic_patterns[0].video_count == 2
+    assert report.topic_patterns[0].channel_count == 2
+
+
+def test_missing_competitor_metrics_remain_unavailable():
+    report = build_market_intelligence_report(
+        "space",
+        [{
+            "videoId": "video-1",
+            "videoTitle": "A mystery in space",
+            "channelId": "channel-1",
+        }],
+    )
+
+    assert report.competitor_topic_performance_available is False
+    assert report.outliers[0].views is None
+    assert report.outliers[0].relative_performance is None
+    assert any("no usable performance metrics" in warning for warning in report.warnings)
+
+
+def test_provider_records_unavailable_competitor_video_capability():
+    class MockedVidiqProvider(VidiqMcpProvider):
+        def __init__(self):
+            super().__init__(api_key="fixture")
+            self.methods = []
+
+        def _rpc(self, method, params):
+            self.methods.append((method, params))
+            return {"tools": [{"name": "rising_keywords"}]} if method == "tools/list" else {}
+
+    provider = MockedVidiqProvider()
+    report = provider.discover_competitor_research("mixed curiosity", limit=10)
+
+    assert report.competitor_topic_performance_available is False
+    assert report.outliers == []
+    assert any("does not advertise the vidiq_outliers" in warning for warning in report.warnings)
+    assert [method for method, _ in provider.methods] == ["tools/list"]
 
 
 def candidate(topic, *, keyword_score=None, search_volume=None, competition=None, growth=None):
@@ -162,7 +363,7 @@ def test_niche_filter_flags_broad_and_unsuitable_topics():
     assert items[3].filter_reasons == []
 
 
-def test_strict_discovery_returns_only_recommended_candidates(tmp_path):
+def test_pipeline_topic_gate_keeps_editorial_pass_even_if_metrics_need_review(tmp_path):
     class ManyProvider:
         name = "fixture"
 
@@ -180,10 +381,10 @@ def test_strict_discovery_returns_only_recommended_candidates(tmp_path):
         provider=ManyProvider(),
         cache_dir=tmp_path,
         editorial_evaluator=FakeEditorialEvaluator(),
-    ).discover(TopicDiscoveryRequest(require_recommended_candidates=True))
+    ).discover(TopicDiscoveryRequest(pipeline_topic_gate=True))
 
     assert len(report.candidates) == 4
-    assert all(item.validation_status == "RECOMMENDED" for item in report.candidates)
+    assert all(item.editorial_status == "PASS" for item in report.candidates)
     assert all("review" not in item.topic.casefold() for item in report.candidates)
     assert all(item.topic != "United Nations" for item in report.candidates)
 
@@ -451,7 +652,7 @@ def test_provider_flattens_nested_outlier_videos():
     assert item.views == 123
 
 
-def test_top_outliers_prefers_breakout_score_then_views():
+def test_top_outliers_uses_breakout_score_without_promoting_raw_views():
     report = type("Report", (), {"outliers": [
         normalize_outlier({"videoId": "a", "videoTitle": "A", "breakoutScore": 20, "viewCount": 1000}),
         normalize_outlier({"videoId": "b", "videoTitle": "B", "breakoutScore": 80, "viewCount": 10}),
@@ -522,6 +723,61 @@ class FakeEditorialEvaluator:
             )
             for item in candidates
         ]
+
+
+def test_engine_attaches_competitor_evidence_separately_from_ritzz_signals(tmp_path):
+    class ProviderWithCompetitorResearch(FakeProvider):
+        def discover(self, request):
+            return [
+                candidate(
+                    "Why do cats purr?",
+                    search_volume=1200,
+                    growth="25%",
+                    competition=42,
+                )
+            ]
+
+        def discover_competitor_research(self, query, limit=10):
+            return build_market_intelligence_report(
+                query,
+                [{
+                    "videoId": "cat-video",
+                    "videoTitle": "Why Cats Purr",
+                    "channelId": "cat-channel",
+                    "channelTitle": "Cat Science",
+                    "viewCount": 800,
+                    "baselineViews": 100,
+                }, {
+                    "videoId": "cat-video-2",
+                    "videoTitle": "Why Do Cats Purr?",
+                    "channelId": "cat-channel-2",
+                    "channelTitle": "Animal Answers",
+                    "viewCount": 700,
+                    "baselineViews": 200,
+                }],
+            )
+
+    report = TopicIntelligenceEngine(
+        provider=ProviderWithCompetitorResearch(),
+        cache_dir=tmp_path,
+        editorial_evaluator=FakeEditorialEvaluator(),
+    ).discover()
+    item = report.candidates[0]
+
+    assert item.competitor_topic_performance_available is True
+    assert len(item.competitor_evidence) == 2
+    assert item.competitor_evidence[0].channel["name"] == "Cat Science"
+    assert item.competitor_evidence[0].observed_performance["views"] == 800
+    assert item.competitor_topic_patterns[0].video_count == 2
+    assert item.competitor_topic_patterns[0].channel_count == 2
+    assert item.current_vidiq_demand_signals["search_volume"].value == 1200
+    assert item.competition_saturation_signal is not None
+    assert item.competition_saturation_signal.value == 42
+    assert item.competition_saturation_assessment is not None
+    assert "higher raw competition values reduce attractiveness" in item.competition_saturation_assessment
+    assert "across 2 competitor channels" in item.competition_saturation_assessment
+    assert item.ritzz_differentiation_angle == item.angle
+    assert "search_volume" in item.evidence
 
 
 def test_engine_caches_discovery_and_force_refreshes(tmp_path):

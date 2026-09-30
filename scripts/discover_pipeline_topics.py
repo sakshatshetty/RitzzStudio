@@ -1,7 +1,7 @@
 """Discover four pipeline candidates without interactive terminal input."""
 
-import json
 import hashlib
+import json
 import os
 import sys
 from pathlib import Path
@@ -11,8 +11,15 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from modules.topic_intelligence.engine import TopicIntelligenceEngine
-from modules.topic_intelligence.inventory import ContentInventoryManager, normalize_topic
-from modules.topic_intelligence.models import OpportunityCandidate, OpportunityReport, TopicDiscoveryRequest
+from modules.topic_intelligence.inventory import (
+    ContentInventoryManager,
+    normalize_topic,
+)
+from modules.topic_intelligence.models import (
+    OpportunityCandidate,
+    OpportunityReport,
+    TopicDiscoveryRequest,
+)
 
 
 def _candidate_markdown(index: int, candidate) -> str:
@@ -22,15 +29,62 @@ def _candidate_markdown(index: int, candidate) -> str:
         else "unscored"
     )
     rationale = "; ".join(candidate.rationale[:2]) or "No additional rationale recorded."
+    demand_signals = "; ".join(
+        f"{name}: {metric.value} ({metric.source})"
+        for name, metric in candidate.current_vidiq_demand_signals.items()
+        if metric.available and metric.value is not None
+    ) or "No current demand/trend metric available."
+    competition = candidate.competition_saturation_signal
+    competition_summary = (
+        f"{competition.value} {competition.unit or ''} ({competition.source})".strip()
+        if competition and competition.available and competition.value is not None
+        else "No current competition metric available."
+    )
+    competitor_lines = []
+    for evidence in candidate.competitor_evidence[:3]:
+        observed = ", ".join(
+            f"{name}={value}" for name, value in evidence.observed_performance.items()
+        ) or "performance metrics unavailable"
+        baseline = ", ".join(
+            f"{name}={value}" for name, value in evidence.baseline.items()
+        ) or "baseline unavailable"
+        signal = evidence.outlier_signal.get("classification", "not established")
+        competitor_lines.append(
+            f"  - {evidence.channel.get('name') or evidence.channel.get('id') or 'Unknown channel'}: "
+            f"{evidence.video.get('title') or 'Untitled video'} "
+            f"(topic: {evidence.topic or 'not provided'}; observed: {observed}; "
+            f"baseline: {baseline}; outlier signal: {signal}; source: {evidence.source}; "
+            f"collected: {evidence.collected_at})"
+        )
+    competitor_summary = (
+        "\n".join(competitor_lines)
+        if competitor_lines
+        else "  - No relevant competitor-video records matched this topic."
+    )
+    pattern_summary = "; ".join(
+        f"{pattern.topic}: {pattern.video_count} videos across "
+        f"{pattern.channel_count} channels"
+        for pattern in candidate.competitor_topic_patterns
+    ) or "No repeated competitor-topic pattern matched this candidate."
     return (
         f"### {index}. {candidate.proposed_title or candidate.topic}\n"
         f"- VidIQ topic signal: {candidate.topic}\n"
         f"- Candidate ID: `{candidate.candidate_id}`\n"
         f"- Type: `{candidate.opportunity_type}`\n"
         f"- Opportunity score: `{score}`\n"
-        f"- Validation: `{candidate.validation_status}`\n"
+        f"- Editorial fit: `{candidate.editorial_status or 'REVIEW'}`\n"
+        f"- Evidence status: `{candidate.validation_status}`\n"
         f"- Explainer angle: {candidate.angle or 'Not provided.'}\n"
         f"- Why it is interesting: {candidate.why_interesting or 'Not provided.'}\n"
+        f"- Current vidIQ demand/trend: {demand_signals}\n"
+        f"- Current vidIQ competition/saturation: {competition_summary}\n"
+        f"- Competition/saturation interpretation: "
+        f"{candidate.competition_saturation_assessment or 'Not assessed.'}\n"
+        f"- RITZZ differentiation angle: {candidate.ritzz_differentiation_angle or 'Not provided.'}\n"
+        f"- Competitor video performance available: "
+        f"`{str(candidate.competitor_topic_performance_available).lower()}`\n"
+        f"- Repeated competitor topic patterns: {pattern_summary}\n"
+        f"- Relevant competitor evidence:\n{competitor_summary}\n"
         f"- Notes: {rationale}\n"
     )
 
@@ -46,7 +100,11 @@ def discover_four_candidates(
 
     def add_distinct(items: list[OpportunityCandidate]) -> None:
         for candidate in items:
-            if candidate.validation_status != "RECOMMENDED":
+            if (
+                candidate.editorial_status != "PASS"
+                or candidate.filter_reasons
+                or any("near-duplicate" in reason.casefold() for reason in candidate.validation_reasons)
+            ):
                 continue
             key = normalize_topic(candidate.topic)
             if key and key not in seen_topics:
@@ -77,7 +135,6 @@ def discover_four_candidates(
     report.shortlist_candidate_ids = [
         candidate.candidate_id
         for candidate in report.candidates
-        if candidate.validation_status == "RECOMMENDED"
     ]
     if len(report.candidates) < 4:
         warning_text = "; ".join(report.warnings)
@@ -93,6 +150,12 @@ def main() -> int:
     output_directory.mkdir(parents=True, exist_ok=True)
 
     mode = os.environ.get("RITZZ_DISCOVERY_MODE", "TRENDING").upper()
+    if mode == "TRENDING":
+        discovery_mode = "TRENDING"
+    elif mode == "EVERGREEN":
+        discovery_mode = "EVERGREEN"
+    else:
+        raise ValueError(f"Unsupported topic discovery mode: {mode!r}.")
     timeframe = os.environ.get("RITZZ_DISCOVERY_TIMEFRAME", "this week")
     trend_topic = os.environ.get("RITZZ_TREND_TOPIC") or None
     inventory_file = Path(
@@ -104,11 +167,11 @@ def main() -> int:
     report, candidates, discovery_notes = discover_four_candidates(
         engine,
         TopicDiscoveryRequest(
-            mode=mode,
+            mode=discovery_mode,
             timeframe=timeframe,
             trend_topic=trend_topic,
             force_refresh=True,
-            require_recommended_candidates=True,
+            pipeline_topic_gate=True,
         ),
     )
 
