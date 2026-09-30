@@ -1658,6 +1658,54 @@ class FakeEditorialEvaluator:
         ]
 
 
+def test_editorial_can_turn_a_short_provider_seed_into_a_specific_topic(tmp_path):
+    class KeywordProvider(FakeProvider):
+        def discover_pipeline_candidates(self, request):
+            return [
+                candidate("SpaceX", search_volume=100)
+            ], {"source_counts": {"trending": {"raw": 1, "unique": 1}}}, None
+
+    class SpecificTitleEvaluator(EditorialEvaluator):
+        model_name = "fixture-model"
+        prompt_version = "fixture-prompt-v1"
+
+        def __init__(self):
+            pass
+
+        def assess(self, candidates):
+            return [
+                CandidateEditorialAssessment(
+                    candidate_id=item.candidate_id,
+                    proposed_title="Why Does SpaceX Reuse Its Rockets?",
+                    audience_fit=85,
+                    curiosity=80,
+                    evergreen=70,
+                    visual=75,
+                    format_fit=85,
+                    researchability=90,
+                    differentiation=60,
+                    saturation=65,
+                    status="PASS",
+                    rationale=["Fits the curiosity explainer format."],
+                )
+                for item in candidates
+            ]
+
+    report = TopicIntelligenceEngine(
+        provider=KeywordProvider(),
+        cache_dir=tmp_path,
+        editorial_evaluator=SpecificTitleEvaluator(),
+    ).discover(TopicDiscoveryRequest(pipeline_topic_gate=True))
+
+    assert len(report.candidates) == 1
+    assert report.candidates[0].topic == "SpaceX"
+    assert report.candidates[0].proposed_title == "Why Does SpaceX Reuse Its Rockets?"
+    assert report.candidates[0].ritzz_fit is not None
+    assert report.candidates[0].ritzz_fit.fit_status == "PASS"
+    assert report.discovery_diagnostics["candidate_specificity_exclusions"] == []
+    assert report.discovery_diagnostics["final_title_specificity_exclusions"] == []
+
+
 def test_engine_uses_secondary_discovery_when_no_competitors_are_configured(tmp_path):
     class SecondaryProvider(FakeProvider):
         def __init__(self):

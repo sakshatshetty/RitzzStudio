@@ -79,11 +79,13 @@ enabled group queries before running discovery.
 Repeated patterns must cite at least two successful videos from at least two
 competitor channels. A structured generator first extracts the audience
 curiosity, then must select a concrete subject explicitly supported by cited
-provider titles, topics, or tags before proposing an original RITZZ angle.
-Broad essay premises and subjects without matching evidence are rejected as
-`TOO_ABSTRACT`; near-copy titles are rejected as `NEAR_DUPLICATE`. Candidate
-artifacts retain source video IDs, concrete-subject citations, detected
-patterns, curiosity family, and an explanation of the original angle.
+provider titles, topics, tags, or topics before proposing an original RITZZ
+angle. Evidence matching tolerates word-order differences while requiring all
+subject terms in the cited provider metadata. Broad essay premises and
+subjects without matching evidence are rejected as `TOO_ABSTRACT`; near-copy
+titles are rejected as `NEAR_DUPLICATE`. Candidate artifacts retain source
+video IDs, concrete-subject citations, detected patterns, curiosity family,
+and an explanation of the original angle.
 Format-competitor evidence has primary weight, emerging-format evidence has
 early-signal weight, and topic competitors remain a secondary subject signal.
 Keyword research runs afterward only to enrich generated candidates. A
@@ -95,7 +97,10 @@ disguised as zero results.
 The existing configurable trending/rising/evergreen sources remain secondary
 fallbacks when competitor-derived ideas do not fill the candidate pool or
 competitors are not configured. Their results are labeled as secondary
-provider evidence, never as competitor evidence.
+provider evidence, never as competitor evidence. Short raw terms are seeds,
+not finished titles, and can reach editorial assessment. The proposed title
+must then pass specificity and RITZZ-fit checks; this does not relax evidence,
+inventory, or editorial gates.
 
 The final gate requires a concrete, specific subject, RITZZ-fit `PASS`,
 editorial `PASS`, no blocking niche or inventory reason, no exact/near
@@ -103,10 +108,10 @@ duplicate, and a `RECOMMENDED` evidence and opportunity validation status.
 Eligible candidates are diversified across curiosity families where the
 evidence supports a mix. `REVIEW` and `FAIL` items are never promoted to fill
 the list. Obvious fixtures, promotional trailer queries, temporary event
-terms, and ambiguous bare entities are held or rejected before editorial model
-scoring; a supported related question may independently qualify as an
-explanatory story. Human approval remains mandatory; discovery does not select
-or publish a topic.
+terms, and final titles that remain ambiguous are held or rejected. Bare
+provider entities may reach editorial scoring as seeds, but must be turned
+into a specific explanatory title to qualify. Human approval remains
+mandatory; discovery does not select or publish a topic.
 
 If fewer than four candidates pass, the run stops before topic approval and
 reports the request, provider capabilities, per-source raw/unique/duplicate

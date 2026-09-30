@@ -90,7 +90,8 @@ class CompetitorOpportunityGenerator:
                 "competitor_role": video.channel_role,
                 "video_title": video.title,
                 "underlying_topic_from_provider": video.topic,
-                "topic_tags": video.topics,
+                "tags": video.tags,
+                "topics": video.topics,
                 "published_at": video.published_at,
                 "observed_performance": {
                     "views": video.views,
@@ -435,13 +436,13 @@ def _concrete_subject_issue(
     if not all(token in title_key.split() for token in subject_tokens):
         return "The final title does not explicitly name its proposed concrete subject."
     for video in evidence:
-        source_text = " ".join([
+        source_text = _normalized_topic(" ".join([
             video.title,
             video.topic or "",
             *video.tags,
             *video.topics,
-        ])
-        if subject_key in _normalized_topic(source_text):
+        ]))
+        if all(token in source_text.split() for token in subject_tokens):
             break
     else:
         return "The cited provider evidence does not explicitly identify the proposed concrete subject."
@@ -450,19 +451,29 @@ def _concrete_subject_issue(
 
 def candidate_specificity_issue(
     candidate: OpportunityCandidate,
+    *,
+    final_title: bool = False,
 ) -> tuple[str, str] | None:
-    """Reject abstract pipeline titles and verify competitor subjects against evidence."""
-    if _ABSTRACT_TITLE_RE.search(candidate.topic):
+    """Reject abstract topics and validate specificity once a final title exists."""
+    title = (
+        candidate.proposed_title
+        if final_title and candidate.proposed_title
+        else candidate.topic
+    )
+    if _ABSTRACT_TITLE_RE.search(title):
         return (
             "TOO_ABSTRACT",
             "Title describes a broad category or essay premise instead of an identifiable subject.",
         )
     meaningful_title_terms = [
         token
-        for token in _normalized_topic(candidate.topic).split()
+        for token in _normalized_topic(title).split()
         if not token.isdigit() and token not in _SPECIFICITY_FILLER_WORDS
     ]
-    if len(meaningful_title_terms) < 2:
+    requires_specific_title = (
+        final_title or "competitor-topic-pattern" in candidate.discovery_sources
+    )
+    if requires_specific_title and len(meaningful_title_terms) < 2:
         return (
             "TOO_ABSTRACT",
             "Title lacks enough identifying subject detail to distinguish it from a generic essay topic.",
@@ -501,7 +512,7 @@ def candidate_specificity_issue(
         for item in cited
     ]
     reason = _concrete_subject_issue(
-        candidate.topic,
+        title,
         candidate.concrete_subject or "",
         video_sources,
     )

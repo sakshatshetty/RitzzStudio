@@ -7,6 +7,7 @@ from modules.topic_intelligence.competitor_opportunities import (
     CompetitorOpportunityGenerator,
     CompetitorPatternProposal,
     OriginalTopicProposal,
+    candidate_specificity_issue,
 )
 from modules.topic_intelligence.editorial import (
     CandidateEditorialAssessment,
@@ -149,6 +150,7 @@ def test_original_topics_require_repeated_success_across_multiple_channels():
     } == {"format_competitors", "topic_competitors"}
     supplied = json.loads(client.responses.inputs[0]["input"][1]["content"])
     assert {item["evidence_id"] for item in supplied} == {"video-a", "video-b"}
+    assert all("tags" in item and "topics" in item for item in supplied)
     assert diagnostics["successful_outlier_videos"] == 2
     assert patterns[0].signal_weight == 1.0
     assert candidates[0].raw_evidence["competitor_signal_weight"] == 1.0
@@ -247,6 +249,69 @@ def test_broad_essay_premise_is_rejected_instead_of_becoming_a_topic():
     assert candidates == []
     assert diagnostics["candidate_rejections"][0]["code"] == "TOO_ABSTRACT"
     assert "specific subject" in diagnostics["candidate_rejections"][0]["reason"]
+
+
+def test_provider_keyword_can_be_refined_before_specificity_is_enforced():
+    raw_candidate = OpportunityCandidate(
+        candidate_id="keyword-spacex",
+        topic="SpaceX",
+        proposed_title="SpaceX",
+        provider="vidIQ",
+        discovery_sources=["trending"],
+    )
+
+    assert candidate_specificity_issue(raw_candidate) is None
+    assert candidate_specificity_issue(
+        raw_candidate,
+        final_title=True,
+    ) == (
+        "TOO_ABSTRACT",
+        "Title lacks enough identifying subject detail to distinguish it from a generic essay topic.",
+    )
+
+    raw_candidate.proposed_title = "Why Does SpaceX Reuse Its Rockets?"
+    assert candidate_specificity_issue(
+        raw_candidate,
+        final_title=True,
+    ) is None
+
+
+def test_concrete_subject_evidence_matches_terms_across_provider_fields():
+    report = MarketIntelligenceReport(
+        query="history curiosity",
+        retrieved_at="2026-09-30T00:00:00+00:00",
+        outliers=[
+            _video(
+                "video-a",
+                "channel-a",
+                "A Canal Built Across Central America",
+                score=4,
+            ),
+            _video(
+                "video-b",
+                "channel-b",
+                "Ships Pass Through the Canal",
+                score=5,
+            ),
+        ],
+    )
+    report.outliers[0].tags = ["Panama"]
+    report.outliers[0].topics = ["Canal"]
+    batch = _generation_batch(
+        "How the Panama Canal Works",
+        concrete_subject="Panama Canal",
+    )
+    client = FakeGeneratorClient(batch)
+
+    candidates, _, diagnostics = CompetitorOpportunityGenerator(
+        client=client
+    ).generate(report)
+
+    assert len(candidates) == 1
+    supplied = json.loads(client.responses.inputs[0]["input"][1]["content"])
+    assert supplied[0]["tags"] == ["Panama"]
+    assert supplied[0]["topics"] == ["Canal"]
+    assert diagnostics["candidate_rejections"] == []
 
 
 def test_topic_only_and_emerging_signals_receive_lower_weight_than_format():

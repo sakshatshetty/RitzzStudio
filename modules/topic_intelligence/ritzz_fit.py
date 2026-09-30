@@ -18,13 +18,25 @@ _AMBIGUOUS_ENTITY = re.compile(r"^[A-Za-z][A-Za-z0-9.'’-]*$")
 _AMBIGUOUS_SUFFIX = re.compile(r"\b(?:ph|official|status)\b", re.IGNORECASE)
 
 
-def prefilter_reason(candidate: OpportunityCandidate) -> tuple[RitzzFitStatus, str] | None:
+def prefilter_reason(
+    candidate: OpportunityCandidate,
+    *,
+    allow_ambiguous_seed: bool = False,
+    final_title: bool = False,
+) -> tuple[RitzzFitStatus, str] | None:
     """Return a cheap hard exclusion or ambiguity hold without calling an LLM."""
-    topic = candidate.topic.strip()
+    topic = (
+        candidate.proposed_title.strip()
+        if final_title and candidate.proposed_title
+        else candidate.topic.strip()
+    )
     for pattern, reason in _REJECT_PATTERNS:
         if pattern.search(topic):
             return "FAIL", f"RITZZ-fit prefilter rejected a {reason}: {topic}."
-    if _AMBIGUOUS_ENTITY.fullmatch(topic) or _AMBIGUOUS_SUFFIX.search(topic):
+    if (
+        not allow_ambiguous_seed
+        and (_AMBIGUOUS_ENTITY.fullmatch(topic) or _AMBIGUOUS_SUFFIX.search(topic))
+    ):
         return "REVIEW", "RITZZ-fit prefilter found an ambiguous entity without an explanatory question."
     return None
 
@@ -63,7 +75,7 @@ def build_ritzz_fit_result(
     ]
     fit_score = round(sum(score_values) / len(score_values), 1) if score_values else None
 
-    prefilter = prefilter_reason(candidate)
+    prefilter = prefilter_reason(candidate, final_title=True)
     if prefilter is not None:
         status, reason = prefilter
     elif editorial_status == "FAIL":

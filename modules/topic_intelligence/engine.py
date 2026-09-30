@@ -719,7 +719,10 @@ class TopicIntelligenceEngine:
         fit_prefilter_exclusions: list[dict[str, str]] = []
         editorial_candidates = []
         for candidate in candidates:
-            prefilter = prefilter_reason(candidate)
+            prefilter = prefilter_reason(
+                candidate,
+                allow_ambiguous_seed=True,
+            )
             if prefilter is None and not candidate.filter_reasons:
                 editorial_candidates.append(candidate)
                 candidate.ritzz_fit = RitzzFitResult(
@@ -881,7 +884,23 @@ class TopicIntelligenceEngine:
                 "OpenAI editorial scoring was unavailable; candidates retain provider "
                 "signals only and the user should assess fit manually."
             )
+        final_specificity_exclusions: list[dict[str, str]] = []
         for candidate in editorial_candidates:
+            specificity_issue = candidate_specificity_issue(
+                candidate,
+                final_title=True,
+            )
+            if specificity_issue is not None:
+                rejection_code, reason = specificity_issue
+                filter_reason = f"{rejection_code}: {reason}"
+                if filter_reason not in candidate.filter_reasons:
+                    candidate.filter_reasons.append(filter_reason)
+                final_specificity_exclusions.append({
+                    "topic": candidate.topic,
+                    "title": candidate.proposed_title or candidate.topic,
+                    "code": rejection_code,
+                    "reason": reason,
+                })
             story_type = candidate.ritzz_fit.story_type if candidate.ritzz_fit else "OTHER"
             fit = build_ritzz_fit_result(
                 candidate,
@@ -891,6 +910,9 @@ class TopicIntelligenceEngine:
                 pass_threshold=RITZZ_FIT_PASS_THRESHOLD,
             )
             candidate.ritzz_fit = fit
+        diagnostics["final_title_specificity_exclusions"] = (
+            final_specificity_exclusions
+        )
         if isinstance(competitor_report, MarketIntelligenceReport):
             for candidate in candidates:
                 if candidate.ritzz_differentiation_angle is None:
