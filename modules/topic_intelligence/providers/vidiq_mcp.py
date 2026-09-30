@@ -107,6 +107,7 @@ class VidiqMcpProvider:
             "sources_attempted": [],
             "sources_unavailable": [],
             "source_counts": {},
+            "source_tools": {},
             "duplicate_counts": {},
             "stage_counts": [],
             "provider_capabilities": {
@@ -192,11 +193,13 @@ class VidiqMcpProvider:
             else:
                 tool = self._select_tool(tools, tool_mode)
             if tool is None:
+                diagnostics["source_tools"][source] = None
                 diagnostics["sources_unavailable"].append(
                     f"{source}: no supported vidIQ tool advertised"
                 )
                 diagnostics["source_counts"][source] = {"raw": 0, "unique": 0}
                 return
+            diagnostics["source_tools"][source] = tool["name"]
             effective_request = source_request.model_copy(
                 update={"mode": tool_mode, "limit": pool_limit}
             )
@@ -211,7 +214,8 @@ class VidiqMcpProvider:
                 records = self._extract_records(result)
                 if not records:
                     raise ProviderUnavailableError(
-                        f"vidIQ returned no recognizable records for {source}."
+                        f"vidIQ returned no recognizable records for {source} "
+                        f"(response schema: {self._response_schema(result)})."
                     )
                 accepted = 0
                 duplicate_count = 0
@@ -767,7 +771,16 @@ class VidiqMcpProvider:
         payload = self._decode_response(response)
         if "error" in payload:
             raise ProviderUnavailableError(f"vidIQ MCP error: {payload['error'].get('message', 'request failed')}")
-        return payload.get("result", {})
+        result = payload.get("result", {})
+        if method == "tools/call" and isinstance(result, dict) and result.get("isError") is True:
+            tool_name = params.get("name", "unknown")
+            error_kind = self._tool_error_kind(result)
+            raise ProviderUnavailableError(
+                f"vidIQ MCP tool '{tool_name}' reported an execution error "
+                f"({error_kind}) "
+                f"(response schema: {self._response_schema(result)})."
+            )
+        return result
 
     def _initialize(self) -> None:
         self._request_id += 1
@@ -1142,6 +1155,58 @@ class VidiqMcpProvider:
                     detail += f" {VidiqMcpProvider._text_shape(block['text'])}"
                 details.append(detail)
         return f"keys={keys}, content_blocks={details}"
+
+    @staticmethod
+    def _response_schema(result: Any) -> str:
+        """Summarize response structure for CI diagnostics without logging its values."""
+        if not isinstance(result, dict):
+            return f"result_type={type(result).__name__}"
+        keys = sorted(str(key) for key in result if key not in {"content", "_meta"})
+        details = []
+        blocks = result.get("content", [])
+        if isinstance(blocks, list):
+            for block in blocks:
+                if not isinstance(block, dict):
+                    details.append(f"block_type={type(block).__name__}")
+                    continue
+                detail = f"type={block.get('type', 'unknown')}"
+                if isinstance(block.get("text"), str):
+                    detail += f" {VidiqMcpProvider._text_schema(block['text'])}"
+                details.append(detail)
+        return f"keys={keys}, content_blocks={details}"
+
+    @staticmethod
+    def _text_schema(text: str) -> str:
+        stripped = text.strip()
+        summary = f"text_length={len(text)} lines={len(text.splitlines())}"
+        try:
+            parsed = json.loads(
+                re.sub(r"^```(?:json)?\s*|\s*```$", "", stripped, flags=re.IGNORECASE)
+            )
+        except (ValueError, TypeError):
+            parsed = None
+        if isinstance(parsed, dict):
+            summary += f" json_keys={sorted(str(key) for key in parsed)}"
+        elif isinstance(parsed, list):
+            summary += f" json_array_length={len(parsed)}"
+        else:
+            summary += " content_type=plain_text"
+        return summary
+
+    @staticmethod
+    def _tool_error_kind(result: dict[str, Any]) -> str:
+        text = " ".join(
+            block["text"]
+            for block in result.get("content", [])
+            if isinstance(block, dict) and isinstance(block.get("text"), str)
+        ).casefold()
+        if any(term in text for term in ("unauthorized", "forbidden", "invalid api key", "invalid credentials", "authentication")):
+            return "authentication or access denied"
+        if any(term in text for term in ("rate limit", "too many requests", "quota exceeded")):
+            return "provider rate or quota limit"
+        if any(term in text for term in ("invalid argument", "missing required", "validation error")):
+            return "tool argument validation failed"
+        return "provider-side tool failure"
 
     @staticmethod
     def _text_shape(text: str) -> str:

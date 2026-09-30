@@ -1228,6 +1228,46 @@ def test_provider_flattens_nested_outlier_videos():
     assert item.views == 123
 
 
+def test_pipeline_discovery_reports_empty_vidiq_response_schema_without_values(monkeypatch):
+    class EmptyResponseProvider(VidiqMcpProvider):
+        def __init__(self):
+            super().__init__(api_key="fixture")
+            self.tools = [{
+                "name": "trending_videos",
+                "inputSchema": {
+                    "properties": {"topic": {"type": "string"}},
+                    "required": ["topic"],
+                },
+            }]
+
+        def _rpc(self, method, params):
+            if method == "tools/list":
+                return {"tools": self.tools}
+            return {
+                "content": [{
+                    "type": "text",
+                    "text": "Provider response contained no rows; private-value",
+                }],
+            }
+
+    monkeypatch.setattr(
+        "modules.topic_intelligence.providers.vidiq_mcp.RITZZ_DISCOVERY_FALLBACK_STAGES",
+        (),
+    )
+    _, diagnostics, _ = EmptyResponseProvider().discover_pipeline_candidates(
+        TopicDiscoveryRequest(
+            mode="TRENDING",
+            trend_topic="history",
+            limit=15,
+        )
+    )
+
+    assert diagnostics["source_tools"]["trending"] == "trending_videos"
+    assert "response schema" in diagnostics["sources_unavailable"][0]
+    assert "content_type=plain_text" in diagnostics["sources_unavailable"][0]
+    assert "private-value" not in diagnostics["sources_unavailable"][0]
+
+
 def test_top_outliers_uses_breakout_score_without_promoting_raw_views():
     report = type("Report", (), {"outliers": [
         normalize_outlier({"videoId": "a", "videoTitle": "A", "breakoutScore": 20, "viewCount": 1000}),
@@ -1245,6 +1285,51 @@ def test_provider_response_shape_diagnostic_redacts_credential_like_text():
     assert "private topic response" in shape
     assert "supersecret-token-value" not in shape
     assert "[REDACTED]" in shape
+
+
+def test_provider_response_schema_does_not_log_tool_response_values():
+    schema = VidiqMcpProvider._response_schema({
+        "content": [{
+            "type": "text",
+            "text": "Provider failure; Bearer supersecret-token-value",
+        }],
+        "isError": True,
+    })
+
+    assert "isError" in schema
+    assert "content_type=plain_text" in schema
+    assert "supersecret-token-value" not in schema
+    assert "Provider failure" not in schema
+
+
+def test_provider_reports_mcp_tool_execution_errors_without_response_values():
+    class ErrorSession:
+        def post(self, url, **kwargs):
+            body = kwargs["json"]
+            return FakeResponse({
+                "jsonrpc": "2.0",
+                "id": body["id"],
+                "result": {
+                    "isError": True,
+                    "content": [{
+                        "type": "text",
+                        "text": "Invalid credentials: supersecret-token-value",
+                    }],
+                },
+            })
+
+    provider = VidiqMcpProvider(api_key="fixture", session=ErrorSession())
+    provider._initialized = True
+
+    with pytest.raises(ProviderUnavailableError, match="reported an execution error") as exc:
+        provider._rpc(
+            "tools/call",
+            {"name": "trending_videos", "arguments": {"topic": "history"}},
+        )
+
+    assert "supersecret-token-value" not in str(exc.value)
+    assert "isError" in str(exc.value)
+    assert "authentication or access denied" in str(exc.value)
 
 
 def test_missing_key_is_clear_and_does_not_make_network_call():

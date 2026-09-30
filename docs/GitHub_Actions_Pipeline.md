@@ -67,6 +67,11 @@ counts, filter-stage counts, missing M7 state, and candidate exclusion reasons.
 Both JSON and Markdown diagnostics are uploaded even on failure. `history`
 remains the preferred discovery lens, not a requirement that every final topic
 be a current history trend.
+Diagnostics distinguish advertised tools from selected source tools and
+include response schema summaries when a call yields no topic rows. MCP
+tool-level errors are reported by category (such as access denied, quota
+limit, or argument validation) without writing provider response values to
+the artifact.
 
 Competitor channel groups are configured in `config/competitors.json`. The
 checked-in registry is intentionally empty; no competitor names are fabricated.
