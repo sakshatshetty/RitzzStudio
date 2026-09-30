@@ -68,9 +68,19 @@ class FakeMcpSession:
         return FakeResponse({"jsonrpc": "2.0", "id": body["id"], "result": {"structuredContent": {"keywords": [{"keyword": "Why do birds migrate?", "search_volume": 1200}]}}})
 
 
-def test_provider_outlier_research_uses_supported_vidiq_arguments():
+def test_provider_outlier_research_uses_configured_channel_arguments(tmp_path):
     session = FakeMcpSession()
-    provider = VidiqMcpProvider(api_key="test-key", session=session)
+    registry = tmp_path / "competitors.json"
+    registry.write_text(json.dumps({
+        "core": [{"channel_id": "channel-1", "name": "History Lab"}],
+        "adjacent": [],
+        "emerging": [],
+    }))
+    provider = VidiqMcpProvider(
+        api_key="test-key",
+        session=session,
+        competitor_registry_path=registry,
+    )
     original_post = session.post
 
     def post(url, **kwargs):
@@ -82,12 +92,10 @@ def test_provider_outlier_research_uses_supported_vidiq_arguments():
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "keyword": {"type": "string"},
-                        "contentType": {"type": "string"},
-                        "sort": {"type": "string"},
+                        "channelIds": {"type": "array", "items": {"type": "string"}},
                         "limit": {"type": "integer"},
                     },
-                    "required": ["keyword", "contentType", "sort", "limit"],
+                    "required": ["channelIds"],
                 },
             }]}})
         if body["method"] == "tools/call":
@@ -102,16 +110,26 @@ def test_provider_outlier_research_uses_supported_vidiq_arguments():
     report = provider.discover_outliers("history mysteries", limit=3)
     call = next(item for item in session.calls if item["json"].get("method") == "tools/call")
     assert call["json"]["params"]["name"] == "vidiq_outliers"
-    assert call["json"]["params"]["arguments"] == {
-        "keyword": "history mysteries", "contentType": "long", "sort": "score", "limit": 3,
-    }
+    assert call["json"]["params"]["arguments"] == {"channelIds": ["channel-1"], "limit": 3}
     assert report.outliers[0].title == "A mystery"
 
 
-def test_provider_collects_channels_and_video_performance_when_capabilities_exist():
+def test_provider_collects_configured_channel_video_performance_when_capability_exists(
+    tmp_path,
+):
+    registry = tmp_path / "competitors.json"
+    registry.write_text(json.dumps({
+        "core": [{"channel_id": "channel-1", "name": "Cat Science"}],
+        "adjacent": [],
+        "emerging": [],
+    }))
+
     class MockedVidiqProvider(VidiqMcpProvider):
         def __init__(self):
-            super().__init__(api_key="fixture")
+            super().__init__(
+                api_key="fixture",
+                competitor_registry_path=registry,
+            )
             self.calls = []
             self.tools = [
                 {
@@ -125,12 +143,11 @@ def test_provider_collects_channels_and_video_performance_when_capabilities_exis
                     "name": "vidiq_outliers",
                     "inputSchema": {
                         "properties": {
-                            "keyword": {"type": "string"},
-                            "contentType": {"type": "string"},
-                            "sort": {"type": "string"},
+                            "channelIds": {"type": "array", "items": {"type": "string"}},
+                            "minOutlierScore": {"type": "number"},
                             "limit": {"type": "integer"},
                         },
-                        "required": ["keyword", "contentType", "sort", "limit"],
+                        "required": ["channelIds"],
                     },
                 },
             ]
@@ -139,12 +156,6 @@ def test_provider_collects_channels_and_video_performance_when_capabilities_exis
             if method == "tools/list":
                 return {"tools": self.tools}
             self.calls.append(params)
-            if params["name"] == "vidiq_similar_channels":
-                return {"structuredContent": {"channels": [{
-                    "channelId": "channel-1",
-                    "channelTitle": "Cat Science",
-                    "subscriberCount": 12000,
-                }]}}
             return {"structuredContent": {"videos": [{
                 "videoId": "video-1",
                 "videoTitle": "Why Cats Purr",
@@ -160,9 +171,10 @@ def test_provider_collects_channels_and_video_performance_when_capabilities_exis
     assert report.channels[0]["name"] == "Cat Science"
     assert report.outliers[0].relative_performance == 8
     assert [call["name"] for call in provider.calls] == [
-        "vidiq_similar_channels",
         "vidiq_outliers",
     ]
+    assert provider.calls[0]["arguments"]["channelIds"] == ["channel-1"]
+    assert report.outliers[0].channel_title == "Cat Science"
 
 
 def test_competitor_video_with_strong_channel_relative_outlier():
@@ -291,10 +303,17 @@ def test_missing_competitor_metrics_remain_unavailable():
     assert any("no usable performance metrics" in warning for warning in report.warnings)
 
 
-def test_provider_records_unavailable_competitor_video_capability():
+def test_provider_records_unavailable_competitor_video_capability(tmp_path):
+    registry = tmp_path / "competitors.json"
+    registry.write_text(json.dumps({
+        "core": [{"channel_id": "channel-1", "name": "Cat Science"}],
+        "adjacent": [],
+        "emerging": [],
+    }))
+
     class MockedVidiqProvider(VidiqMcpProvider):
         def __init__(self):
-            super().__init__(api_key="fixture")
+            super().__init__(api_key="fixture", competitor_registry_path=registry)
             self.methods = []
 
         def _rpc(self, method, params):
@@ -306,7 +325,10 @@ def test_provider_records_unavailable_competitor_video_capability():
 
     assert report.competitor_topic_performance_available is False
     assert report.outliers == []
-    assert any("does not advertise the vidiq_outliers" in warning for warning in report.warnings)
+    assert any(
+        "No channel-scoped video research capability" in warning
+        for warning in report.warnings
+    )
     assert [method for method, _ in provider.methods] == ["tools/list"]
 
 
@@ -422,9 +444,11 @@ def test_pipeline_discovery_uses_ordered_multi_source_fallbacks():
     ]
     assert diagnostics["source_counts"]["evergreen"]["unique"] == 2
     assert diagnostics["source_counts"]["long-tail"] == {"raw": 0, "unique": 0}
-    assert any(item.discovery_sources == ["competitor-outliers"] for item in candidates)
     assert competitor_report is not None
-    assert competitor_report.outliers[0].topic == "Roman road engineering"
+    assert competitor_report.configured_competitor_count == 0
+    assert competitor_report.outliers == []
+    assert all(item.discovery_sources != ["competitor-outliers"] for item in candidates)
+    assert not any(name in {"vidiq_similar_channels", "vidiq_outliers"} for name, _ in provider.calls)
     assert provider.calls[0][1]["topic"] == "history"
     assert provider.calls[1][1]["timeframe"] == "this month"
     assert "topic" not in provider.calls[-1][1]
@@ -576,7 +600,7 @@ def test_configured_competitor_registry_scopes_queries_and_preserves_group(tmp_p
     registry_path = tmp_path / "competitors.json"
     registry_path.write_text(json.dumps({
         "core": [{"channel_id": "core-1", "name": "Core Example"}],
-        "adjacent": [{"handle": "@adjacent", "name": "Adjacent Example"}],
+        "adjacent": [{"channel_id": "channel-adjacent", "name": "Adjacent Example"}],
         "emerging": [],
     }))
 
@@ -613,7 +637,10 @@ def test_configured_competitor_registry_scopes_queries_and_preserves_group(tmp_p
     provider = ScopedProvider()
     report = provider.discover_competitor_research("history explainers", limit=5)
 
-    assert [call["channelId"] for call in provider.calls] == ["core-1", "@adjacent"]
+    assert [call["channelId"] for call in provider.calls] == [
+        "core-1",
+        "channel-adjacent",
+    ]
     assert {item.channel_group for item in report.outliers} == {"core", "adjacent"}
 
 

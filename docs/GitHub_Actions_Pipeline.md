@@ -44,14 +44,33 @@ Topic duplicate prevention reads the durable repository inventory at
 do not reserve or permanently exclude their selected topics. A future approved
 V1 release will update the inventory with the final topic and publication data.
 
-For pipeline discovery, the provider targets 30 distinct candidates by
-default (configurable from 15 to 30 with `RITZZ_CANDIDATE_POOL_TARGET`). It
-starts with the requested category/timeframe, then attempts supported
-broader-timeframe, rising-demand, evergreen, long-tail, competitor/outlier, and
-unscoped discovery. Fallback stages are configurable with
-`RITZZ_DISCOVERY_FALLBACK_STAGES`. Related keywords/questions are used only
-when present in provider results. Unsupported or failed sources are recorded
-in diagnostics and do not stop later sources.
+Pipeline topic discovery starts from enabled channel IDs in
+`config/competitors.json` (override with `RITZZ_COMPETITORS_FILE`). The
+registry is intentionally empty until RITZZ's competitor set is configured;
+discovery fails with a clear setup diagnostic rather than inventing channels
+or substituting generic trends. Channels remain editable in JSON without
+Python changes and are grouped as core, adjacent, or emerging.
+
+The adapter discovers MCP tools and their argument schemas at runtime. It
+uses channel-scoped outlier research (`channelIds` when supported) and falls
+back to channel-scoped recent/popular video research only if available. The
+lookback, video limit, and provider outlier-score threshold are configured by
+`RITZZ_COMPETITOR_LOOKBACK_DAYS`, `RITZZ_COMPETITOR_VIDEO_LIMIT`, and
+`RITZZ_OUTLIER_MIN_SCORE`. Provider outlier scores are preferred; views are
+considered an outlier only against a supported baseline from that same
+competitor channel. Raw views alone are not success evidence.
+
+Repeated patterns must cite at least two successful videos from at least two
+competitor channels. A structured generator proposes original RITZZ questions
+from those patterns and rejects candidate titles that are too similar to their
+supporting competitor titles. Keyword research runs afterward only to enrich
+generated finalists. A keyword-research provider error is recorded as
+`PROVIDER_ERROR`; it does not discard competitor-derived candidates. Demand
+and competition remain explicitly unavailable when vidIQ supplies no values.
+The existing configurable trending/rising/evergreen sources remain secondary
+fallbacks when configured competitors are present but do not yield four
+candidate ideas; their failure cannot prevent the competitor path from
+running.
 
 The final gate requires RITZZ-fit `PASS`, editorial `PASS`, no blocking niche
 or inventory reason, no exact/near duplicate, and a `RECOMMENDED` evidence and
@@ -73,13 +92,12 @@ tool-level errors are reported by category (such as access denied, quota
 limit, or argument validation) without writing provider response values to
 the artifact.
 
-Competitor channel groups are configured in `config/competitors.json`. The
-checked-in registry is intentionally empty; no competitor names are fabricated.
-Per-channel requests are made only if the advertised vidIQ outlier schema
-supports a channel selector. Otherwise topic-level competitor discovery is
-used and the limitation is reported. Raw views alone do not create an outlier
-or repeated-success pattern; provider outlier scores or channel-relative
-performance are required.
+Competitor diagnostics show enabled channels, queried channels, videos
+inspected, successful outliers, patterns extracted, candidates generated,
+demand-enriched candidates, fit/editorial pass counts, duplicate exclusions,
+and final count. Each provider operation records its selected tool, status,
+error category, and fallback behavior without logging raw provider error text
+that could contain credentials.
 
 Topic intelligence optionally reads the existing M7 inventory at
 `projects/inventory.json` (override with `RITZZ_M7_INVENTORY_FILE`). It reads

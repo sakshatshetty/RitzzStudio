@@ -41,10 +41,24 @@ def build_ritzz_fit_result(
     scores = editorial_scores or {}
     curiosity = scores.get("curiosity")
     researchability = scores.get("researchability")
+    story_depth = scores.get("story_depth")
+    originality = scores.get("originality", scores.get("differentiation"))
     visual = scores.get("visual")
     evergreen = scores.get("evergreen")
     audience = scores.get("audience_fit")
-    score_values = [value for value in (curiosity, researchability, visual, evergreen, audience) if value is not None]
+    score_values = [
+        value
+        for value in (
+            curiosity,
+            researchability,
+            story_depth,
+            originality,
+            visual,
+            evergreen,
+            audience,
+        )
+        if value is not None
+    ]
     fit_score = round(sum(score_values) / len(score_values), 1) if score_values else None
 
     prefilter = prefilter_reason(candidate)
@@ -65,6 +79,8 @@ def build_ritzz_fit_result(
         story_type=story_type,
         curiosity_strength=curiosity,
         researchability=researchability,
+        story_depth=story_depth,
+        originality=originality,
         visual_potential=visual,
         evergreen_potential=evergreen,
         audience_value=audience,

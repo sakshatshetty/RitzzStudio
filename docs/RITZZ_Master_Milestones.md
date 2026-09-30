@@ -178,7 +178,9 @@ Project: `20260820_001_why_do_pirates_wear_eye_patches`
 - Candidate title/angle fields are supported.
 - Topic selection persists target duration, minimum duration, constraints, and lock time.
 - Manual duplicate topics are blocked before project creation.
-- Live discovery now attaches competitor/outlier evidence and applies niche-fit flags before recommendation gating.
+- Live discovery uses enabled competitor channels first, evaluates provider outlier scores or supported channel baselines, and generates original ideas from repeated cross-channel patterns.
+- Optional current vidIQ demand/competition enrichment runs on competitor-derived ideas; provider failures are reported without erasing those ideas.
+- Live competitor validation remains pending because the editable competitor registry intentionally has no configured channels.
 - Remaining M1 work: human selects one of the four reviewed candidates and confirms duration/constraints in a real project artifact.
 
 ### Existing implementation to reuse

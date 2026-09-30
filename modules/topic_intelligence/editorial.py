@@ -35,6 +35,8 @@ class CandidateEditorialAssessment(BaseModel):
     researchability: float = Field(ge=0, le=100)
     differentiation: float = Field(ge=0, le=100)
     saturation: float = Field(ge=0, le=100, description="100 means little existing-content saturation")
+    story_depth: float = Field(default=50, ge=0, le=100)
+    originality: float = Field(default=50, ge=0, le=100)
     story_type: StoryType = "OTHER"
     temporary_trend_dependency: float = Field(default=50, ge=0, le=100)
     status: Literal["PASS", "REVIEW", "FAIL"]
@@ -89,6 +91,9 @@ class EditorialEvaluator:
             "score means less saturated. Use only the topic and supplied evidence; "
             "classify story_type and score temporary_trend_dependency from 0 "
             "(not trend-dependent) to 100 (entirely dependent on a temporary trend). "
+            "Explicitly assess story depth and originality as separate 0-100 scores. "
+            "For competitor-derived ideas, originality means a genuinely new question "
+            "or mechanism, not a synonym-swapped competitor title. "
             "Do not invent search metrics, facts, or competitor counts. These are "
             "preliminary editorial judgments, not factual research. Mark PASS for a "
             "clear general-audience curiosity explainer, REVIEW for uncertain fit or "
@@ -127,6 +132,7 @@ class EditorialEvaluator:
                     key: metric.model_dump()
                     for key, metric in candidate.current_vidiq_demand_signals.items()
                 },
+                "current_vidiq_demand_available": candidate.current_vidiq_demand_available,
                 "competition_saturation_assessment": candidate.competition_saturation_assessment,
                 "ritzz_fit_prefilter": (
                     candidate.ritzz_fit.model_dump(mode="json")
@@ -155,6 +161,8 @@ def apply_editorial_assessments(
             "researchability": assessment.researchability,
             "differentiation": assessment.differentiation,
             "saturation": assessment.saturation,
+            "story_depth": assessment.story_depth,
+            "originality": assessment.originality,
         }
         candidate.editorial_status = assessment.status
         if candidate.ritzz_fit is None:

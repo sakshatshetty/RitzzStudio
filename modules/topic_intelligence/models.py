@@ -34,6 +34,8 @@ class RitzzFitResult(BaseModel):
     story_type: StoryType = "OTHER"
     curiosity_strength: float | None = Field(default=None, ge=0, le=100)
     researchability: float | None = Field(default=None, ge=0, le=100)
+    story_depth: float | None = Field(default=None, ge=0, le=100)
+    originality: float | None = Field(default=None, ge=0, le=100)
     visual_potential: float | None = Field(default=None, ge=0, le=100)
     evergreen_potential: float | None = Field(default=None, ge=0, le=100)
     audience_value: float | None = Field(default=None, ge=0, le=100)
@@ -91,9 +93,11 @@ class OpportunityCandidate(BaseModel):
     competitor_evidence: list[CompetitorEvidence] = Field(default_factory=list)
     competitor_topic_patterns: list[CompetitorTopicPattern] = Field(default_factory=list)
     current_vidiq_demand_signals: dict[str, EvidenceMetric] = Field(default_factory=dict)
+    current_vidiq_demand_available: bool = False
     competition_saturation_signal: EvidenceMetric | None = None
     competition_saturation_assessment: str | None = None
     ritzz_differentiation_angle: str | None = None
+    observed_pattern: str | None = None
     ritzz_fit: RitzzFitResult | None = None
     ritzz_learning_signals: dict = Field(default_factory=dict)
 

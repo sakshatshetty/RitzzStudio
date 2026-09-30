@@ -8,6 +8,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from config.settings import RITZZ_OUTLIER_MIN_SCORE
+
 
 class CompetitorEvidence(BaseModel):
     channel: dict[str, str | int | float | None] = Field(default_factory=dict)
@@ -27,6 +29,13 @@ class CompetitorTopicPattern(BaseModel):
     channel_count: int
     channels: list[str] = Field(default_factory=list)
     video_ids: list[str] = Field(default_factory=list)
+    observed_pattern: str | None = None
+    topic_category: str | None = None
+    curiosity_type: str | None = None
+    core_question: str | None = None
+    subject_entities: list[str] = Field(default_factory=list)
+    why_interesting: str | None = None
+    evidence_refs: list[str] = Field(default_factory=list)
 
 
 class OutlierVideo(BaseModel):
@@ -64,6 +73,11 @@ class MarketIntelligenceReport(BaseModel):
     outliers: list[OutlierVideo] = Field(default_factory=list)
     topic_patterns: list[CompetitorTopicPattern] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    configured_competitor_count: int = 0
+    competitors_queried: int = 0
+    videos_inspected: int = 0
+    successful_outlier_count: int = 0
+    operations: list[dict[str, str]] = Field(default_factory=list)
 
 
 def top_outliers(report: MarketIntelligenceReport, limit: int = 3) -> list[OutlierVideo]:
@@ -77,6 +91,18 @@ def top_outliers(report: MarketIntelligenceReport, limit: int = 3) -> list[Outli
             item.title,
         ),
     )[:limit]
+
+
+def is_successful_outlier_video(
+    video: OutlierVideo,
+    minimum_score: float = RITZZ_OUTLIER_MIN_SCORE,
+) -> bool:
+    if video.breakout_score is not None and video.breakout_score >= minimum_score:
+        return True
+    return video.relative_performance is not None and video.relative_performance >= max(
+        2,
+        minimum_score,
+    )
 
 
 def normalize_outlier(
@@ -105,6 +131,8 @@ def normalize_outlier(
             "baselineViews",
             "channelAverageViews",
             "averageViews",
+            "avgChannelViews",
+            "channelAvgViews",
             "avgViews",
             "typicalViews",
         )
@@ -150,7 +178,9 @@ def normalize_outlier(
         baseline_sample_size=baseline_sample_size,
         relative_performance=relative_performance,
         outlier_signal=outlier_signal,
-        breakout_score=_number(get("breakoutScore", "breakout_score")),
+        breakout_score=_number(
+            get("breakoutScore", "breakout_score", "outlierScore", "outlier_score")
+        ),
         engagement_rate=_number(get("engagementRate", "engagement_rate")),
         views_per_hour=_number(get("vph", "viewsPerHour", "views_per_hour")),
         published_at=_timestamp(get("videoPublishedAt", "publishedAt", "published_at")),
@@ -348,7 +378,7 @@ def _topic_patterns(outliers: list[OutlierVideo]) -> list[CompetitorTopicPattern
     grouped: dict[str, list[OutlierVideo]] = defaultdict(list)
     labels: dict[str, str] = {}
     for video in outliers:
-        if video.relative_performance is None and video.breakout_score is None:
+        if not is_successful_outlier_video(video):
             continue
         if not video.topic:
             continue
@@ -368,7 +398,11 @@ def _topic_patterns(outliers: list[OutlierVideo]) -> list[CompetitorTopicPattern
             video_ids=sorted({video.video_id for video in videos if video.video_id}),
         )
         for key, videos in grouped.items()
-        if len(videos) > 1
+        if len({
+            video.channel_id or video.channel_title
+            for video in videos
+            if video.channel_id or video.channel_title
+        }) > 1
     ]
     return sorted(patterns, key=lambda item: (-item.channel_count, -item.video_count, item.topic.casefold()))
 

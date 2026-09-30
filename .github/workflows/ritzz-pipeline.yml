@@ -83,6 +83,8 @@ jobs:
           tests/test_video_pipeline_engine.py
           tests/test_topic_intelligence.py
           tests/test_topic_intelligence_learning.py
+          tests/test_competitor_opportunities.py
+          tests/test_config_settings.py
           tests/test_discover_pipeline_topics.py
           tests/test_select_pipeline_topic.py
           tests/test_content_workflow.py::test_selected_candidate_is_linked_to_report_and_project
@@ -129,7 +131,7 @@ jobs:
           include-hidden-files: true
 
   discover-topics:
-    name: Discover four trending topics
+    name: Discover four competitor-led topics
     needs: validate
     runs-on: ubuntu-latest
     outputs:
@@ -142,6 +144,10 @@ jobs:
       RITZZ_TREND_TOPIC: history
       RITZZ_CANDIDATE_POOL_TARGET: 30
       RITZZ_DISCOVERY_FALLBACK_STAGES: broader-trending,rising,evergreen,long-tail,competitor-outliers,unscoped
+      RITZZ_COMPETITORS_FILE: config/competitors.json
+      RITZZ_COMPETITOR_LOOKBACK_DAYS: 365
+      RITZZ_COMPETITOR_VIDEO_LIMIT: 20
+      RITZZ_OUTLIER_MIN_SCORE: 2
       RITZZ_M7_INVENTORY_FILE: projects/inventory.json
       RITZZ_INVENTORY_FILE: data/content_inventory.json
     steps:

@@ -77,6 +77,8 @@ def _candidate_markdown(index: int, candidate) -> str:
         f"- Evidence status: `{candidate.validation_status}`\n"
         f"- Explainer angle: {candidate.angle or 'Not provided.'}\n"
         f"- Why it is interesting: {candidate.why_interesting or 'Not provided.'}\n"
+        f"- Current vidIQ demand/trend signals available: "
+        f"`{str(candidate.current_vidiq_demand_available).lower()}`\n"
         f"- Current vidIQ demand/trend: {demand_signals}\n"
         f"- Current vidIQ competition/saturation: {competition_summary}\n"
         f"- Competition/saturation interpretation: "

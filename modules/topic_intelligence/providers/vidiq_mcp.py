@@ -12,20 +12,28 @@ from typing import Any
 import requests
 
 from config.settings import (
+    RITZZ_COMPETITOR_LOOKBACK_DAYS,
+    RITZZ_COMPETITOR_VIDEO_LIMIT,
+    RITZZ_COMPETITORS_FILE,
     RITZZ_DISCOVERY_FALLBACK_STAGES,
+    RITZZ_OUTLIER_MIN_SCORE,
     VIDIQ_MCP_API_KEY,
     VIDIQ_MCP_URL,
 )
 from modules.topic_intelligence.market_intelligence import (
     MarketIntelligenceReport,
     build_market_intelligence_report,
+    normalize_outlier,
 )
 from modules.topic_intelligence.models import (
     EvidenceMetric,
     OpportunityCandidate,
     TopicDiscoveryRequest,
 )
-from modules.topic_intelligence.providers.base import ProviderUnavailableError
+from modules.topic_intelligence.providers.base import (
+    ProviderUnavailableError,
+    TopicDemandEnrichment,
+)
 
 
 def normalize_candidate_key(topic: str) -> str:
@@ -50,10 +58,11 @@ class VidiqMcpProvider:
         self.session_id: str | None = None
         self._request_id = 0
         self._initialized = False
+        self._tools_cache: list[dict[str, Any]] | None = None
         self.protocol_version = "2025-03-26"
         self.competitor_registry_path = Path(
             competitor_registry_path
-            or Path(__file__).resolve().parents[3] / "config" / "competitors.json"
+            or RITZZ_COMPETITORS_FILE
         )
 
     def discover(self, request: TopicDiscoveryRequest) -> list[OpportunityCandidate]:
@@ -62,8 +71,7 @@ class VidiqMcpProvider:
                 "vidIQ MCP is not configured. Add VIDIQ_MCP_API_KEY to .env "
                 "using a vidIQ MCP API key, then retry discovery."
             )
-        tools = self._rpc("tools/list", {})
-        available = tools.get("tools", []) if isinstance(tools, dict) else []
+        available = self._list_tools()
         tool = self._select_tool(available, request.mode)
         if tool is None:
             raise ProviderUnavailableError(
@@ -86,21 +94,207 @@ class VidiqMcpProvider:
             for index, record in enumerate(records[:request.limit])
         ]
 
+    def _list_tools(self) -> list[dict[str, Any]]:
+        if self._tools_cache is not None:
+            return self._tools_cache
+        result = self._rpc("tools/list", {})
+        tools = result.get("tools", []) if isinstance(result, dict) else []
+        if not isinstance(tools, list):
+            raise ProviderUnavailableError(
+                "vidIQ MCP tools/list did not return a tool list.",
+                error_type="INVALID_CAPABILITY_RESPONSE",
+                tool="tools/list",
+            )
+        self._tools_cache = [tool for tool in tools if isinstance(tool, dict)]
+        return self._tools_cache
+
+    def enrich_topic_demand(self, topic: str) -> TopicDemandEnrichment:
+        """Optionally attach vidIQ keyword signals; failures never block a topic."""
+        operation = {
+            "source": "keyword_research_enrichment",
+            "tool": "unavailable",
+            "status": "unavailable",
+            "error_type": "CAPABILITY_UNAVAILABLE",
+            "message": "",
+            "fallback_behavior": "Retain the candidate with demand and competition marked unavailable.",
+        }
+        result: TopicDemandEnrichment = {
+            "available": False,
+            "metrics": {},
+            "related_keywords": [],
+            "operation": operation,
+        }
+        if not self.api_key:
+            operation["message"] = "vidIQ MCP is not configured."
+            return result
+        try:
+            tools = self._list_tools()
+            tool = self._find_keyword_research_tool(tools)
+            if tool is None:
+                operation["message"] = (
+                    "The advertised vidIQ tool set has no schema-compatible keyword research capability."
+                )
+                return result
+            operation["tool"] = str(tool["name"])
+            arguments = self._keyword_research_arguments(tool, topic)
+            if arguments is None:
+                operation["error_type"] = "UNSUPPORTED_ARGUMENT_SCHEMA"
+                operation["message"] = (
+                    "The keyword-research tool has required fields that cannot be mapped safely."
+                )
+                return result
+            response = self._rpc("tools/call", {
+                "name": tool["name"],
+                "arguments": arguments,
+            })
+            records = self._extract_records(response)
+        except ProviderUnavailableError as exc:
+            operation.update({
+                "status": "failed",
+                "error_type": exc.error_type,
+                "tool": exc.tool or operation["tool"],
+                "message": str(exc),
+            })
+            return result
+
+        if not records:
+            operation.update({
+                "status": "valid_zero_results",
+                "error_type": "VALID_ZERO_RESULTS",
+                "message": (
+                    "The keyword-research tool completed successfully but returned no "
+                    f"recognizable rows ({self._response_schema(response)})."
+                ),
+            })
+            return result
+        candidate = self._candidate(records[0], 0, "EVERGREEN")
+        result.update({
+            "available": True,
+            "metrics": {
+                key: metric.model_dump(mode="json")
+                for key, metric in candidate.evidence.items()
+            },
+            "related_keywords": candidate.related_keywords,
+        })
+        operation.update({
+            "status": "success",
+            "error_type": "NONE",
+            "message": f"Keyword research returned {len(records)} evidence record(s).",
+        })
+        return result
+
+    @classmethod
+    def _find_keyword_research_tool(
+        cls,
+        tools: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        candidates = []
+        for tool in tools:
+            label = f"{tool.get('name', '')} {tool.get('description', '')}".casefold()
+            properties = cls._tool_properties(tool)
+            fields = {
+                re.sub(r"[^a-z0-9]", "", str(name).casefold())
+                for name in properties
+            }
+            modes = next(
+                (
+                    definition.get("enum", [])
+                    for name, definition in properties.items()
+                    if re.sub(r"[^a-z0-9]", "", str(name).casefold()) == "mode"
+                    and isinstance(definition, dict)
+                ),
+                [],
+            )
+            has_topic_input = bool(fields & {"keyword", "topic", "query"})
+            supports_research = not modes or any(
+                str(mode).casefold() == "research" for mode in modes
+            )
+            if (
+                has_topic_input
+                and supports_research
+                and ("keyword" in label or "search volume" in label or "keyword research" in label)
+            ):
+                candidates.append((2 if "keyword" in label else 1, tool))
+        return max(candidates, key=lambda item: item[0])[1] if candidates else None
+
+    @classmethod
+    def _keyword_research_arguments(
+        cls,
+        tool: dict[str, Any],
+        topic: str,
+    ) -> dict[str, Any] | None:
+        schema = tool.get("inputSchema", {})
+        properties = cls._tool_properties(tool)
+        required = schema.get("required", []) if isinstance(schema, dict) else []
+        arguments: dict[str, Any] = {}
+        properties_by_normalized = {
+            re.sub(r"[^a-z0-9]", "", str(name).casefold()): name
+            for name in properties
+        }
+        keyword_field = "keyword" if "keyword" in properties_by_normalized else None
+        for name, definition in properties.items():
+            key = re.sub(r"[^a-z0-9]", "", str(name).casefold())
+            enum = definition.get("enum", []) if isinstance(definition, dict) else []
+            if key == "mode":
+                research_mode = next(
+                    (item for item in enum if str(item).casefold() == "research"),
+                    "research",
+                )
+                if enum and str(research_mode).casefold() != "research":
+                    return None
+                arguments[name] = research_mode
+            elif key == keyword_field or (
+                key in {"topic", "query"} and keyword_field is None
+            ):
+                arguments[name] = topic
+            elif key == "includerelated":
+                arguments[name] = True
+            elif key == "limit":
+                arguments[name] = 5
+            elif key == "period":
+                selected = next(
+                    (item for item in enum if str(item).casefold() == "month"),
+                    None,
+                )
+                if enum and selected is None:
+                    if name in required:
+                        return None
+                elif selected is not None:
+                    arguments[name] = selected
+            elif key == "language":
+                selected = next(
+                    (item for item in enum if str(item).casefold() == "en"),
+                    None,
+                )
+                if enum and selected is None:
+                    if name in required:
+                        return None
+                elif selected is not None:
+                    arguments[name] = selected
+                else:
+                    arguments[name] = "en"
+            elif definition.get("default") is not None:
+                arguments[name] = definition["default"]
+            elif name in required:
+                return None
+        if any(name not in arguments for name in required):
+            return None
+        return arguments
+
     def discover_pipeline_candidates(
         self,
         request: TopicDiscoveryRequest,
+        *,
+        include_competitor_research: bool = True,
     ) -> tuple[list[OpportunityCandidate], dict[str, Any], MarketIntelligenceReport | None]:
         """Gather a bounded, source-aware topic pool before editorial scoring."""
         pool_limit = min(max(request.limit, 15), 30)
         try:
-            tool_result = self._rpc("tools/list", {})
+            tools = self._list_tools()
         except ProviderUnavailableError as exc:
             raise ProviderUnavailableError(
                 f"Could not list vidIQ tools for multi-source discovery: {exc}"
             ) from exc
-        tools = tool_result.get("tools", []) if isinstance(tool_result, dict) else []
-        if not isinstance(tools, list):
-            raise ProviderUnavailableError("vidIQ MCP tools/list did not return a tool list.")
         diagnostics: dict[str, Any] = {
             "pool_target": pool_limit,
             "fallback_stages_configured": list(RITZZ_DISCOVERY_FALLBACK_STAGES),
@@ -110,12 +304,16 @@ class VidiqMcpProvider:
             "source_tools": {},
             "duplicate_counts": {},
             "stage_counts": [],
+            "operations": [],
             "provider_capabilities": {
                 "trending": self._select_trending_tool(tools) is not None,
                 "rising": self._select_source_tool(tools, "rising") is not None,
                 "evergreen": self._select_source_tool(tools, "evergreen") is not None,
                 "long_tail": self._select_source_tool(tools, "long-tail") is not None,
-                "competitor_videos": self._find_market_tool(tools, {"vidiq_outliers"}) is not None,
+                "competitor_videos": self._find_video_capability_tool(tools, "outliers") is not None,
+                "competitor_channel_videos": (
+                    self._find_video_capability_tool(tools, "channel_videos") is not None
+                ),
             },
         }
         candidates: list[OpportunityCandidate] = []
@@ -198,6 +396,14 @@ class VidiqMcpProvider:
                     f"{source}: no supported vidIQ tool advertised"
                 )
                 diagnostics["source_counts"][source] = {"raw": 0, "unique": 0}
+                diagnostics["operations"].append({
+                    "source": source,
+                    "tool": "unavailable",
+                    "status": "unavailable",
+                    "error_type": "CAPABILITY_UNAVAILABLE",
+                    "message": "No schema-compatible vidIQ tool was advertised.",
+                    "fallback_behavior": "Continue with the next configured secondary source.",
+                })
                 return
             diagnostics["source_tools"][source] = tool["name"]
             effective_request = source_request.model_copy(
@@ -215,7 +421,9 @@ class VidiqMcpProvider:
                 if not records:
                     raise ProviderUnavailableError(
                         f"vidIQ returned no recognizable records for {source} "
-                        f"(response schema: {self._response_schema(result)})."
+                        f"(response schema: {self._response_schema(result)}).",
+                        error_type="VALID_ZERO_RESULTS",
+                        tool=str(tool["name"]),
                     )
                 accepted = 0
                 duplicate_count = 0
@@ -316,16 +524,38 @@ class VidiqMcpProvider:
                     "raw_total": len(records),
                     "pool_unique_total": len(candidates),
                 })
+                diagnostics["operations"].append({
+                    "source": source,
+                    "tool": str(tool["name"]),
+                    "status": "success",
+                    "error_type": "NONE",
+                    "message": f"Returned {len(records)} recognizable record(s).",
+                    "fallback_behavior": "Continue only if the candidate pool remains below target.",
+                })
             except ProviderUnavailableError as exc:
                 diagnostics["sources_unavailable"].append(f"{source}: {exc}")
                 diagnostics["source_counts"][source] = {"raw": 0, "unique": 0}
+                diagnostics["operations"].append({
+                    "source": source,
+                    "tool": str(tool["name"]),
+                    "status": (
+                        "valid_zero_results"
+                        if exc.error_type == "VALID_ZERO_RESULTS"
+                        else "failed"
+                    ),
+                    "error_type": exc.error_type,
+                    "message": str(exc),
+                    "fallback_behavior": "Continue with the next configured secondary source.",
+                })
 
         for source, tool_mode, source_request in plan:
             run_source(source, tool_mode, source_request)
 
-        if "competitor-outliers" in RITZZ_DISCOVERY_FALLBACK_STAGES:
+        if include_competitor_research and "competitor-outliers" in RITZZ_DISCOVERY_FALLBACK_STAGES:
             diagnostics["sources_attempted"].append("competitor-outliers")
         if (
+            include_competitor_research
+            and
             "competitor-outliers" in RITZZ_DISCOVERY_FALLBACK_STAGES
             and len(candidates) < pool_limit
         ):
@@ -388,7 +618,10 @@ class VidiqMcpProvider:
                     "raw": 0,
                     "unique": 0,
                 }
-        elif "competitor-outliers" in RITZZ_DISCOVERY_FALLBACK_STAGES:
+        elif (
+            include_competitor_research
+            and "competitor-outliers" in RITZZ_DISCOVERY_FALLBACK_STAGES
+        ):
             try:
                 competitor_report = self.discover_competitor_research(
                     f"{request.trend_topic or request.niche} curiosity explainers",
@@ -412,7 +645,10 @@ class VidiqMcpProvider:
                 }
                 diagnostics["duplicate_counts"]["competitor-outliers"] = 0
 
-        if "competitor-outliers" not in RITZZ_DISCOVERY_FALLBACK_STAGES:
+        if (
+            include_competitor_research
+            and "competitor-outliers" not in RITZZ_DISCOVERY_FALLBACK_STAGES
+        ):
             diagnostics.setdefault("sources_skipped", []).append(
                 "competitor-outliers: disabled by RITZZ_DISCOVERY_FALLBACK_STAGES"
             )
@@ -548,112 +784,282 @@ class VidiqMcpProvider:
         query: str,
         limit: int = 10,
     ) -> MarketIntelligenceReport:
-        """Collect competitor channels/videos only through advertised MCP tools."""
+        """Inspect configured channels through capabilities advertised by MCP."""
         warnings: list[str] = []
         if not self.api_key:
-            return build_market_intelligence_report(
+            report = build_market_intelligence_report(
                 query,
                 [],
                 source="vidIQ MCP",
                 performance_tool_available=False,
                 warnings=["vidIQ MCP is not configured; competitor research was not requested."],
             )
+            report.operations.append({
+                "source": "competitor_provider",
+                "tool": "vidIQ MCP",
+                "status": "failed",
+                "error_type": "PROVIDER_UNAVAILABLE",
+                "message": "VIDIQ_MCP_API_KEY is not configured.",
+                "fallback_behavior": "No competitor metrics are fabricated.",
+            })
+            return report
         try:
-            result = self._rpc("tools/list", {})
+            tools = self._list_tools()
         except ProviderUnavailableError as exc:
-            return build_market_intelligence_report(
+            report = build_market_intelligence_report(
                 query,
                 [],
                 source="vidIQ MCP",
                 performance_tool_available=False,
                 warnings=[f"vidIQ competitor capabilities could not be listed: {exc}"],
             )
-        tools = result.get("tools", []) if isinstance(result, dict) else []
-        outlier_tool = self._find_market_tool(tools, {"vidiq_outliers"})
-        channel_tool = self._find_market_tool(tools, {"vidiq_similar_channels"})
+            report.operations.append({
+                "source": "competitor_tools",
+                "tool": "tools/list",
+                "status": "failed",
+                "error_type": exc.error_type,
+                "message": str(exc),
+                "fallback_behavior": "No competitor query was attempted.",
+            })
+            return report
+        outlier_tool = self._find_video_capability_tool(tools, "outliers")
+        channel_videos_tool = self._find_video_capability_tool(tools, "channel_videos")
         configured_competitors, registry_warnings = self._load_competitor_registry()
         warnings.extend(registry_warnings)
-        if outlier_tool is None:
-            warnings.append("vidIQ MCP does not advertise the vidiq_outliers competitor-video tool.")
-        if channel_tool is None:
-            warnings.append("vidIQ MCP does not advertise the vidiq_similar_channels channel tool.")
-
-        channels: list[dict[str, Any]] = []
-        videos: list[dict[str, Any]] = []
-        if channel_tool is not None:
-            arguments = self._market_arguments(channel_tool, query, limit)
-            if arguments is None:
-                warnings.append("The advertised vidIQ similar-channel tool requires unsupported arguments.")
-            else:
-                try:
-                    response = self._rpc("tools/call", {
-                        "name": channel_tool["name"],
-                        "arguments": arguments,
-                    })
-                    channels = self._extract_records(response)
-                except ProviderUnavailableError as exc:
-                    warnings.append(f"vidIQ similar-channel research failed: {exc}")
-        if outlier_tool is not None:
-            channel_schema = outlier_tool.get("inputSchema", {})
-            properties = channel_schema.get("properties", {}) if isinstance(channel_schema, dict) else {}
-            channel_fields = {
-                re.sub(r"[^a-z0-9]", "", str(name).casefold())
-                for name in properties
-            } & {"channel", "channelid", "channelhandle", "channelurl"}
-            can_scope_channels = bool(channel_fields)
-            scopes = (
-                [(entry, entry.get("group")) for entry in configured_competitors]
-                if configured_competitors and can_scope_channels
-                else [(None, None)]
+        operations: list[dict[str, str]] = []
+        if not configured_competitors:
+            message = (
+                "No enabled competitor channel IDs are configured; add channels to "
+                f"{self.competitor_registry_path} or set RITZZ_COMPETITORS_FILE."
             )
-            if configured_competitors and not can_scope_channels:
-                warnings.append(
-                    "Configured competitor channels were not individually queried because "
-                    "the advertised vidIQ outlier schema has no channel selector."
-                )
-            for competitor, group in scopes:
-                arguments = self._market_arguments(
-                    outlier_tool,
-                    query,
-                    limit,
-                    competitor=competitor,
-                )
-                if arguments is None:
-                    warnings.append("The advertised vidIQ outlier tool requires unsupported arguments.")
-                    continue
-                try:
-                    response = self._rpc("tools/call", {
-                        "name": outlier_tool["name"],
-                        "arguments": arguments,
-                    })
-                    batch = self._extract_records(response)
-                    if competitor is not None:
-                        for record in batch:
-                            record.setdefault("channelGroup", group)
-                            record.setdefault(
-                                "channelId",
-                                competitor.get("channel_id")
-                                or competitor.get("channel")
-                                or competitor.get("handle"),
-                            )
-                            record.setdefault("channelTitle", competitor.get("name"))
-                    videos.extend(batch)
-                except ProviderUnavailableError as exc:
-                    scope_name = (
-                        competitor.get("name") or competitor.get("channel_id")
-                        if competitor
-                        else "topic query"
-                    )
-                    warnings.append(f"vidIQ competitor-video research failed for {scope_name}: {exc}")
+            warnings.append(message)
+            operations.append({
+                "source": "competitor_registry",
+                "tool": "config/competitors.json",
+                "status": "blocked",
+                "error_type": "NO_COMPETITORS_CONFIGURED",
+                "message": message,
+                "fallback_behavior": "No generic trend candidates are substituted for competitor evidence.",
+            })
+            report = build_market_intelligence_report(
+                query,
+                [],
+                channels=[],
+                source="vidIQ MCP",
+                performance_tool_available=outlier_tool is not None,
+                warnings=warnings,
+            )
+            report.configured_competitor_count = 0
+            report.operations = operations
+            return report
 
-        return build_market_intelligence_report(
+        supported_competitors = [
+            item for item in configured_competitors
+            if item.get("channel_id")
+        ]
+        skipped_channels = len(configured_competitors) - len(supported_competitors)
+        if skipped_channels:
+            warnings.append(
+                f"{skipped_channels} configured competitor(s) do not have a channel_id "
+                "and cannot be queried by the advertised channel-scoped tools."
+            )
+        videos: list[dict[str, Any]] = []
+        queried_ids: set[str] = set()
+        outlier_error: ProviderUnavailableError | None = None
+        if outlier_tool is not None and supported_competitors:
+            properties = self._tool_properties(outlier_tool)
+            channel_ids_field = next(
+                (
+                    name for name in properties
+                    if re.sub(r"[^a-z0-9]", "", name.casefold()) == "channelids"
+                ),
+                None,
+            )
+            channel_id_field = next(
+                (
+                    name for name in properties
+                    if re.sub(r"[^a-z0-9]", "", name.casefold()) == "channelid"
+                ),
+                None,
+            )
+            if channel_ids_field or channel_id_field:
+                if channel_ids_field:
+                    batches = [supported_competitors]
+                else:
+                    batches = [[entry] for entry in supported_competitors]
+                for batch_competitors in batches:
+                    arguments = self._market_arguments(
+                        outlier_tool,
+                        query,
+                        min(limit, RITZZ_COMPETITOR_VIDEO_LIMIT),
+                        competitors=batch_competitors,
+                    )
+                    if arguments is None:
+                        warnings.append(
+                            f"Advertised outlier tool '{outlier_tool['name']}' requires "
+                            "unsupported arguments for scoped video research."
+                        )
+                        operations.append({
+                            "source": "competitor_outliers",
+                            "tool": str(outlier_tool["name"]),
+                            "status": "unavailable",
+                            "error_type": "UNSUPPORTED_ARGUMENT_SCHEMA",
+                            "message": "Required tool fields could not be mapped safely.",
+                            "fallback_behavior": "Attempt channel-scoped video-list research.",
+                        })
+                        break
+                    try:
+                        response = self._rpc("tools/call", {
+                            "name": outlier_tool["name"],
+                            "arguments": arguments,
+                        })
+                        batch = self._extract_records(response)
+                        if len(batch_competitors) == 1:
+                            competitor = batch_competitors[0]
+                            for record in batch:
+                                record.setdefault(
+                                    "channelId",
+                                    competitor["channel_id"],
+                                )
+                                record.setdefault("channelTitle", competitor.get("name"))
+                                record.setdefault("channelGroup", competitor.get("group"))
+                        videos.extend(batch)
+                        queried_ids.update(
+                            str(entry["channel_id"]) for entry in batch_competitors
+                        )
+                        operations.append({
+                            "source": "competitor_outliers",
+                            "tool": str(outlier_tool["name"]),
+                            "status": "success" if batch else "valid_zero_results",
+                            "error_type": "NONE" if batch else "VALID_ZERO_RESULTS",
+                            "message": (
+                                f"Returned {len(batch)} video record(s) for "
+                                f"{len(batch_competitors)} configured channel(s)."
+                            ),
+                            "fallback_behavior": (
+                                "No fallback required." if batch
+                                else "Try channel-scoped recent/popular video lists."
+                            ),
+                        })
+                    except ProviderUnavailableError as exc:
+                        outlier_error = exc
+                        operations.append({
+                            "source": "competitor_outliers",
+                            "tool": str(outlier_tool["name"]),
+                            "status": "failed",
+                            "error_type": exc.error_type,
+                            "message": str(exc),
+                            "fallback_behavior": "Try channel-scoped recent/popular video lists.",
+                        })
+                        warnings.append(
+                            f"vidIQ competitor outlier operation failed: {exc}"
+                        )
+                        break
+            else:
+                warnings.append(
+                    f"Advertised video-outlier tool '{outlier_tool['name']}' has no "
+                    "channel selector; it will not be used for unscoped competitor research."
+                )
+        elif outlier_tool is None:
+            warnings.append("vidIQ MCP does not advertise a video-outlier capability.")
+
+        has_comparable_performance = any(
+            video.breakout_score is not None or video.relative_performance is not None
+            for video in (normalize_outlier(record) for record in videos)
+        )
+        if not has_comparable_performance and channel_videos_tool is not None:
+            for competitor in supported_competitors:
+                channel_id = str(competitor["channel_id"])
+                call_records = []
+                for popular in (False, True):
+                    arguments = self._channel_videos_arguments(
+                        channel_videos_tool,
+                        channel_id,
+                        popular=popular,
+                    )
+                    if arguments is None:
+                        warnings.append(
+                            f"Advertised channel-video tool '{channel_videos_tool['name']}' "
+                            "requires unsupported arguments."
+                        )
+                        break
+                    try:
+                        response = self._rpc("tools/call", {
+                            "name": channel_videos_tool["name"],
+                            "arguments": arguments,
+                        })
+                        call_records.extend(self._extract_records(response))
+                    except ProviderUnavailableError as exc:
+                        operations.append({
+                            "source": "competitor_channel_videos",
+                            "tool": str(channel_videos_tool["name"]),
+                            "status": "failed",
+                            "error_type": exc.error_type,
+                            "message": str(exc),
+                            "fallback_behavior": "Use only outlier data already returned; no views are inferred.",
+                        })
+                        warnings.append(
+                            f"vidIQ channel-video operation failed for "
+                            f"{competitor.get('name') or channel_id}: {exc}"
+                        )
+                        break
+                for record in call_records:
+                    record.setdefault("channelId", channel_id)
+                    record.setdefault("channelTitle", competitor.get("name"))
+                    record.setdefault("channelGroup", competitor.get("group"))
+                videos.extend(call_records)
+                if call_records:
+                    queried_ids.add(channel_id)
+                operations.append({
+                    "source": "competitor_channel_videos",
+                    "tool": str(channel_videos_tool["name"]),
+                    "status": "success" if call_records else "valid_zero_results",
+                    "error_type": "NONE" if call_records else "VALID_ZERO_RESULTS",
+                    "message": (
+                        f"Returned {len(call_records)} recent/popular video record(s) "
+                        f"for {competitor.get('name') or channel_id}."
+                    ),
+                    "fallback_behavior": "Channel baseline is calculated only with sufficient returned metrics.",
+                })
+        elif videos and supported_competitors:
+            channel_by_id = {
+                str(entry["channel_id"]): entry for entry in supported_competitors
+            }
+            for record in videos:
+                record_channel_id = self._record_channel_id(record)
+                if record_channel_id in channel_by_id:
+                    competitor = channel_by_id[record_channel_id]
+                    record.setdefault("channelTitle", competitor.get("name"))
+                    record.setdefault("channelGroup", competitor.get("group"))
+
+        if outlier_tool is None and channel_videos_tool is None:
+            warnings.append(
+                "No channel-scoped video research capability is advertised by vidIQ MCP."
+            )
+        report = build_market_intelligence_report(
             query,
-            videos[:limit],
-            channels=channels,
+            self._deduplicate_video_records(videos)[: min(limit, RITZZ_COMPETITOR_VIDEO_LIMIT)],
+            channels=[
+                {
+                    "id": item.get("channel_id"),
+                    "name": item.get("name"),
+                    "group": item.get("group"),
+                }
+                for item in supported_competitors
+            ],
             source="vidIQ MCP",
-            performance_tool_available=outlier_tool is not None,
+            performance_tool_available=outlier_tool is not None or bool(videos),
             warnings=warnings,
         )
+        report.configured_competitor_count = len(configured_competitors)
+        report.competitors_queried = len(queried_ids)
+        report.videos_inspected = len(report.outliers)
+        report.operations = operations
+        if outlier_error and not report.outliers:
+            report.warnings.append(
+                "Competitor outlier provider errors were classified separately from valid zero results."
+            )
+        return report
 
     def _load_competitor_registry(self) -> tuple[list[dict[str, Any]], list[str]]:
         try:
@@ -678,48 +1084,105 @@ class VidiqMcpProvider:
                     continue
                 if not any(entry.get(key) for key in ("channel_id", "channel", "handle")):
                     continue
-                competitors.append({**entry, "group": group})
+                channel_id = entry.get("channel_id") or entry.get("channel")
+                competitors.append({
+                    **entry,
+                    "channel_id": str(channel_id).strip() if channel_id else None,
+                    "group": group,
+                })
         return competitors, []
 
     @staticmethod
-    def _find_market_tool(
-        tools: list[dict[str, Any]],
-        names: set[str],
-    ) -> dict[str, Any] | None:
-        return next(
-            (
-                tool for tool in tools
-                if isinstance(tool, dict)
-                and str(tool.get("name", "")).casefold() in names
-            ),
-            None,
-        )
-
-    @staticmethod
-    def _market_arguments(
-        tool: dict[str, Any],
-        query: str,
-        limit: int,
-        competitor: dict[str, Any] | None = None,
-    ) -> dict[str, Any] | None:
+    def _tool_properties(tool: dict[str, Any]) -> dict[str, Any]:
         schema = tool.get("inputSchema", {})
         properties = schema.get("properties", {}) if isinstance(schema, dict) else {}
+        return properties if isinstance(properties, dict) else {}
+
+    @classmethod
+    def _find_video_capability_tool(
+        cls,
+        tools: list[dict[str, Any]],
+        capability: str,
+    ) -> dict[str, Any] | None:
+        matches = []
+        for tool in tools:
+            if not isinstance(tool, dict):
+                continue
+            label = f"{tool.get('name', '')} {tool.get('description', '')}".casefold()
+            properties = cls._tool_properties(tool)
+            fields = {
+                re.sub(r"[^a-z0-9]", "", str(name).casefold())
+                for name in properties
+            }
+            if capability == "outliers":
+                has_signal = any(
+                    term in label
+                    for term in ("outlier", "breakout", "overperform", "viral video")
+                )
+                has_channel_filter = bool(fields & {"channelids", "channelid"})
+                if has_signal and has_channel_filter:
+                    matches.append((2 if "outlier" in label else 1, tool))
+            elif capability == "channel_videos":
+                if (
+                    "channel" in label
+                    and "video" in label
+                    and "channelid" in fields
+                    and "videoformat" in fields
+                ):
+                    matches.append((2 if "popular" in fields else 1, tool))
+        return max(matches, key=lambda item: item[0])[1] if matches else None
+
+    @classmethod
+    def _market_arguments(
+        cls,
+        tool: dict[str, Any],
+        query: str | None,
+        limit: int,
+        competitors: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        schema = tool.get("inputSchema", {})
+        properties = cls._tool_properties(tool)
         required = schema.get("required", []) if isinstance(schema, dict) else []
         arguments: dict[str, Any] = {}
+        channel_ids = [str(item["channel_id"]) for item in competitors if item.get("channel_id")]
         for name, definition in properties.items():
             key = re.sub(r"[^a-z0-9]", "", str(name).casefold())
             enum = definition.get("enum", []) if isinstance(definition, dict) else []
             default = definition.get("default") if isinstance(definition, dict) else None
-            if key in {"channel", "channelid", "channelhandle", "channelurl"} and competitor:
-                arguments[name] = (
-                    competitor.get("channel_id")
-                    or competitor.get("handle")
-                    or competitor.get("channel")
-                )
+            if key == "channelids" and channel_ids:
+                arguments[name] = channel_ids
+            elif key == "channelid" and len(channel_ids) == 1:
+                arguments[name] = channel_ids[0]
             elif key in {"query", "keyword", "searchterm", "searchquery", "topic", "niche", "category"}:
-                arguments[name] = query
+                if name in required and query is None:
+                    return None
+                if name in required:
+                    arguments[name] = query
             elif key in {"limit", "count", "maxresults", "numresults", "topn"}:
                 arguments[name] = limit
+            elif key == "minoutlierscore":
+                arguments[name] = RITZZ_OUTLIER_MIN_SCORE
+            elif key == "publishedwithin":
+                preferred = cls._published_within(RITZZ_COMPETITOR_LOOKBACK_DAYS)
+                selected = next(
+                    (value for value in enum if str(value).casefold() == preferred.casefold()),
+                    None,
+                )
+                if enum and selected is None:
+                    if name in required:
+                        return None
+                else:
+                    arguments[name] = selected or preferred
+            elif key in {"language", "videotitlelanguage"}:
+                selected = next(
+                    (value for value in enum if str(value).casefold() == "en"),
+                    None,
+                )
+                if enum and selected is None:
+                    if name in required:
+                        return None
+                else:
+                    arguments[name] = selected or "en"
             elif key in {"contenttype", "videotype"}:
                 if enum and not any(str(value).casefold() in {"long", "longform"} for value in enum):
                     if name in required:
@@ -730,19 +1193,103 @@ class VidiqMcpProvider:
                         "long",
                     )
             elif key in {"sort", "sortby", "order"}:
-                if enum and not any(str(value).casefold() in {"score", "outlier", "breakout"} for value in enum):
+                preferred = ("breakoutscore", "outlierscore", "score", "outlier", "breakout")
+                selected = next(
+                    (value for value in enum if str(value).casefold() in preferred),
+                    None,
+                )
+                if enum and selected is None:
                     if name in required:
                         return None
                 else:
-                    arguments[name] = next(
-                        (value for value in enum if str(value).casefold() in {"score", "outlier", "breakout"}),
-                        "score",
-                    )
+                    arguments[name] = selected or "score"
             elif default is not None:
                 arguments[name] = default
             elif name in required:
                 return None
         return arguments
+
+    @staticmethod
+    def _channel_videos_arguments(
+        tool: dict[str, Any],
+        channel_id: str,
+        *,
+        popular: bool,
+    ) -> dict[str, Any] | None:
+        schema = tool.get("inputSchema", {})
+        properties = VidiqMcpProvider._tool_properties(tool)
+        required = schema.get("required", []) if isinstance(schema, dict) else []
+        arguments: dict[str, Any] = {}
+        for name, definition in properties.items():
+            key = re.sub(r"[^a-z0-9]", "", str(name).casefold())
+            enum = definition.get("enum", []) if isinstance(definition, dict) else []
+            if key == "channelid":
+                arguments[name] = channel_id
+            elif key in {"videoformat", "contenttype", "videotype"}:
+                value = next(
+                    (item for item in enum if str(item).casefold() in {"long", "longform"}),
+                    "long",
+                )
+                if enum and value == "long" and not any(
+                    str(item).casefold() in {"long", "longform"} for item in enum
+                ):
+                    return None
+                arguments[name] = value
+            elif key == "popular":
+                arguments[name] = popular
+            elif name in required:
+                return None
+        return arguments
+
+    @staticmethod
+    def _published_within(days: int) -> str:
+        if days <= 7:
+            return "thisWeek"
+        if days <= 30:
+            return "thisMonth"
+        if days <= 90:
+            return "threeMonths"
+        if days <= 180:
+            return "sixMonths"
+        if days <= 365:
+            return "oneYear"
+        return "allTime"
+
+    @staticmethod
+    def _record_channel_id(record: dict[str, Any]) -> str | None:
+        return next(
+            (
+                str(value)
+                for key, value in record.items()
+                if re.sub(r"[^a-z0-9]", "", str(key).casefold()) == "channelid"
+                and value is not None
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _deduplicate_video_records(
+        records: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        unique = []
+        records_by_id: dict[str, dict[str, Any]] = {}
+        for index, record in enumerate(records):
+            normalized = {
+                re.sub(r"[^a-z0-9]", "", str(key).casefold()): value
+                for key, value in record.items()
+            }
+            key = str(normalized.get("videoid") or normalized.get("id") or "")
+            if not key:
+                key = f"record:{normalized.get('channelid', '')}:{normalized.get('videotitle', '')}:{index}"
+            existing = records_by_id.get(key)
+            if existing is not None:
+                for name, value in record.items():
+                    if existing.get(name) is None and value is not None:
+                        existing[name] = value
+                continue
+            records_by_id[key] = record
+            unique.append(record)
+        return unique
 
     def _rpc(self, method: str, params: dict[str, Any]) -> Any:
         if method != "initialize" and not self._initialized:
@@ -770,7 +1317,11 @@ class VidiqMcpProvider:
         self.session_id = response.headers.get("Mcp-Session-Id", self.session_id)
         payload = self._decode_response(response)
         if "error" in payload:
-            raise ProviderUnavailableError(f"vidIQ MCP error: {payload['error'].get('message', 'request failed')}")
+            raise ProviderUnavailableError(
+                "vidIQ MCP returned a JSON-RPC protocol error.",
+                error_type="MCP_PROTOCOL_ERROR",
+                tool=str(params.get("name")) if params.get("name") else None,
+            )
         result = payload.get("result", {})
         if method == "tools/call" and isinstance(result, dict) and result.get("isError") is True:
             tool_name = params.get("name", "unknown")
@@ -778,7 +1329,9 @@ class VidiqMcpProvider:
             raise ProviderUnavailableError(
                 f"vidIQ MCP tool '{tool_name}' reported an execution error "
                 f"({error_kind}) "
-                f"(response schema: {self._response_schema(result)})."
+                f"(response schema: {self._response_schema(result)}).",
+                error_type="PROVIDER_ERROR",
+                tool=str(tool_name),
             )
         return result
 
