@@ -31,12 +31,6 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-if not OPENAI_API_KEY:
-    raise RuntimeError(
-        "OPENAI_API_KEY is not configured. "
-        "Add it to the .env file."
-    )
-
 
 OPENAI_MODEL = os.getenv(
     "OPENAI_MODEL",

@@ -82,6 +82,7 @@ jobs:
           tests/test_youtube_provider.py
           tests/test_video_pipeline_engine.py
           tests/test_topic_intelligence.py
+          tests/test_config_settings.py
           -q
 
       - name: Enforce test-only release boundary
