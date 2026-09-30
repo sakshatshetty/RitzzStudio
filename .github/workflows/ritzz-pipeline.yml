@@ -120,6 +120,7 @@ jobs:
           name: ritzz-pipeline-validation-${{ github.run_id }}
           path: .pipeline-artifacts/
           if-no-files-found: error
+          include-hidden-files: true
 
   discover-topics:
     name: Discover four trending topics
@@ -156,6 +157,7 @@ jobs:
           name: ritzz-topic-candidates-${{ github.run_id }}
           path: .pipeline-artifacts/
           if-no-files-found: error
+          include-hidden-files: true
 
       - name: Create browser approval issue
         id: create-approval-issue
@@ -241,6 +243,7 @@ jobs:
           name: ritzz-approved-topic-${{ github.run_id }}
           path: .pipeline-artifacts/topic_selection.json
           if-no-files-found: error
+          include-hidden-files: true
 
   topic-approval:
     name: Approve selected topic
@@ -321,6 +324,7 @@ jobs:
           name: ritzz-content-project-${{ github.run_id }}
           path: .pipeline-artifacts/
           if-no-files-found: error
+          include-hidden-files: true
 
   voice-generation:
     name: Generate and validate narration
@@ -376,6 +380,7 @@ jobs:
           name: ritzz-voice-project-${{ github.run_id }}
           path: .pipeline-artifacts/
           if-no-files-found: error
+          include-hidden-files: true
 
   pipeline-placeholder:
     name: Production stages pending M8 implementation
@@ -441,6 +446,7 @@ jobs:
           name: ritzz-image-project-${{ github.run_id }}
           path: .pipeline-artifacts/
           if-no-files-found: error
+          include-hidden-files: true
 
   render-video:
     name: Render and run technical QA
@@ -493,6 +499,7 @@ jobs:
           name: ritzz-rendered-project-${{ github.run_id }}
           path: .pipeline-artifacts/
           if-no-files-found: error
+          include-hidden-files: true
 
   video-approval:
     name: Human approval for generated test video
@@ -614,7 +621,8 @@ jobs:
       - name: Archive storyboard project artifacts
         shell: bash
         run: |
-          tar -czf .pipeline-artifacts/storyboard-project.tar.gz -C projects "${{ steps.project.outputs.project_id }}"
+          project_name=$(find projects -mindepth 1 -maxdepth 1 -type d -name "${{ steps.project.outputs.project_id }}_*" -printf "%f\n" | head -n 1)
+          tar -czf .pipeline-artifacts/storyboard-project.tar.gz -C projects "$project_name"
 
       - name: Upload storyboard artifacts
         uses: actions/upload-artifact@v4
@@ -622,3 +630,4 @@ jobs:
           name: ritzz-storyboard-project-${{ github.run_id }}
           path: .pipeline-artifacts/
           if-no-files-found: error
+          include-hidden-files: true
