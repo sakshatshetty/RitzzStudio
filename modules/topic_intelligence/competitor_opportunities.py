@@ -55,7 +55,7 @@ class CompetitorOpportunityGenerator:
     prompt_version = "ritzz-competitor-opportunities-v1"
 
     def __init__(self, client=None) -> None:
-        self.client = client or OpenAI(api_key=OPENAI_API_KEY)
+        self.client = client
         self.model_name = OPENAI_MODEL
 
     def generate(
@@ -96,9 +96,16 @@ class CompetitorOpportunityGenerator:
             "generated_candidates": 0,
             "rejected_copied_angles": 0,
         }
-        if len(videos) < 2:
+        distinct_channels = {
+            video.channel_id or video.channel_title
+            for video in videos
+            if video.channel_id or video.channel_title
+        }
+        if len(videos) < 2 or len(distinct_channels) < 2:
             return [], [], diagnostics
 
+        if self.client is None:
+            self.client = OpenAI(api_key=OPENAI_API_KEY)
         response = self.client.responses.parse(
             model=self.model_name,
             input=[

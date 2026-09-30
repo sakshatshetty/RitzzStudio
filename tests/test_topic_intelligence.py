@@ -708,6 +708,39 @@ def test_engine_returns_at_most_four_distinct_candidates(tmp_path):
     assert len({item.topic for item in report.candidates}) == 4
 
 
+def test_standard_topic_discovery_does_not_initialize_competitor_openai_client(
+    monkeypatch,
+    tmp_path,
+):
+    def unexpected_openai_client(**kwargs):
+        raise AssertionError("Competitor OpenAI client should not be constructed.")
+
+    monkeypatch.setattr(
+        "modules.topic_intelligence.competitor_opportunities.OpenAI",
+        unexpected_openai_client,
+    )
+
+    class ManyProvider:
+        name = "fixture"
+
+        def discover(self, request):
+            return [
+                candidate(f"Why does topic {index} happen?", search_volume=100 - index)
+                for index in range(6)
+            ]
+
+    engine = TopicIntelligenceEngine(
+        provider=ManyProvider(),
+        cache_dir=tmp_path,
+        editorial_evaluator=FakeEditorialEvaluator(),
+    )
+
+    report = engine.discover()
+
+    assert len(report.candidates) == 4
+    assert engine.competitor_opportunity_generator is None
+
+
 def test_niche_filter_flags_broad_and_unsuitable_topics():
     items = [
         candidate("United Nations"),

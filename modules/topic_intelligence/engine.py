@@ -118,9 +118,7 @@ class TopicIntelligenceEngine:
         self.provider = provider or VidiqMcpProvider()
         self.cache_dir = Path(cache_dir or Path("cache") / "topic_intelligence")
         self.editorial_evaluator = editorial_evaluator or EditorialEvaluator()
-        self.competitor_opportunity_generator = (
-            competitor_opportunity_generator or CompetitorOpportunityGenerator()
-        )
+        self.competitor_opportunity_generator = competitor_opportunity_generator
         self.inventory_manager = inventory_manager or ContentInventoryManager(inventory_path(self.cache_dir))
         self.learning_inventory_path = Path(
             learning_inventory_path or os.getenv("RITZZ_M7_INVENTORY_FILE", "projects/inventory.json")
@@ -172,10 +170,14 @@ class TopicIntelligenceEngine:
             "generated_candidates": 0,
             "rejected_copied_angles": 0,
         }
+        generator = self.competitor_opportunity_generator
         if competitor_report.outliers:
+            if generator is None:
+                generator = CompetitorOpportunityGenerator()
+                self.competitor_opportunity_generator = generator
             try:
                 candidates, patterns, generation_diagnostics = (
-                    self.competitor_opportunity_generator.generate(
+                    generator.generate(
                         competitor_report,
                         candidate_limit=min(max(request.limit, 4), 8),
                     )
@@ -188,7 +190,7 @@ class TopicIntelligenceEngine:
                 diagnostics["operations"].append({
                     "source": "competitor_topic_generation",
                     "tool": getattr(
-                        self.competitor_opportunity_generator,
+                        generator,
                         "model_name",
                         "structured topic generator",
                     ),
@@ -229,7 +231,7 @@ class TopicIntelligenceEngine:
         diagnostics["operations"].append({
             "source": "competitor_topic_patterns",
             "tool": getattr(
-                self.competitor_opportunity_generator,
+                generator,
                 "model_name",
                 "structured topic generator",
             ),
