@@ -77,24 +77,36 @@ costs 5 credits per group query, so confirm the account balance covers the
 enabled group queries before running discovery.
 
 Repeated patterns must cite at least two successful videos from at least two
-competitor channels. A structured generator proposes original RITZZ questions
-from those patterns and rejects candidate titles that are too similar to their
-supporting competitor titles. Keyword research runs afterward only to enrich
-generated finalists. A keyword-research provider error is recorded as
-`PROVIDER_ERROR`; it does not discard competitor-derived candidates. Demand
-and competition remain explicitly unavailable when vidIQ supplies no values.
+competitor channels. A structured generator first extracts the audience
+curiosity, then must select a concrete subject explicitly supported by cited
+provider titles, topics, or tags before proposing an original RITZZ angle.
+Broad essay premises and subjects without matching evidence are rejected as
+`TOO_ABSTRACT`; near-copy titles are rejected as `NEAR_DUPLICATE`. Candidate
+artifacts retain source video IDs, concrete-subject citations, detected
+patterns, curiosity family, and an explanation of the original angle.
+Format-competitor evidence has primary weight, emerging-format evidence has
+early-signal weight, and topic competitors remain a secondary subject signal.
+Keyword research runs afterward only to enrich generated candidates. A
+keyword-research provider error is recorded as `PROVIDER_ERROR`; it does not
+discard competitor-derived candidates. Demand and competition remain
+explicitly unavailable when vidIQ supplies no values. A failure of primary
+competitor-video research is surfaced as `PROVIDER_ERROR` and does not get
+disguised as zero results.
 The existing configurable trending/rising/evergreen sources remain secondary
 fallbacks when competitor-derived ideas do not fill the candidate pool or
 competitors are not configured. Their results are labeled as secondary
 provider evidence, never as competitor evidence.
 
-The final gate requires RITZZ-fit `PASS`, editorial `PASS`, no blocking niche
-or inventory reason, no exact/near duplicate, and a `RECOMMENDED` evidence and
-opportunity validation status. `REVIEW` and `FAIL` items are never promoted to
-fill the list. Obvious fixtures, promotional trailer queries, temporary event
+The final gate requires a concrete, specific subject, RITZZ-fit `PASS`,
+editorial `PASS`, no blocking niche or inventory reason, no exact/near
+duplicate, and a `RECOMMENDED` evidence and opportunity validation status.
+Eligible candidates are diversified across curiosity families where the
+evidence supports a mix. `REVIEW` and `FAIL` items are never promoted to fill
+the list. Obvious fixtures, promotional trailer queries, temporary event
 terms, and ambiguous bare entities are held or rejected before editorial model
 scoring; a supported related question may independently qualify as an
-explanatory story.
+explanatory story. Human approval remains mandatory; discovery does not select
+or publish a topic.
 
 If fewer than four candidates pass, the run stops before topic approval and
 reports the request, provider capabilities, per-source raw/unique/duplicate

@@ -101,6 +101,10 @@ class OpportunityCandidate(BaseModel):
     competition_saturation_assessment: str | None = None
     ritzz_differentiation_angle: str | None = None
     observed_pattern: str | None = None
+    concrete_subject: str | None = None
+    subject_evidence_refs: list[str] = Field(default_factory=list)
+    originality_reason: str | None = None
+    curiosity_family: str | None = None
     ritzz_fit: RitzzFitResult | None = None
     ritzz_learning_signals: dict = Field(default_factory=dict)
 

@@ -17,6 +17,7 @@ from modules.topic_intelligence.market_intelligence import (
     CompetitorTopicPattern,
     MarketIntelligenceReport,
     build_market_intelligence_report,
+    competitor_evidence_for_video,
     normalize_outlier,
 )
 from modules.topic_intelligence.models import (
@@ -70,7 +71,12 @@ def _video(
     return normalize_outlier(record)
 
 
-def _generation_batch(topic="Why Did Humans Stop Sleeping in Two Shifts?"):
+def _generation_batch(
+    topic="Why Did Humans Stop Sleeping in Two Shifts?",
+    *,
+    concrete_subject="two shifts",
+    subject_evidence_ids=None,
+):
     return CompetitorOpportunityBatch(
         patterns=[CompetitorPatternProposal(
             observed_pattern="Historical everyday-life practices reveal how work, light, and social routines shaped sleep.",
@@ -84,9 +90,13 @@ def _generation_batch(topic="Why Did Humans Stop Sleeping in Two Shifts?"):
         opportunities=[OriginalTopicProposal(
             pattern_index=0,
             topic=topic,
+            concrete_subject=concrete_subject,
+            subject_evidence_ids=subject_evidence_ids or ["video-a"],
             angle="Explain how artificial light, work schedules, and changing homes reshaped sleep routines.",
             story_type="HISTORY",
+            curiosity_family="history_mystery",
             differentiation_angle="Focus on the historical forces that changed sleep rather than retelling either competitor video.",
+            originality_reason="The story explains the documented shift in sleep routines rather than restating either source title.",
             why_interesting="A familiar nightly routine has a surprising history.",
         )],
     )
@@ -130,6 +140,9 @@ def test_original_topics_require_repeated_success_across_multiple_channels():
     ]
     assert candidates[0].topic == "Why Did Humans Stop Sleeping in Two Shifts?"
     assert candidates[0].ritzz_differentiation_angle
+    assert candidates[0].concrete_subject == "two shifts"
+    assert candidates[0].subject_evidence_refs == ["video-a"]
+    assert candidates[0].originality_reason
     assert len(candidates[0].competitor_evidence) == 2
     assert {
         item.channel_group for item in candidates[0].competitor_evidence
@@ -137,11 +150,14 @@ def test_original_topics_require_repeated_success_across_multiple_channels():
     supplied = json.loads(client.responses.inputs[0]["input"][1]["content"])
     assert {item["evidence_id"] for item in supplied} == {"video-a", "video-b"}
     assert diagnostics["successful_outlier_videos"] == 2
+    assert patterns[0].signal_weight == 1.0
+    assert candidates[0].raw_evidence["competitor_signal_weight"] == 1.0
 
 
 def test_single_competitor_video_can_seed_a_low_confidence_topic():
     batch = _generation_batch()
     batch.patterns[0].evidence_ids = ["video-a"]
+    batch.opportunities[0].subject_evidence_ids = ["video-a"]
     report = MarketIntelligenceReport(
         query="history curiosity",
         retrieved_at="2026-09-30T00:00:00+00:00",
@@ -188,6 +204,69 @@ def test_competitor_title_copy_is_rejected():
 
     assert candidates == []
     assert diagnostics["rejected_copied_angles"] == 1
+
+
+def test_competitor_title_paraphrase_is_rejected_as_near_duplicate():
+    report = MarketIntelligenceReport(
+        query="history curiosity",
+        retrieved_at="2026-09-30T00:00:00+00:00",
+        outliers=[
+            _video("video-a", "channel-a", "Why Ancient People Slept in Two Shifts", score=4),
+            _video("video-b", "channel-b", "The Strange Way Medieval People Slept", score=5),
+        ],
+    )
+    batch = _generation_batch(
+        "Why Ancient People Slept in Two Shifts, Not One",
+    )
+
+    candidates, _, diagnostics = CompetitorOpportunityGenerator(
+        client=FakeGeneratorClient(batch)
+    ).generate(report)
+
+    assert candidates == []
+    assert diagnostics["candidate_rejections"][0]["code"] == "NEAR_DUPLICATE"
+
+
+def test_broad_essay_premise_is_rejected_instead_of_becoming_a_topic():
+    report = MarketIntelligenceReport(
+        query="history curiosity",
+        retrieved_at="2026-09-30T00:00:00+00:00",
+        outliers=[
+            _video("video-a", "channel-a", "Why Ancient People Slept in Two Shifts", score=4),
+            _video("video-b", "channel-b", "The Strange Way Medieval People Slept", score=5),
+        ],
+    )
+    batch = _generation_batch(
+        "Why Some Big Questions in History Still Have No Clean Answer"
+    )
+
+    candidates, _, diagnostics = CompetitorOpportunityGenerator(
+        client=FakeGeneratorClient(batch)
+    ).generate(report)
+
+    assert candidates == []
+    assert diagnostics["candidate_rejections"][0]["code"] == "TOO_ABSTRACT"
+    assert "specific subject" in diagnostics["candidate_rejections"][0]["reason"]
+
+
+def test_topic_only_and_emerging_signals_receive_lower_weight_than_format():
+    generator = CompetitorOpportunityGenerator(client=FakeGeneratorClient(_generation_batch()))
+
+    def extract_weight(group):
+        report = MarketIntelligenceReport(
+            query="history curiosity",
+            retrieved_at="2026-09-30T00:00:00+00:00",
+            outliers=[
+                _video("video-a", "channel-a", "Why Ancient People Slept in Two Shifts", score=4, group=group),
+                _video("video-b", "channel-b", "The Strange Way Medieval People Slept", score=5, group=group),
+            ],
+        )
+        _, patterns, _ = generator.generate(report)
+        return patterns[0].signal_weight
+
+    assert extract_weight("format_competitors") == 1.0
+    assert extract_weight("emerging_format") == 0.7
+    assert extract_weight("topic_competitors") == 0.5
 
 
 def test_single_channel_pattern_is_retained_with_low_confidence():
@@ -691,19 +770,11 @@ def test_keyword_provider_error_is_optional_for_competitor_candidate_generation(
 
         def enrich_topic_demand(self, topic: str) -> TopicDemandEnrichment:
             _ = topic
-            return {
-                "available": False,
-                "metrics": {},
-                "related_keywords": [],
-                "operation": {
-                    "source": "keyword_research_enrichment",
-                    "tool": "vidiq_keyword_research",
-                    "status": "failed",
-                    "error_type": "PROVIDER_ERROR",
-                    "message": "vidIQ MCP tool execution failed.",
-                    "fallback_behavior": "Keep competitor evidence and leave demand unavailable.",
-                },
-            }
+            raise ProviderUnavailableError(
+                "vidIQ keyword research is temporarily unavailable.",
+                error_type="TOOL_TIMEOUT",
+                tool="vidiq_keyword_research",
+            )
 
         def discover_pipeline_candidates(
             self,
@@ -737,7 +808,7 @@ def test_keyword_provider_error_is_optional_for_competitor_candidate_generation(
         ) -> tuple[
             list[OpportunityCandidate],
             list[CompetitorTopicPattern],
-            dict[str, int],
+            dict[str, Any],
         ]:
             _ = (_report, candidate_limit)
             candidate = OpportunityCandidate(
@@ -747,6 +818,26 @@ def test_keyword_provider_error_is_optional_for_competitor_candidate_generation(
                 discovery_sources=["competitor-topic-pattern"],
                 ritzz_differentiation_angle="Explain the historical shift in sleep routines.",
                 observed_pattern="Historical changes reshaped everyday sleep routines.",
+                concrete_subject="two shifts",
+                subject_evidence_refs=["video-a"],
+                originality_reason="Explain why sleep schedules changed rather than reciting source titles.",
+                curiosity_family="history_mystery",
+                raw_evidence={
+                    "subject_evidence": [{
+                        "evidence_id": "video-a",
+                        "title": report.outliers[0].title,
+                        "topic": report.outliers[0].topic,
+                        "tags": report.outliers[0].tags,
+                        "topics": report.outliers[0].topics,
+                    }],
+                },
+                competitor_evidence=[
+                    competitor_evidence_for_video(
+                        report.outliers[0],
+                        "vidIQ MCP competitor outliers",
+                        report.retrieved_at,
+                    )
+                ],
             )
             pattern = CompetitorTopicPattern(
                 topic="How did past routines shape sleep?",

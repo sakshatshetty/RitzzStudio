@@ -3,6 +3,7 @@
 import json
 import re
 from difflib import SequenceMatcher
+from typing import Any
 
 from openai import OpenAI
 from pydantic import BaseModel, Field
@@ -16,7 +17,11 @@ from modules.topic_intelligence.market_intelligence import (
     competitor_evidence_for_video,
     is_successful_outlier_video,
 )
-from modules.topic_intelligence.models import OpportunityCandidate, StoryType
+from modules.topic_intelligence.models import (
+    OpportunityCandidate,
+    RitzzFitResult,
+    StoryType,
+)
 
 _STOP_WORDS = {
     "a", "an", "and", "are", "did", "do", "does", "for", "how", "in", "is",
@@ -38,9 +43,13 @@ class CompetitorPatternProposal(BaseModel):
 class OriginalTopicProposal(BaseModel):
     pattern_index: int = Field(ge=0)
     topic: str = Field(min_length=12)
+    concrete_subject: str = Field(min_length=3)
+    subject_evidence_ids: list[str] = Field(min_length=1)
     angle: str = Field(min_length=12)
     story_type: StoryType = "OTHER"
+    curiosity_family: str = Field(min_length=2)
     differentiation_angle: str = Field(min_length=12)
+    originality_reason: str = Field(min_length=12)
     why_interesting: str = Field(min_length=8)
 
 
@@ -52,7 +61,7 @@ class CompetitorOpportunityBatch(BaseModel):
 class CompetitorOpportunityGenerator:
     """Use observed cross-channel patterns to propose, never select, RITZZ topics."""
 
-    prompt_version = "ritzz-competitor-opportunities-v2"
+    prompt_version = "ritzz-competitor-opportunities-v3"
 
     def __init__(self, client=None) -> None:
         self.client = client
@@ -63,7 +72,7 @@ class CompetitorOpportunityGenerator:
         report: MarketIntelligenceReport,
         *,
         candidate_limit: int = 8,
-    ) -> tuple[list[OpportunityCandidate], list[CompetitorTopicPattern], dict[str, int]]:
+    ) -> tuple[list[OpportunityCandidate], list[CompetitorTopicPattern], dict[str, Any]]:
         videos = [
             video for video in report.outliers
             if video.title and is_successful_outlier_video(video, RITZZ_OUTLIER_MIN_SCORE)
@@ -98,6 +107,7 @@ class CompetitorOpportunityGenerator:
             "topic_patterns_extracted": 0,
             "generated_candidates": 0,
             "rejected_copied_angles": 0,
+            "candidate_rejections": [],
         }
         distinct_channels = {
             video.channel_id or video.channel_title
@@ -126,7 +136,7 @@ class CompetitorOpportunityGenerator:
 
         patterns = self._validated_patterns(parsed.patterns, evidence_by_id)
         diagnostics["topic_patterns_extracted"] = len(patterns)
-        candidates, rejected = self._validated_candidates(
+        candidates, rejected, rejection_details = self._validated_candidates(
             parsed.opportunities,
             patterns,
             evidence_by_id,
@@ -135,6 +145,7 @@ class CompetitorOpportunityGenerator:
         )
         diagnostics["generated_candidates"] = len(candidates)
         diagnostics["rejected_copied_angles"] = rejected
+        diagnostics["candidate_rejections"] = rejection_details
         report.topic_patterns = patterns
         report.successful_outlier_count = len(videos)
         return candidates, patterns, diagnostics
@@ -155,14 +166,29 @@ class CompetitorOpportunityGenerator:
             "patterns. A topic competitor must never override RITZZ visual compatibility. "
             "Use configured priority as context, not as a ranking of channels. "
             "Never rank competitors as best or worst. "
-            "Then create no more than " + str(candidate_limit) + " independently framed "
-            "RITZZ topic opportunities from those patterns. Do not copy or paraphrase any "
-            "competitor title. Move to a broader curiosity, mechanism, origin, consequence, "
-            "or surprising comparison and express an original explanatory question. Each "
-            "opportunity must reference one valid pattern index, explain the distinct angle, "
-            "and be suitable for a researchable visual explainer. Never invent demand, "
-            "competition, view counts, or competitor evidence. Return no opportunity when "
-            "the source videos do not support a meaningfully distinct idea."
+            "Use this evidence chain: successful competitor video -> underlying audience "
+            "curiosity -> a concrete subject explicitly present in the supplied video title, "
+            "topic, or tags -> an original RITZZ explanatory angle. Do not jump from an "
+            "abstract pattern directly to a final title. Never invent a subject, event, "
+            "phenomenon, source, or fact. Every opportunity must name one concrete_subject "
+            "and cite subject_evidence_ids containing only supplied evidence IDs whose title, "
+            "topic, or tags explicitly support that subject. The final topic/title itself "
+            "must name that concrete subject and make the question understandable on its own. "
+            "Reject broad essay premises, school-essay topics, generic categories, and titles "
+            "that could describe many unrelated videos. If no evidenced concrete subject "
+            "supports an original idea, return no opportunity. "
+            "Build an internal pool targeting " + str(candidate_limit) + " concrete "
+            "opportunities, not merely four. Reach that target only when the evidence "
+            "supports it; never relax a quality gate to fill the pool. Do not copy or paraphrase competitor titles, "
+            "and do not reuse the same subject with a trivial wording change. Include a "
+            "specific curiosity_family, original angle, and originality_reason explaining "
+            "the substantive difference from cited videos. Format competitors are the primary "
+            "signal (weight 1.0); emerging-format channels are early signals (weight 0.7); "
+            "topic competitors are secondary subject signals (weight 0.5). Format competitors "
+            "inform storytelling/visual opportunities, not factual truth. Build diverse ideas "
+            "across curiosity families. Favor subjects that can be explained with static "
+            "illustrations, objects, maps, diagrams, or timelines. Never invent demand, "
+            "competition, view counts, or competitor evidence."
         )
 
     @staticmethod
@@ -214,6 +240,7 @@ class CompetitorOpportunityGenerator:
                 subject_entities=proposal.subject_entities,
                 why_interesting=proposal.why_interesting,
                 evidence_refs=evidence_ids,
+                signal_weight=_competitor_signal_weight(videos),
             ))
         return patterns
 
@@ -224,28 +251,72 @@ class CompetitorOpportunityGenerator:
         evidence_by_id: dict[str, OutlierVideo],
         candidate_limit: int,
         collected_at: str,
-    ) -> tuple[list[OpportunityCandidate], int]:
+    ) -> tuple[list[OpportunityCandidate], int, list[dict[str, str]]]:
         candidates = []
         rejected_copies = 0
         seen_topics: set[str] = set()
+        rejection_details: list[dict[str, str]] = []
         for proposal_index, proposal in enumerate(proposals):
             if len(candidates) >= candidate_limit:
                 break
             if not 0 <= proposal.pattern_index < len(patterns):
+                rejection_details.append({
+                    "topic": proposal.topic,
+                    "code": "OTHER_HARD_FILTER",
+                    "reason": "Proposal referenced a pattern that did not pass evidence validation.",
+                })
                 continue
             pattern = patterns[proposal.pattern_index]
             topic = proposal.topic.strip()
             topic_key = _normalized_topic(topic)
             if not topic_key or topic_key in seen_topics:
+                rejection_details.append({
+                    "topic": topic,
+                    "code": "DUPLICATE",
+                    "reason": "Topic was empty or duplicated an earlier generated candidate.",
+                })
                 continue
             supporting_videos = [
                 evidence_by_id[video_id]
                 for video_id in pattern.evidence_refs
                 if video_id in evidence_by_id
             ]
+            subject_evidence_ids = list(dict.fromkeys(proposal.subject_evidence_ids))
+            if not subject_evidence_ids or any(
+                evidence_id not in pattern.evidence_refs
+                or evidence_id not in evidence_by_id
+                for evidence_id in subject_evidence_ids
+            ):
+                rejection_details.append({
+                    "topic": topic,
+                    "code": "TOO_ABSTRACT",
+                    "reason": "Concrete subject citations were missing or outside the selected pattern evidence.",
+                })
+                continue
+            subject_sources = [
+                evidence_by_id[evidence_id]
+                for evidence_id in subject_evidence_ids
+            ]
+            subject_reason = _concrete_subject_issue(
+                topic,
+                proposal.concrete_subject,
+                subject_sources,
+            )
+            if subject_reason:
+                rejection_details.append({
+                    "topic": topic,
+                    "code": "TOO_ABSTRACT",
+                    "reason": subject_reason,
+                })
+                continue
             titles = [video.title for video in supporting_videos if video.title]
             if any(_is_title_copy(topic, title) for title in titles):
                 rejected_copies += 1
+                rejection_details.append({
+                    "topic": topic,
+                    "code": "NEAR_DUPLICATE",
+                    "reason": "Candidate title is too similar to a cited competitor title.",
+                })
                 continue
             seen_topics.add(topic_key)
             competitor_evidence = [
@@ -271,18 +342,177 @@ class CompetitorOpportunityGenerator:
                 competitor_topic_patterns=[pattern],
                 ritzz_differentiation_angle=proposal.differentiation_angle,
                 observed_pattern=pattern.observed_pattern,
+                concrete_subject=proposal.concrete_subject.strip(),
+                subject_evidence_refs=subject_evidence_ids,
+                originality_reason=proposal.originality_reason.strip(),
+                curiosity_family=proposal.curiosity_family.strip().casefold(),
                 raw_evidence={
                     "pattern_index": proposal.pattern_index,
                     "pattern": pattern.model_dump(mode="json"),
                     "supporting_video_ids": pattern.video_ids,
+                    "subject_evidence_ids": subject_evidence_ids,
+                    "subject_evidence": [
+                        {
+                            "evidence_id": evidence_id,
+                            "title": video.title,
+                            "topic": video.topic,
+                            "tags": video.tags,
+                            "topics": video.topics,
+                        }
+                        for evidence_id, video in zip(
+                            subject_evidence_ids,
+                            subject_sources,
+                            strict=True,
+                        )
+                    ],
+                    "competitor_signal_weight": pattern.signal_weight,
+                    "originality_reason": proposal.originality_reason.strip(),
                 },
-                ritzz_fit={
-                    "fit_status": "REVIEW",
-                    "story_type": proposal.story_type,
-                    "reason": "Competitor-derived idea awaits independent RITZZ-fit validation.",
-                },
+                ritzz_fit=RitzzFitResult(
+                    fit_status="REVIEW",
+                    story_type=proposal.story_type,
+                    reason="Competitor-derived idea awaits independent RITZZ-fit validation.",
+                ),
             ))
-        return candidates, rejected_copies
+        return candidates, rejected_copies, rejection_details
+
+
+_ABSTRACT_SUBJECTS = {
+    "big questions",
+    "history",
+    "science",
+    "science mysteries",
+    "mysteries",
+    "human behavior",
+    "technology",
+    "ancient civilizations",
+    "strange things",
+    "global problems",
+    "data",
+}
+
+_ABSTRACT_TITLE_RE = re.compile(
+    r"\b(?:some|many|certain|various|different)\b.{0,90}\b"
+    r"(?:questions?|mysteries|problems?|things|topics|phenomena|events)\b"
+    r"|\b(?:big|major|unanswered)\s+(?:questions?|mysteries|problems?)\b"
+    r"|\b(?:science|history|technology|humanity)\s+"
+    r"(?:questions?|mysteries|problems?)\b"
+    r"|\b(?:local|global|regional)\s+(?:disaster|problem|event)\b",
+    re.IGNORECASE,
+)
+_SPECIFICITY_FILLER_WORDS = {
+    "big", "certain", "different", "event", "events", "explainer", "explainers",
+    "history", "idea", "ideas", "many", "mysteries", "mystery", "phenomena",
+    "phenomenon", "problem", "problems", "question", "questions", "science",
+    "some", "specified", "strong", "technology", "thing", "things", "topic",
+    "topics", "under", "various",
+}
+
+
+def _competitor_signal_weight(videos: list[OutlierVideo]) -> float:
+    groups = {video.channel_group for video in videos}
+    if "format_competitors" in groups or "core" in groups:
+        return 1.0
+    if "emerging_format" in groups or "emerging" in groups:
+        return 0.7
+    return 0.5
+
+
+def _concrete_subject_issue(
+    topic: str,
+    subject: str,
+    evidence: list[OutlierVideo],
+) -> str | None:
+    if _ABSTRACT_TITLE_RE.search(topic):
+        return "The title is a broad abstract premise and does not identify a specific subject."
+    subject_key = _normalized_topic(subject)
+    title_key = _normalized_topic(topic)
+    if not subject_key or subject_key in _ABSTRACT_SUBJECTS:
+        return "The proposed subject is a broad category rather than a concrete object, event, place, person, or phenomenon."
+    subject_tokens = subject_key.split()
+    if len(subject_tokens) < 2 and len(subject_tokens[0]) < 5:
+        return "The proposed subject is too broad to identify a specific story."
+    if not all(token in title_key.split() for token in subject_tokens):
+        return "The final title does not explicitly name its proposed concrete subject."
+    for video in evidence:
+        source_text = " ".join([
+            video.title,
+            video.topic or "",
+            *video.tags,
+            *video.topics,
+        ])
+        if subject_key in _normalized_topic(source_text):
+            break
+    else:
+        return "The cited provider evidence does not explicitly identify the proposed concrete subject."
+    return None
+
+
+def candidate_specificity_issue(
+    candidate: OpportunityCandidate,
+) -> tuple[str, str] | None:
+    """Reject abstract pipeline titles and verify competitor subjects against evidence."""
+    if _ABSTRACT_TITLE_RE.search(candidate.topic):
+        return (
+            "TOO_ABSTRACT",
+            "Title describes a broad category or essay premise instead of an identifiable subject.",
+        )
+    meaningful_title_terms = [
+        token
+        for token in _normalized_topic(candidate.topic).split()
+        if not token.isdigit() and token not in _SPECIFICITY_FILLER_WORDS
+    ]
+    if len(meaningful_title_terms) < 2:
+        return (
+            "TOO_ABSTRACT",
+            "Title lacks enough identifying subject detail to distinguish it from a generic essay topic.",
+        )
+    if "competitor-topic-pattern" not in candidate.discovery_sources:
+        return None
+    subject_records = candidate.raw_evidence.get("subject_evidence", [])
+    records_by_id = {
+        str(item.get("evidence_id")): item
+        for item in subject_records
+        if isinstance(item, dict) and item.get("evidence_id") is not None
+    } if isinstance(subject_records, list) else {}
+    cited = [
+        records_by_id[evidence_id]
+        for evidence_id in candidate.subject_evidence_refs
+        if evidence_id in records_by_id
+    ]
+    if len(cited) != len(candidate.subject_evidence_refs):
+        return (
+            "TOO_ABSTRACT",
+            "Concrete subject is missing valid competitor-video provenance.",
+        )
+    def string_values(value: object) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return [item for item in value if isinstance(item, str)]
+
+    video_sources = [
+        OutlierVideo(
+            video_id=str(item.get("evidence_id") or ""),
+            title=str(item.get("title") or ""),
+            topic=str(item.get("topic") or ""),
+            tags=string_values(item.get("tags")),
+            topics=string_values(item.get("topics")),
+        )
+        for item in cited
+    ]
+    reason = _concrete_subject_issue(
+        candidate.topic,
+        candidate.concrete_subject or "",
+        video_sources,
+    )
+    if reason:
+        return "TOO_ABSTRACT", reason
+    if not candidate.originality_reason:
+        return (
+            "OTHER_HARD_FILTER",
+            "Candidate lacks an explicit explanation of its substantive originality.",
+        )
+    return None
 
 
 def _normalized_topic(topic: str) -> str:
@@ -302,4 +532,4 @@ def _is_title_copy(candidate_topic: str, competitor_title: str) -> bool:
     title_tokens = set(title_key.split())
     jaccard = len(candidate_tokens & title_tokens) / len(candidate_tokens | title_tokens)
     similarity = SequenceMatcher(None, candidate_key, title_key).ratio()
-    return jaccard >= 0.7 or similarity >= 0.82
+    return jaccard >= 0.55 or similarity >= 0.82

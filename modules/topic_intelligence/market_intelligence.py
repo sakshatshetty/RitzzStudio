@@ -14,7 +14,7 @@ from config.settings import RITZZ_OUTLIER_MIN_SCORE
 class CompetitorEvidence(BaseModel):
     channel: dict[str, str | int | float | None] = Field(default_factory=dict)
     channel_group: str | None = None
-    video: dict[str, str | int | float | None] = Field(default_factory=dict)
+    video: dict[str, Any] = Field(default_factory=dict)
     topic: str | None = None
     observed_performance: dict[str, int | float] = Field(default_factory=dict)
     baseline: dict[str, int | float | str] = Field(default_factory=dict)
@@ -38,6 +38,7 @@ class CompetitorTopicPattern(BaseModel):
     subject_entities: list[str] = Field(default_factory=list)
     why_interesting: str | None = None
     evidence_refs: list[str] = Field(default_factory=list)
+    signal_weight: float = Field(default=0.5, ge=0, le=1)
 
 
 class OutlierVideo(BaseModel):
@@ -325,6 +326,8 @@ def competitor_evidence_for_video(video: OutlierVideo, source: str, collected_at
             "title": video.title or None,
             "published_at": video.published_at,
             "duration": video.duration,
+            "tags": video.tags,
+            "topics": video.topics,
         }.items()
         if value is not None
     }

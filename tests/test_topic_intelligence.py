@@ -736,7 +736,15 @@ def test_engine_returns_at_most_four_distinct_candidates(tmp_path):
         name = "fixture"
 
         def discover(self, request):
-            return [candidate(f"Topic {index}", search_volume=100 - index) for index in range(6)]
+            topics = [
+                "Why Do Roman Roads Last for Centuries?",
+                "How Did Ancient Maps Show Sea Monsters?",
+                "Why Do Bats Navigate in Darkness?",
+                "How Can Roman Concrete Repair Itself?",
+                "Why Do Owls Hunt at Night?",
+                "How Did the Antikythera Mechanism Predict Eclipses?",
+            ]
+            return [candidate(topic, search_volume=100 - index) for index, topic in enumerate(topics)]
 
     report = TopicIntelligenceEngine(
         provider=ManyProvider(),
@@ -763,10 +771,15 @@ def test_standard_topic_discovery_does_not_initialize_competitor_openai_client(
         name = "fixture"
 
         def discover(self, request):
-            return [
-                candidate(f"Why does topic {index} happen?", search_volume=100 - index)
-                for index in range(6)
+            topics = [
+                "Why Do Roman Roads Last for Centuries?",
+                "How Did Ancient Maps Show Sea Monsters?",
+                "Why Do Bats Navigate in Darkness?",
+                "How Can Roman Concrete Repair Itself?",
+                "Why Do Owls Hunt at Night?",
+                "How Did the Antikythera Mechanism Predict Eclipses?",
             ]
+            return [candidate(topic, search_volume=100 - index) for index, topic in enumerate(topics)]
 
     engine = TopicIntelligenceEngine(
         provider=ManyProvider(),
@@ -875,8 +888,15 @@ def test_pipeline_discovery_reports_candidate_stage_counts_and_keeps_exactly_fou
     class PipelineProvider(FakeProvider):
         def discover_pipeline_candidates(self, request):
             items = [
-                candidate(f"Curiosity question {index}", search_volume=100 - index)
-                for index in range(6)
+                candidate(topic, search_volume=100 - index)
+                for index, topic in enumerate((
+                    "Why Do Roman Roads Last for Centuries?",
+                    "How Did Ancient Maps Show Sea Monsters?",
+                    "Why Do Bats Navigate in Darkness?",
+                    "How Can Roman Concrete Repair Itself?",
+                    "Why Do Owls Hunt at Night?",
+                    "How Did the Antikythera Mechanism Predict Eclipses?",
+                ))
             ]
             for item in items:
                 item.discovery_sources = ["rising"]
@@ -916,9 +936,9 @@ def test_pipeline_does_not_promote_editorial_review_or_fail_candidates(tmp_path)
     class MixedEditorialEvaluator(FakeEditorialEvaluator):
         def assess(self, candidates):
             statuses = {
-                "Strong explainer topic": "PASS",
-                "Under-specified topic": "REVIEW",
-                "Movie recap": "FAIL",
+                "Why Do Roman Roads Last for Centuries?": "PASS",
+                "How Did Ancient Maps Show Sea Monsters?": "REVIEW",
+                "Paradise Movie Recap": "FAIL",
             }
             return [
                 CandidateEditorialAssessment(
@@ -941,7 +961,11 @@ def test_pipeline_does_not_promote_editorial_review_or_fail_candidates(tmp_path)
         def discover_pipeline_candidates(self, request):
             return [
                 candidate(topic, search_volume=100)
-                for topic in ("Strong explainer topic", "Under-specified topic", "Movie recap")
+                for topic in (
+                    "Why Do Roman Roads Last for Centuries?",
+                    "How Did Ancient Maps Show Sea Monsters?",
+                    "Paradise Movie Recap",
+                )
             ], {"source_counts": {"trending": {"raw": 3, "unique": 3}}}, None
 
     report = TopicIntelligenceEngine(
@@ -950,11 +974,101 @@ def test_pipeline_does_not_promote_editorial_review_or_fail_candidates(tmp_path)
         editorial_evaluator=MixedEditorialEvaluator(),
     ).discover(TopicDiscoveryRequest(pipeline_topic_gate=True))
 
-    assert [item.topic for item in report.candidates] == ["Strong explainer topic"]
+    assert [item.topic for item in report.candidates] == [
+        "Why Do Roman Roads Last for Centuries?"
+    ]
     assert report.candidates[0].editorial_status == "PASS"
     exclusions = {item["topic"]: item["editorial_status"] for item in report.discovery_diagnostics["candidate_exclusions"]}
-    assert exclusions["Under-specified topic"] == "REVIEW"
-    assert exclusions["Movie recap"] == "FAIL"
+    assert exclusions["How Did Ancient Maps Show Sea Monsters?"] == "REVIEW"
+    assert exclusions["Paradise Movie Recap"] == "FAIL"
+
+
+def test_abstract_essay_topics_are_excluded_with_specificity_code(tmp_path):
+    class BroadTopicProvider(FakeProvider):
+        def discover(self, request):
+            return [
+                candidate(
+                    "Why Some Big Questions in History Still Have No Clean Answer"
+                )
+            ]
+
+    report = TopicIntelligenceEngine(
+        provider=BroadTopicProvider(),
+        cache_dir=tmp_path,
+        editorial_evaluator=FakeEditorialEvaluator(),
+    ).discover(TopicDiscoveryRequest(pipeline_topic_gate=True))
+
+    assert report.candidates == []
+    exclusion = report.discovery_diagnostics["candidate_exclusions"][0]
+    assert "TOO_ABSTRACT" in exclusion["rejection_codes"]
+    assert any(
+        reason.startswith("TOO_ABSTRACT:")
+        for reason in exclusion["filter_reasons"]
+    )
+
+
+def test_primary_competitor_provider_error_stops_secondary_discovery(tmp_path):
+    class BrokenPrimaryProvider(FakeProvider):
+        def __init__(self):
+            super().__init__()
+            self.secondary_calls = 0
+
+        def discover_competitor_research(self, query, limit=10):
+            raise ProviderUnavailableError(
+                "vidIQ competitor research is unavailable.",
+                error_type="INSUFFICIENT_CREDITS",
+            )
+
+        def discover_pipeline_candidates(self, request, **kwargs):
+            self.secondary_calls += 1
+            return [], {}, None
+
+    provider = BrokenPrimaryProvider()
+    report = TopicIntelligenceEngine(
+        provider=provider,
+        cache_dir=tmp_path,
+        editorial_evaluator=FakeEditorialEvaluator(),
+    ).discover(TopicDiscoveryRequest(pipeline_topic_gate=True))
+
+    assert provider.secondary_calls == 0
+    assert report.discovery_diagnostics["primary_competitor_research_status"] == "PROVIDER_ERROR"
+    assert any(
+        operation["source"] == "secondary_topic_discovery"
+        and operation["status"] == "blocked"
+        and operation["error_type"] == "PROVIDER_ERROR"
+        for operation in report.discovery_diagnostics["operations"]
+    )
+
+
+def test_pipeline_final_candidates_prefer_distinct_curiosity_families(tmp_path):
+    class DiverseProvider(FakeProvider):
+        def discover_pipeline_candidates(self, request):
+            topics = [
+                ("Why Do Roman Roads Last for Centuries?", "history_mystery"),
+                ("How Did the Mary Celeste Disappear?", "history_mystery"),
+                ("Why Do Bats Navigate in Darkness?", "science"),
+                ("What Is Hidden Beneath Antarctica?", "geography"),
+                ("How Did the Antikythera Mechanism Predict Eclipses?", "technology"),
+            ]
+            items = [
+                candidate(topic, search_volume=100 - index)
+                for index, (topic, _) in enumerate(topics)
+            ]
+            for item, (_, family) in zip(items, topics, strict=True):
+                item.curiosity_family = family
+            return items, {"source_counts": {}}, None
+
+    report = TopicIntelligenceEngine(
+        provider=DiverseProvider(),
+        cache_dir=tmp_path,
+        editorial_evaluator=FakeEditorialEvaluator(),
+    ).discover(TopicDiscoveryRequest(pipeline_topic_gate=True))
+
+    assert len(report.candidates) == 4
+    assert len(set(report.discovery_diagnostics["final_candidate_families"])) == 4
+    assert "How Did the Mary Celeste Disappear?" not in {
+        item.topic for item in report.candidates
+    }
 
 
 def test_ritzz_fit_prefilter_rejects_fixtures_and_ambiguous_entities():
@@ -1514,7 +1628,7 @@ class FakeProvider:
 
     def discover(self, request):
         self.calls += 1
-        return [candidate("Test topic", search_volume=55)]
+        return [candidate("Why do cats purr?", search_volume=55)]
 
 
 class FakeEditorialEvaluator:
@@ -1664,7 +1778,7 @@ def test_editorial_assessment_failure_preserves_provider_candidate(tmp_path):
         cache_dir=tmp_path,
         editorial_evaluator=BrokenAssessment(),
     ).discover()
-    assert report.candidates[0].topic == "Test topic"
+    assert report.candidates[0].topic == "Why do cats purr?"
     assert report.candidates[0].editorial_scores == {}
     assert any("editorial scoring was unavailable" in warning for warning in report.warnings)
 

@@ -420,6 +420,20 @@ configured provider lacks channel-scoped video performance capabilities, the
 report records `competitor_topic_performance_available = false` and does not
 invent competitor metrics.
 
+The topic generator must select a concrete subject explicitly grounded in
+the cited competitor video's title, topic, or tags before creating an original
+RITZZ angle. Abstract essay premises, unsupported subjects, and near-copy
+titles are rejected with `TOO_ABSTRACT` or `NEAR_DUPLICATE` reasons. Candidate
+records retain the selected subject, provider evidence references, originality
+explanation, curiosity family, and competitor-group signal weight. Format
+competitors are primary (1.0), emerging-format channels are early signals
+(0.7), and topic competitors are secondary subject signals (0.5). Secondary
+discovery cannot mask a primary competitor-provider failure; optional keyword
+enrichment failures remain `PROVIDER_ERROR` diagnostics and do not invalidate
+competitor-derived candidates. Final four-candidate selection prefers distinct
+curiosity families without lowering evidence, inventory, RITZZ-fit, or
+editorial gates. Human approval remains required.
+
 Competitor diagnostics expose configured, resolved, queried, and researched
 channel counts, video inspections, and successful outliers separately for
 each group. Provider errors are not counted as successful research.

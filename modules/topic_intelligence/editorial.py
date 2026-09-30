@@ -110,7 +110,11 @@ class EditorialEvaluator:
             "topics, or political commentary without a curiosity-explainer angle. "
             "Mark generic movie/TV reviews, recaps, reaction videos, and broad news topics FAIL unless the topic is explicitly reframed around a factual curiosity question. "
             "For every candidate also provide a proposed YouTube title, a distinct explanatory angle, "
-            "and one concise reason it is interesting. Explain each judgment briefly and list exclusion concerns."
+            "and one concise reason it is interesting. Reject or mark REVIEW any abstract essay premise "
+            "that does not identify an exact subject, event, place, object, person, or phenomenon. "
+            "For competitor-derived candidates, check the concrete subject and subject evidence references; "
+            "do not treat competitor success as proof of factual accuracy or originality. "
+            "Explain each judgment briefly and list exclusion concerns."
         )
 
     @staticmethod
@@ -120,6 +124,11 @@ class EditorialEvaluator:
             rows.append({
                 "candidate_id": candidate.candidate_id,
                 "topic": candidate.topic,
+                "angle": candidate.angle,
+                "concrete_subject": candidate.concrete_subject,
+                "subject_evidence_refs": candidate.subject_evidence_refs,
+                "originality_reason": candidate.originality_reason,
+                "curiosity_family": candidate.curiosity_family,
                 "primary_keyword": candidate.primary_keyword,
                 "related_keywords": candidate.related_keywords,
                 "related_questions": candidate.related_questions,

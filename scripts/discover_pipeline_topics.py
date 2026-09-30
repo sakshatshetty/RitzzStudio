@@ -74,6 +74,10 @@ def _candidate_markdown(index: int, candidate) -> str:
         f"- Editorial fit: `{candidate.editorial_status or 'REVIEW'}`\n"
         f"- Evidence status: `{candidate.validation_status}`\n"
         f"- Explainer angle: {candidate.angle or 'Not provided.'}\n"
+        f"- Concrete subject: {candidate.concrete_subject or 'Not separately recorded.'}\n"
+        f"- Subject evidence references: "
+        f"{', '.join(candidate.subject_evidence_refs) or 'not recorded'}\n"
+        f"- Curiosity family: {candidate.curiosity_family or 'not classified'}\n"
         f"- Why it is interesting: {candidate.why_interesting or 'Not provided.'}\n"
         f"- Current vidIQ demand/trend signals available: "
         f"`{str(candidate.current_vidiq_demand_available).lower()}`\n"
@@ -82,6 +86,7 @@ def _candidate_markdown(index: int, candidate) -> str:
         f"- Competition/saturation interpretation: "
         f"{candidate.competition_saturation_assessment or 'Not assessed.'}\n"
         f"- RITZZ differentiation angle: {candidate.ritzz_differentiation_angle or 'Not provided.'}\n"
+        f"- Why this is not a copy: {candidate.originality_reason or 'Not recorded.'}\n"
         f"- RITZZ fit: `{fit.fit_status if fit else 'REVIEW'}` "
         f"({fit.reason if fit else 'Not assessed.'})\n"
         f"- RITZZ static visual-format fit: "
@@ -222,6 +227,7 @@ def main() -> int:
         for stage in (
             "raw_candidates",
             "after_normalization",
+            "after_specificity_filter",
             "after_inventory_filter",
             "after_niche_filter",
             "after_ritzz_fit_prefilter",
@@ -242,16 +248,34 @@ def main() -> int:
             )
             diagnostic_markdown.append(
                 f"- **{exclusion.get('topic', 'Unknown')}** "
+                f"[{', '.join(exclusion.get('rejection_codes', [])) or 'OTHER_HARD_FILTER'}] "
                 f"(sources: {', '.join(exclusion.get('sources', [])) or 'unknown'}): "
                 f"{'; '.join(str(reason) for reason in reasons)}"
             )
+        for exclusion in exc.diagnostics.get("candidate_specificity_exclusions", []):
+            diagnostic_markdown.append(
+                f"- **{exclusion.get('topic', 'Unknown')}** "
+                f"[{exclusion.get('code', 'TOO_ABSTRACT')}]: "
+                f"{exclusion.get('reason', 'Candidate lacked a concrete subject.')}"
+            )
+        generation = exc.diagnostics.get("competitor_candidate_generation", {})
+        for rejection in generation.get("candidate_rejections", []):
+            diagnostic_markdown.append(
+                f"- **{rejection.get('topic', 'Unknown')}** "
+                f"[{rejection.get('code', 'OTHER_HARD_FILTER')}]: "
+                f"{rejection.get('reason', 'Rejected during candidate generation.')}"
+            )
         for exclusion in exc.diagnostics.get("inventory_exclusions", []):
             diagnostic_markdown.append(
-                f"- **{exclusion.get('topic', 'Unknown')}** (inventory): {exclusion.get('reason', 'overlap')}"
+                f"- **{exclusion.get('topic', 'Unknown')}** "
+                f"[{exclusion.get('code', 'DUPLICATE')}] (inventory): "
+                f"{exclusion.get('reason', 'overlap')}"
             )
         for exclusion in exc.diagnostics.get("ritzz_fit_exclusions", []):
             diagnostic_markdown.append(
-                f"- **{exclusion.get('topic', 'Unknown')}** (RITZZ fit): {exclusion.get('reason', 'not eligible')}"
+                f"- **{exclusion.get('topic', 'Unknown')}** "
+                f"[{exclusion.get('code', 'NOT_RITZZ_FIT')}] (RITZZ fit): "
+                f"{exclusion.get('reason', 'not eligible')}"
             )
         diagnostic_markdown.extend([
             "",
@@ -281,6 +305,7 @@ def main() -> int:
         "provider": report.provider,
         "request": report.request.model_dump(mode="json"),
         "discovery_notes": discovery_notes,
+        "discovery_diagnostics": report.discovery_diagnostics,
         "candidates": [candidate.model_dump(mode="json") for candidate in candidates],
     }
     candidates_file = output_directory / "topic_candidates.json"

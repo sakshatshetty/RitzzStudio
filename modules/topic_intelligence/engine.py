@@ -1,8 +1,9 @@
 import hashlib
 import json
 import os
+from collections.abc import Callable
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from openai import OpenAIError
 
@@ -16,6 +17,7 @@ from config.settings import (
 )
 from modules.topic_intelligence.competitor_opportunities import (
     CompetitorOpportunityGenerator,
+    candidate_specificity_issue,
 )
 from modules.topic_intelligence.editorial import (
     EditorialEvaluator,
@@ -59,9 +61,17 @@ from modules.topic_intelligence.validation import (
     validate_candidates,
 )
 
-SCORING_VERSION = "ritzz-opportunity-v4"
-VALIDATION_VERSION = "ritzz-topic-validation-v3"
-COMPETITOR_RESEARCH_VERSION = "competitor-topic-performance-v2"
+SCORING_VERSION = "ritzz-opportunity-v5"
+VALIDATION_VERSION = "ritzz-topic-validation-v4"
+COMPETITOR_RESEARCH_VERSION = "competitor-topic-performance-v3"
+PipelineDiscovery = Callable[
+    ...,
+    tuple[
+        list[OpportunityCandidate],
+        dict[str, Any],
+        MarketIntelligenceReport | None,
+    ],
+]
 
 
 def _file_cache_signature(path: Path | None) -> tuple[int, int] | None:
@@ -105,6 +115,92 @@ def _competition_saturation_assessment(candidate: OpportunityCandidate) -> str:
     return assessment
 
 
+def _candidate_rejection_codes(candidate: OpportunityCandidate) -> list[str]:
+    codes = {
+        reason.split(":", 1)[0]
+        for reason in candidate.filter_reasons
+        if reason.split(":", 1)[0] in {
+            "DUPLICATE",
+            "EDITORIAL_FAIL",
+            "LOW_QUALITY",
+            "LOW_VISUAL_FIT",
+            "NEAR_DUPLICATE",
+            "NOT_RITZZ_FIT",
+            "OTHER_HARD_FILTER",
+            "TOO_ABSTRACT",
+        }
+    }
+    if candidate.inventory_status == "DUPLICATE":
+        codes.add("DUPLICATE")
+    if candidate.editorial_status == "FAIL":
+        codes.add("EDITORIAL_FAIL")
+    if candidate.editorial_status == "REVIEW":
+        codes.add("LOW_QUALITY")
+    if candidate.editorial_scores.get("format_fit", 100) < 55:
+        codes.add("LOW_VISUAL_FIT")
+    if candidate.ritzz_fit is not None and candidate.ritzz_fit.fit_status != "PASS":
+        codes.add("NOT_RITZZ_FIT")
+    if any("near-duplicate" in reason.casefold() for reason in candidate.validation_reasons):
+        codes.add("NEAR_DUPLICATE")
+    if candidate.validation_status == "REJECTED":
+        codes.add("LOW_QUALITY")
+    if (
+        candidate.filter_reasons
+        or candidate.validation_status != "RECOMMENDED"
+    ) and not codes:
+        codes.add("OTHER_HARD_FILTER")
+    return sorted(codes)
+
+
+def _candidate_family(candidate: OpportunityCandidate) -> str:
+    if candidate.curiosity_family:
+        return candidate.curiosity_family.casefold()
+    if candidate.ritzz_fit and candidate.ritzz_fit.story_type != "OTHER":
+        return candidate.ritzz_fit.story_type.casefold()
+    text = " ".join((candidate.topic, candidate.angle or "")).casefold()
+    families = {
+        "history_mystery": ("ancient", "lost", "expedition", "archaeology", "historical"),
+        "geography": ("map", "island", "border", "mountain", "ocean", "place"),
+        "science": ("scientist", "physics", "chemical", "species", "signal", "phenomenon"),
+        "technology": ("invention", "machine", "device", "technology", "engineering"),
+        "space": ("space", "planet", "astronaut", "star", "moon"),
+        "human_behavior": ("people", "human", "behavior", "sleep", "memory"),
+    }
+    return next(
+        (family for family, terms in families.items() if any(term in text for term in terms)),
+        "other",
+    )
+
+
+def _candidate_signal_weight(candidate: OpportunityCandidate) -> float:
+    weight = candidate.raw_evidence.get("competitor_signal_weight", 0)
+    return float(weight) if isinstance(weight, (int, float)) else 0.0
+
+
+def _select_diverse_candidates(
+    candidates: list[OpportunityCandidate],
+    limit: int = 4,
+) -> list[OpportunityCandidate]:
+    selected: list[OpportunityCandidate] = []
+    selected_ids: set[str] = set()
+    families: set[str] = set()
+    for candidate in candidates:
+        family = _candidate_family(candidate)
+        if family in families:
+            continue
+        selected.append(candidate)
+        families.add(family)
+        selected_ids.add(candidate.candidate_id)
+        if len(selected) == limit:
+            return selected
+    selected.extend(
+        candidate
+        for candidate in candidates
+        if candidate.candidate_id not in selected_ids
+    )
+    return selected[:limit]
+
+
 class TopicIntelligenceEngine:
     def __init__(
         self,
@@ -127,8 +223,8 @@ class TopicIntelligenceEngine:
     def _discover_from_competitors(
         self,
         request: TopicDiscoveryRequest,
-        primary_research,
-        secondary_discovery,
+        primary_research: Callable[..., MarketIntelligenceReport],
+        secondary_discovery: PipelineDiscovery | None,
     ) -> tuple[list[OpportunityCandidate], dict, MarketIntelligenceReport | None]:
         query = f"{request.niche} educational curiosity explainers"
         diagnostics: dict = {
@@ -156,10 +252,33 @@ class TopicIntelligenceEngine:
                 "source": "configured_competitor_outliers",
                 "tool": exc.tool or "vidIQ MCP",
                 "status": "failed",
-                "error_type": exc.error_type,
+                "error_type": "PROVIDER_ERROR",
+                "provider_error_type": exc.error_type,
                 "message": str(exc),
-                "fallback_behavior": "Try optional secondary discovery if configured competitors exist.",
+                "fallback_behavior": "Stop discovery and expose the primary provider failure.",
             })
+        primary_provider_failures = [
+            operation
+            for operation in competitor_report.operations
+            if operation.get("status") == "failed"
+            and operation.get("source") in {
+                "competitor_outliers",
+                "competitor_tools",
+                "configured_competitor_outliers",
+            }
+        ]
+        diagnostics["primary_competitor_research_status"] = (
+            "PROVIDER_ERROR"
+            if primary_provider_failures
+            else "SUCCESS" if competitor_report.outliers
+            else "NO_RESULTS"
+        )
+        if primary_provider_failures:
+            diagnostics["sources_unavailable"].extend(
+                "competitor_video_research: PROVIDER_ERROR: "
+                f"{operation.get('message', 'Provider call failed.')}"
+                for operation in primary_provider_failures
+            )
 
         candidates: list[OpportunityCandidate] = []
         pattern_count = 0
@@ -169,9 +288,10 @@ class TopicIntelligenceEngine:
             "topic_patterns_extracted": 0,
             "generated_candidates": 0,
             "rejected_copied_angles": 0,
+            "candidate_rejections": [],
         }
         generator = self.competitor_opportunity_generator
-        if competitor_report.outliers:
+        if competitor_report.outliers and not primary_provider_failures:
             if generator is None:
                 generator = CompetitorOpportunityGenerator()
                 self.competitor_opportunity_generator = generator
@@ -210,6 +330,7 @@ class TopicIntelligenceEngine:
             "topic_patterns_extracted": pattern_count,
             "ritzz_candidates_generated": len(candidates),
             "rejected_copied_angles": generation_diagnostics["rejected_copied_angles"],
+            "competitor_candidate_generation": generation_diagnostics,
             "source_counts": {
                 "competitor_outliers": {
                     "raw": generation_diagnostics["videos_inspected"],
@@ -220,7 +341,9 @@ class TopicIntelligenceEngine:
                     "unique": pattern_count,
                 },
                 "competitor_generated_topics": {
-                    "raw": len(candidates) + generation_diagnostics["rejected_copied_angles"],
+                    "raw": len(candidates) + len(
+                        generation_diagnostics.get("candidate_rejections", [])
+                    ),
                     "unique": len(candidates),
                 },
             },
@@ -255,13 +378,36 @@ class TopicIntelligenceEngine:
         if callable(demand_enricher):
             diagnostics["sources_attempted"].append("keyword_research_enrichment")
             for candidate in candidates:
-                enrichment = cast(
-                    TopicDemandEnrichment,
-                    demand_enricher(candidate.topic),
-                )
+                try:
+                    enrichment = cast(
+                        TopicDemandEnrichment,
+                        demand_enricher(candidate.topic),
+                    )
+                except ProviderUnavailableError as exc:
+                    operation = {
+                        "source": "keyword_research_enrichment",
+                        "tool": exc.tool or "keyword research",
+                        "status": "failed",
+                        "error_type": "PROVIDER_ERROR",
+                        "provider_error_type": exc.error_type,
+                        "message": str(exc),
+                        "fallback_behavior": "Retain competitor evidence; demand and competition remain unavailable.",
+                    }
+                    diagnostics["operations"].append(operation)
+                    diagnostics["sources_unavailable"].append(
+                        "keyword_research_enrichment: PROVIDER_ERROR: "
+                        f"{exc}"
+                    )
+                    candidate.raw_evidence["demand_enrichment"] = operation
+                    continue
                 operation = enrichment.get("operation", {})
                 diagnostics["operations"].append(operation)
                 if operation.get("status") in {"failed", "unavailable"}:
+                    if operation.get("status") == "failed":
+                        operation["provider_error_type"] = (
+                            operation.get("error_type") or "UNKNOWN_PROVIDER_ERROR"
+                        )
+                        operation["error_type"] = "PROVIDER_ERROR"
                     diagnostics["sources_unavailable"].append(
                         "keyword_research_enrichment: "
                         f"{operation.get('error_type', 'PROVIDER_ERROR')}: "
@@ -298,6 +444,7 @@ class TopicIntelligenceEngine:
                 for keyword in enrichment.get("related_keywords", []):
                     if keyword.casefold() != candidate.topic.casefold():
                         candidate.related_keywords.append(keyword)
+                candidate.raw_evidence["demand_enrichment"] = dict(operation)
             diagnostics["demand_enriched_candidates"] = demand_enriched
         else:
             diagnostics["demand_enriched_candidates"] = 0
@@ -305,7 +452,17 @@ class TopicIntelligenceEngine:
                 "keyword_research_enrichment: provider does not support optional enrichment."
             )
 
-        if len(candidates) < min(request.limit, 30):
+        if primary_provider_failures:
+            diagnostics["secondary_fallback_attempted"] = False
+            diagnostics["operations"].append({
+                "source": "secondary_topic_discovery",
+                "tool": "secondary discovery",
+                "status": "blocked",
+                "error_type": "PROVIDER_ERROR",
+                "message": "Skipped secondary discovery because primary competitor-video research failed.",
+                "fallback_behavior": "Retry after the primary competitor provider is available.",
+            })
+        elif len(candidates) < min(request.limit, 30):
             diagnostics["secondary_fallback_attempted"] = True
             diagnostics["sources_attempted"].append("secondary_topic_discovery")
             try:
@@ -422,13 +579,19 @@ class TopicIntelligenceEngine:
         if request.pipeline_topic_gate and callable(primary_competitor_research):
             candidates, diagnostics, competitor_report = self._discover_from_competitors(
                 provider_request,
-                primary_competitor_research,
-                pipeline_discovery,
+                cast(
+                    Callable[..., MarketIntelligenceReport],
+                    primary_competitor_research,
+                ),
+                cast(PipelineDiscovery | None, pipeline_discovery),
             )
         else:
             try:
                 if request.pipeline_topic_gate and callable(pipeline_discovery):
-                    candidates, diagnostics, competitor_report = pipeline_discovery(provider_request)
+                    candidates, diagnostics, competitor_report = cast(
+                        PipelineDiscovery,
+                        pipeline_discovery,
+                    )(provider_request)
                 else:
                     candidates = self.provider.discover(provider_request)
                     diagnostics = {
@@ -473,12 +636,14 @@ class TopicIntelligenceEngine:
             if not normalized:
                 duplicate_exclusions.append({
                     "topic": candidate.topic,
+                    "code": "DUPLICATE",
                     "reason": "Topic was empty after normalization.",
                 })
                 continue
             if normalized in seen_topics:
                 duplicate_exclusions.append({
                     "topic": candidate.topic,
+                    "code": "DUPLICATE",
                     "reason": "Exact normalized duplicate of an earlier candidate.",
                 })
                 continue
@@ -487,6 +652,23 @@ class TopicIntelligenceEngine:
         candidates = normalized_candidates
         diagnostics["after_normalization"] = len(candidates)
         diagnostics["duplicates_removed"] = duplicate_exclusions
+        specificity_exclusions: list[dict[str, str]] = []
+        for candidate in candidates:
+            specificity_issue = candidate_specificity_issue(candidate)
+            if specificity_issue is None:
+                continue
+            rejection_code, reason = specificity_issue
+            filter_reason = f"{rejection_code}: {reason}"
+            if filter_reason not in candidate.filter_reasons:
+                candidate.filter_reasons.append(filter_reason)
+            specificity_exclusions.append({
+                "topic": candidate.topic,
+                "code": rejection_code,
+                "reason": reason,
+                "sources": ", ".join(candidate.discovery_sources),
+            })
+        diagnostics["candidate_specificity_exclusions"] = specificity_exclusions
+        diagnostics["after_specificity_filter"] = len(candidates) - len(specificity_exclusions)
         learning_signals, learning_videos = load_m7_learning_signals(
             self.learning_inventory_path
         )
@@ -513,6 +695,7 @@ class TopicIntelligenceEngine:
                 candidate.inventory_status = "DUPLICATE"
                 inventory_excluded.append({
                     "topic": candidate.topic,
+                    "code": "DUPLICATE",
                     "reason": "Overlaps existing RITZZ inventory: "
                     + ", ".join(item.topic for item in overlaps),
                 })
@@ -553,7 +736,11 @@ class TopicIntelligenceEngine:
                 fit_status=fit_status,
                 reason=reason,
             )
-            fit_prefilter_exclusions.append({"topic": candidate.topic, "reason": reason})
+            fit_prefilter_exclusions.append({
+                "topic": candidate.topic,
+                "code": "NOT_RITZZ_FIT",
+                "reason": reason,
+            })
         diagnostics["after_ritzz_fit_prefilter"] = len(editorial_candidates)
         diagnostics["ritzz_fit_exclusions"] = fit_prefilter_exclusions
         competitor_report_payload: dict | None = None
@@ -739,6 +926,7 @@ class TopicIntelligenceEngine:
             {
                 "topic": item.topic,
                 "sources": item.discovery_sources,
+                "rejection_codes": _candidate_rejection_codes(item),
                 "editorial_status": item.editorial_status,
                 "validation_status": item.validation_status,
                 "ritzz_fit": item.ritzz_fit.model_dump(mode="json") if item.ritzz_fit else None,
@@ -777,7 +965,7 @@ class TopicIntelligenceEngine:
             for item in ranked_all
         ]
         if request.pipeline_topic_gate:
-            ranked = [
+            eligible_ranked = [
                 candidate
                 for candidate in ranked_all
                 if candidate.editorial_status == "PASS"
@@ -786,7 +974,23 @@ class TopicIntelligenceEngine:
                 and not candidate.filter_reasons
                 and not any("near-duplicate" in reason.casefold() for reason in candidate.validation_reasons)
                 and candidate.validation_status == "RECOMMENDED"
-            ][:4]
+            ]
+            eligible_ranked.sort(
+                key=_candidate_signal_weight,
+                reverse=True,
+            )
+            diagnostics["format_competitor_candidates_eligible"] = sum(
+                _candidate_signal_weight(candidate) >= 1.0
+                for candidate in eligible_ranked
+            )
+            ranked = _select_diverse_candidates(eligible_ranked, 4)
+            diagnostics["format_competitor_candidate_selected"] = any(
+                _candidate_signal_weight(candidate) >= 1.0
+                for candidate in ranked
+            )
+            diagnostics["final_candidate_families"] = [
+                _candidate_family(candidate) for candidate in ranked
+            ]
             shortlist_candidate_ids = [candidate.candidate_id for candidate in ranked]
             excluded_count = len(ranked_all) - len(ranked)
             if excluded_count:
@@ -814,7 +1018,13 @@ class TopicIntelligenceEngine:
                 if excluded_details:
                     warnings.append("Topic gate exclusions: " + " | ".join(excluded_details))
         else:
-            ranked = ranked_all[:4]
+            ranked = [
+                candidate for candidate in ranked_all
+                if not any(
+                    reason.startswith("TOO_ABSTRACT:")
+                    for reason in candidate.filter_reasons
+                )
+            ][:4]
             shortlist_candidate_ids = [
                 candidate_id
                 for candidate_id in all_recommended_ids
