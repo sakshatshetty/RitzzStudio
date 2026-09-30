@@ -92,8 +92,35 @@ class TopicIntelligenceEngine:
                 "OpenAI editorial scoring was unavailable; candidates retain provider "
                 "signals only and the user should assess fit manually."
             )
-        ranked = rank_candidates(candidates)[:4]
-        shortlist_candidate_ids = validate_candidates(ranked)
+        ranked_all = rank_candidates(candidates)
+        all_recommended_ids = validate_candidates(ranked_all)
+        if request.require_recommended_candidates:
+            ranked = [
+                candidate
+                for candidate in ranked_all
+                if candidate.validation_status == "RECOMMENDED"
+            ][:4]
+            shortlist_candidate_ids = [
+                candidate_id
+                for candidate_id in all_recommended_ids
+                if candidate_id in {candidate.candidate_id for candidate in ranked}
+            ]
+            excluded_count = len(ranked_all) - len(ranked)
+            if excluded_count:
+                warnings.append(
+                    f"Strict topic selection excluded {excluded_count} candidate(s) that did not pass the recommendation gate."
+                )
+        else:
+            ranked = ranked_all[:4]
+            shortlist_candidate_ids = [
+                candidate_id
+                for candidate_id in all_recommended_ids
+                if candidate_id in {candidate.candidate_id for candidate in ranked}
+            ]
+        if len(ranked) < 4:
+            warnings.append(
+                f"Only {len(ranked)} candidates passed the recommendation gate; four suitable options are required."
+            )
         if any(candidate.score_completeness < 0.5 for candidate in ranked):
             warnings.append(
                 "Some opportunity scores have low evidence coverage. Inspect each raw signal; "

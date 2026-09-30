@@ -44,10 +44,15 @@ Topic duplicate prevention reads the durable repository inventory at
 do not reserve or permanently exclude their selected topics. A future approved
 V1 release will update the inventory with the final topic and publication data.
 
-If a selected trending category returns fewer than four inventory-safe unique
-topics, discovery retries once with unscoped trending results and backfills the
-four choices with distinct candidates. If vidIQ still supplies fewer than four,
+If a selected trending category returns fewer than four distinct candidates
+that pass the recommendation gate, discovery retries once with unscoped trending
+results and backfills the four choices with distinct candidates. If vidIQ still supplies fewer than four,
 the run stops before topic approval and reports the counts from both attempts.
+Only candidates that pass the recommendation gate are selectable in the
+pipeline. Review/recap/reaction formats and broad flagged topics are excluded;
+the approval issue presents the proposed explainer title and angle for each
+remaining option. If four qualified candidates are unavailable, the workflow
+stops rather than presenting unrelated ideas as valid choices.
 
 ## Repository setup
 

@@ -13,6 +13,7 @@ def _candidate(number: int, topic: str) -> OpportunityCandidate:
         candidate_id=f"candidate-{number}",
         topic=topic,
         provider="vidiq_mcp",
+        validation_status="RECOMMENDED",
     )
 
 
@@ -37,14 +38,17 @@ class SequencedEngine:
 
 def test_short_category_discovery_backfills_distinct_unscoped_topics():
     request = TopicDiscoveryRequest(mode="TRENDING", trend_topic="history")
-    category_report = _report(request, [_candidate(1, "Topic One"), _candidate(2, "Topic Two")])
+    category_candidates = [_candidate(1, "Topic One"), _candidate(2, "Topic Two")]
+    category_candidates[1].validation_status = "REVIEW"
+    category_report = _report(request, category_candidates)
     broader_request = request.model_copy(update={"trend_topic": None, "force_refresh": True})
     broader_report = _report(
         broader_request,
         [
-            _candidate(3, "Topic Two"),
-            _candidate(4, "Topic Three"),
-            _candidate(5, "Topic Four"),
+            _candidate(2, "Topic Two"),
+            _candidate(3, "Topic Three"),
+            _candidate(4, "Topic Four"),
+            _candidate(1, "Topic Five"),
         ],
     )
     engine = SequencedEngine([category_report, broader_report])
@@ -57,6 +61,7 @@ def test_short_category_discovery_backfills_distinct_unscoped_topics():
         "Topic Three",
         "Topic Four",
     ]
+    assert len({candidate.candidate_id for candidate in candidates}) == 4
     assert len(engine.requests) == 2
     assert engine.requests[1].trend_topic is None
     assert report.warnings[0].startswith("The 'history' category")

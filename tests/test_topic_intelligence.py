@@ -146,14 +146,46 @@ def test_engine_returns_at_most_four_distinct_candidates(tmp_path):
 
 
 def test_niche_filter_flags_broad_and_unsuitable_topics():
-    items = [candidate("United Nations"), candidate("Celebrity gossip"), candidate("Why do birds migrate?")]
+    items = [
+        candidate("United Nations"),
+        candidate("Celebrity gossip"),
+        candidate("Paradise movie review"),
+        candidate("Why do birds migrate?"),
+    ]
     from modules.topic_intelligence.validation import apply_niche_filter
 
     apply_niche_filter(items)
 
     assert items[0].filter_reasons
     assert items[1].filter_reasons
-    assert items[2].filter_reasons == []
+    assert items[2].filter_reasons
+    assert items[3].filter_reasons == []
+
+
+def test_strict_discovery_returns_only_recommended_candidates(tmp_path):
+    class ManyProvider:
+        name = "fixture"
+
+        def discover(self, request):
+            return [
+                candidate("Paradise movie review", search_volume=100),
+                candidate("United Nations", search_volume=90),
+                candidate("Why do cats purr?", search_volume=80),
+                candidate("Why do birds migrate?", search_volume=70),
+                candidate("How do bats navigate?", search_volume=60),
+                candidate("Why do volcanoes erupt?", search_volume=50),
+            ]
+
+    report = TopicIntelligenceEngine(
+        provider=ManyProvider(),
+        cache_dir=tmp_path,
+        editorial_evaluator=FakeEditorialEvaluator(),
+    ).discover(TopicDiscoveryRequest(require_recommended_candidates=True))
+
+    assert len(report.candidates) == 4
+    assert all(item.validation_status == "RECOMMENDED" for item in report.candidates)
+    assert all("review" not in item.topic.casefold() for item in report.candidates)
+    assert all(item.topic != "United Nations" for item in report.candidates)
 
 
 def test_engine_attaches_competitor_report_when_provider_supports_it(tmp_path):
