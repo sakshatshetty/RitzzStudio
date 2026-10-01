@@ -733,7 +733,7 @@ jobs:
 
       - name: Extract content project
         shell: bash
-        run: tar -xzf .pipeline-artifacts/content-project.tar.gz
+        run: mkdir -p projects && tar -xzf .pipeline-artifacts/content-project.tar.gz -C projects
 
       - name: Read project ID
         id: project
@@ -815,7 +815,7 @@ jobs:
 
       - name: Extract storyboard project
         shell: bash
-        run: tar -xzf .pipeline-artifacts/storyboard-project.tar.gz
+        run: mkdir -p projects && tar -xzf .pipeline-artifacts/storyboard-project.tar.gz -C projects
 
       - name: Read project ID
         id: project
@@ -884,7 +884,7 @@ jobs:
 
       - name: Extract image project
         shell: bash
-        run: tar -xzf .pipeline-artifacts/image-project.tar.gz
+        run: mkdir -p projects && tar -xzf .pipeline-artifacts/image-project.tar.gz -C projects
 
       - name: Read project ID
         id: project
@@ -997,12 +997,12 @@ jobs:
       - name: Extract rendered project
         if: ${{ !endsWith(needs.restore-production.outputs.source_artifact, '-private_upload') && !endsWith(steps.pending-upload.outputs.artifact_name, '-private_upload') }}
         shell: bash
-        run: tar -xzf .pipeline-artifacts/rendered-project.tar.gz
+        run: mkdir -p projects && tar -xzf .pipeline-artifacts/rendered-project.tar.gz -C projects
 
       - name: Extract pending upload project
         if: ${{ endsWith(needs.restore-production.outputs.source_artifact, '-private_upload') || endsWith(steps.pending-upload.outputs.artifact_name, '-private_upload') }}
         shell: bash
-        run: tar -xzf .pipeline-artifacts/private-upload-project.tar.gz
+        run: mkdir -p projects && tar -xzf .pipeline-artifacts/private-upload-project.tar.gz -C projects
 
       - name: Read project ID
         id: project
@@ -1100,7 +1100,7 @@ jobs:
 
       - name: Extract voice project
         shell: bash
-        run: tar -xzf .pipeline-artifacts/voice-project.tar.gz
+        run: mkdir -p projects && tar -xzf .pipeline-artifacts/voice-project.tar.gz -C projects
 
       - name: Read project ID
         id: project
