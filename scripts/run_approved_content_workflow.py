@@ -127,9 +127,9 @@ def main() -> int:
                 json.dumps(failure_payload, indent=2, ensure_ascii=False) + "\n",
                 encoding="utf-8",
             )
-            artifacts = [failure_path]
+            artifacts = [failure_path.name]
             if project_id:
-                artifacts.append(artifacts_directory / "content-project.tar.gz")
+                artifacts.append("content-project.tar.gz")
             state_store.fail_stage(
                 "content_preparation",
                 str(exc),
