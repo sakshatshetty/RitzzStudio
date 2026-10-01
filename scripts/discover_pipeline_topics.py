@@ -74,6 +74,7 @@ def _artifact_payload(report: OpportunityReport) -> dict[str, Any]:
         "discovery_mode": DISCOVERY_MODE,
         "vidiq_usage_mode": VIDIQ_USAGE_MODE,
         "diagnostics": diagnostics,
+        "rejected_ideas": diagnostics.get("ideas_rejected", []),
         "warnings": report.warnings,
         "candidates": [
             {
@@ -98,6 +99,7 @@ def _write_artifacts(
             "discovery_mode": diagnostics.get("discovery_mode", DISCOVERY_MODE),
             "vidiq_usage_mode": diagnostics.get("vidiq_usage_mode", VIDIQ_USAGE_MODE),
             "diagnostics": diagnostics,
+            "rejected_ideas": diagnostics.get("ideas_rejected", []),
             "candidates": [],
         }
         markdown = [
@@ -109,6 +111,14 @@ def _write_artifacts(
             "No candidates were generated.",
             "",
         ]
+        rejected_ideas = diagnostics.get("ideas_rejected", [])
+        if rejected_ideas:
+            markdown.extend(["## Rejected GPT ideas", ""])
+            markdown.extend(
+                f"- **{idea.get('title', 'Untitled idea')}** — {idea.get('reason', 'No rejection reason recorded.')}"
+                for idea in rejected_ideas
+            )
+            markdown.append("")
     else:
         payload = _artifact_payload(report)
         diagnostics = report.discovery_diagnostics
@@ -140,6 +150,14 @@ def _write_artifacts(
         if report.warnings:
             markdown.extend(["## Warnings", ""])
             markdown.extend(f"- {warning}" for warning in report.warnings)
+            markdown.append("")
+        rejected_ideas = diagnostics.get("ideas_rejected", [])
+        if rejected_ideas:
+            markdown.extend(["## Rejected GPT ideas", ""])
+            markdown.extend(
+                f"- **{idea.get('title', 'Untitled idea')}** — {idea.get('reason', 'No rejection reason recorded.')}"
+                for idea in rejected_ideas
+            )
             markdown.append("")
 
     (output_directory / "topic_candidates.json").write_text(

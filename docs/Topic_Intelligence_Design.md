@@ -28,7 +28,10 @@ query rather than a batch of separate queries. The pipeline does not call
 trending, rising, evergreen fallback, long-tail, or competitor discovery tools.
 
 The pipeline applies simple local RITZZ, originality, and content-inventory
-filters, then presents 3–5 qualified candidates for mandatory human selection.
+filters, then presents 2–5 qualified candidates for mandatory human selection.
+Discovery performs one vidIQ operation and one GPT ideation request per run; it
+does not retry either provider to reach the candidate minimum. The discovery
+artifact lists each discarded GPT idea with its rejection reason.
 Candidates are ranked by available vidIQ market metrics, but are never selected
 automatically. Provider metrics are copied through unchanged; missing metrics
 remain unavailable. A vidIQ or GPT provider error is surfaced distinctly and

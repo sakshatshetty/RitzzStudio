@@ -31,7 +31,7 @@ MINIMUM_VIDIQ_OPPORTUNITIES = 8
 TOPIC_IDEA_MINIMUM = 8
 TOPIC_IDEA_TARGET = 9
 TOPIC_IDEA_MAXIMUM = 10
-FINAL_CANDIDATE_MINIMUM = 3
+FINAL_CANDIDATE_MINIMUM = 2
 FINAL_CANDIDATE_LIMIT = 5
 PIPELINE_TOPIC_SOURCE = "vidiq_discovery + gpt_ideation"
 DISCOVERY_MODE = "VIDIQ_TO_GPT"
@@ -324,6 +324,18 @@ class GPTKeywordTopicDiscovery:
             candidates.append(self._candidate(idea, source, index))
 
         candidates.sort(key=self._ranking_key)
+        for candidate in candidates[FINAL_CANDIDATE_LIMIT:]:
+            idea = candidate.raw_evidence["gpt_generated_idea"]
+            diagnostics["ideas_rejected"].append(
+                {
+                    "title": idea["title"],
+                    "source_opportunity_id": idea["source_opportunity_id"],
+                    "reason": (
+                        "Qualified, but ranked below the "
+                        f"{FINAL_CANDIDATE_LIMIT}-candidate shortlist limit."
+                    ),
+                }
+            )
         candidates = candidates[:FINAL_CANDIDATE_LIMIT]
         diagnostics.update({
             "ideas_rejected_count": len(diagnostics["ideas_rejected"]),
@@ -347,7 +359,7 @@ class GPTKeywordTopicDiscovery:
         )
         if len(candidates) < FINAL_CANDIDATE_MINIMUM:
             report.warnings.append(
-                "Fewer than three ideas passed the local RITZZ and inventory filters."
+                "Fewer than two ideas passed the local RITZZ and inventory filters."
             )
         return report
 
