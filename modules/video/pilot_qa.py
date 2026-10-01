@@ -4,7 +4,10 @@ import base64
 import json
 import math
 import os
+import shutil
 import struct
+import subprocess
+import tempfile
 import zlib
 from pathlib import Path
 from typing import Any, Protocol
@@ -14,7 +17,15 @@ from openai import OpenAI
 
 from modules.storyboard.models import Storyboard
 from modules.video.models import VideoAssemblyPlan
-from modules.video.qa_models import AudioImageMatchResult, PilotQAReport, QAStatus, SceneQAResult, TechnicalQAResult
+from modules.video.qa_models import (
+    AudioImageMatchReport,
+    AudioImageMatchResult,
+    PilotQAReport,
+    QAStatus,
+    RenderedVideoSemanticQAReport,
+    SceneQAResult,
+    TechnicalQAResult,
+)
 
 load_dotenv()
 
@@ -131,9 +142,11 @@ class OpenAIImageEditorialReviewer:
         encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
         editorial = scene.text_overlay or "(none)"
         prompt = (
-            "Review only this generated image for an educational video. Check whether the visible scene "
-            "matches the narration and whether the requested editorial word is semantically appropriate "
-            "for THIS scene, not merely a neighboring beat. Do not review research, script quality, style "
+            "Review this frame from the rendered educational video at the midpoint of the listed scene. "
+            "Check whether the visible scene matches its synchronized narration and whether the requested "
+            "editorial word is contextually appropriate and visibly legible. If an editorial word is requested, "
+            "mark editorial_context FAIL when it is clearly absent or incorrect, and REVIEW if it is too unclear "
+            "to verify. Do not review research, script quality, style "
             "preferences, or production metadata. Return JSON keys narration_image, narration_description, "
             "editorial_context, rationale, correction_prompt, suggested_editorial_scene_id. Status values "
             "must be PASS, REVIEW, or FAIL. Use FAIL only for a clear mismatch; use REVIEW when uncertain. "
@@ -221,6 +234,79 @@ class PilotVideoQA:
             results.append(reviewer.match_audio_image(Path(clip.image_path), scene, clip.start_seconds,
                                                        clip.start_seconds + clip.duration_seconds))
         return results
+
+    def run_rendered_video_semantic(
+        self,
+        storyboard: Storyboard,
+        plan: VideoAssemblyPlan,
+        video_file: str | Path,
+        reviewer: SemanticReviewer,
+        *,
+        ffmpeg_path: str | None = None,
+    ) -> RenderedVideoSemanticQAReport:
+        video_path = Path(video_file)
+        if not video_path.is_file() or video_path.stat().st_size == 0:
+            raise FileNotFoundError(f"Rendered video is missing or empty: {video_path}")
+        executable = ffmpeg_path or os.getenv("RITZZ_FFMPEG_PATH") or shutil.which("ffmpeg")
+        if not executable:
+            raise FileNotFoundError("FFmpeg is required to sample rendered video frames.")
+
+        scenes = {scene.scene_id: scene for scene in storyboard.scenes}
+        results: list[SceneQAResult] = []
+        with tempfile.TemporaryDirectory(prefix="ritzz_rendered_qa_") as temporary:
+            directory = Path(temporary)
+            for clip in plan.clips:
+                scene = scenes.get(clip.scene_id)
+                if scene is None:
+                    results.append(
+                        SceneQAResult(
+                            scene_id=clip.scene_id,
+                            status="FAIL",
+                            narration_image="FAIL",
+                            narration_description="FAIL",
+                            editorial_context="FAIL",
+                            rationale="Rendered scene has no matching storyboard narration.",
+                        )
+                    )
+                    continue
+
+                frame_file = directory / f"{clip.scene_id}.png"
+                midpoint = clip.start_seconds + clip.duration_seconds / 2
+                command = [
+                    executable,
+                    "-v", "error",
+                    "-ss", f"{midpoint:.3f}",
+                    "-i", str(video_path),
+                    "-frames:v", "1",
+                    "-update", "1",
+                    "-y", str(frame_file),
+                ]
+                completed = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if completed.returncode != 0 or not frame_file.is_file() or frame_file.stat().st_size == 0:
+                    raise RuntimeError(
+                        f"Could not extract rendered frame for {clip.scene_id} "
+                        f"at {midpoint:.3f}s: {completed.stderr.strip()}"
+                    )
+                result = reviewer.review(frame_file, scene)
+                if result.scene_id != clip.scene_id:
+                    raise ValueError(
+                        f"Semantic reviewer returned {result.scene_id} for {clip.scene_id}."
+                    )
+                results.append(result)
+
+        overall: QAStatus = (
+            "FAIL"
+            if any(result.status == "FAIL" for result in results)
+            else "REVIEW"
+            if not results or any(result.status == "REVIEW" for result in results)
+            else "PASS"
+        )
+        return RenderedVideoSemanticQAReport(status=overall, results=results)
 
     def run_technical(self, storyboard: Storyboard, plan: VideoAssemblyPlan,
                       audio_file: str | Path, video_file: str | Path | None = None,

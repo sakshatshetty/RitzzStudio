@@ -20,12 +20,25 @@ class FakeVideos:
         return FakeRequest({"id": "abc123"})
 
 
+class FakeThumbnails:
+    def __init__(self):
+        self.set_args = None
+
+    def set(self, **kwargs):
+        self.set_args = kwargs
+        return FakeRequest({"kind": "youtube#thumbnailSetResponse"})
+
+
 class FakeService:
     def __init__(self):
         self.video_resource = FakeVideos()
+        self.thumbnail_resource = FakeThumbnails()
 
     def videos(self):
         return self.video_resource
+
+    def thumbnails(self):
+        return self.thumbnail_resource
 
 
 def test_youtube_provider_maps_metadata_and_schedule_without_network(tmp_path: Path):
@@ -72,3 +85,27 @@ def test_youtube_provider_maps_metadata_and_schedule_without_network(tmp_path: P
     }
     assert request["media_body"] is media_file
     assert request["notifySubscribers"] is False
+
+
+def test_youtube_provider_sets_thumbnail_without_network(tmp_path: Path):
+    thumbnail = tmp_path / "thumbnail.jpg"
+    thumbnail.write_bytes(b"image")
+    service = FakeService()
+    media_file = object()
+    provider = YouTubeProvider(
+        tmp_path / "client-secret.json",
+        tmp_path / "token.json",
+        service=service,
+        media_upload_builder=lambda _path: media_file,
+    )
+
+    response = provider.set_thumbnail(
+        video_id="abc123",
+        thumbnail_file=thumbnail,
+    )
+
+    assert response == {"kind": "youtube#thumbnailSetResponse"}
+    assert service.thumbnail_resource.set_args == {
+        "videoId": "abc123",
+        "media_body": media_file,
+    }

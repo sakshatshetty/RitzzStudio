@@ -117,3 +117,39 @@ def test_private_upload_intent_allows_only_its_original_attempt(tmp_path):
         match="PUBLISH_ATTEMPT_RECONCILIATION_REQUIRED",
     ):
         store.set_private_upload_intent("run-1", 2)
+
+
+def test_restart_from_stage_preserves_prerequisites_and_resets_downstream(tmp_path):
+    artifact_root = tmp_path / "artifacts"
+    artifact_root.mkdir()
+    store = ProductionStateStore(artifact_root / "production_state.json", artifact_root)
+    store.initialize("prod-123")
+
+    for index, stage in enumerate(PIPELINE_STAGES):
+        artifact = artifact_root / f"stage-{index}.json"
+        artifact.write_text(json.dumps({"stage": stage}), encoding="utf-8")
+        store.start_stage(stage)
+        if stage == "private_upload":
+            store.set_private_upload_intent("run-1", 1)
+        store.complete_stage(stage, [artifact.name])
+
+    before = store._read_state()
+    restarted = store.restart_from_stage("storyboard_generation")
+
+    assert restarted["status"] == "in_progress"
+    assert restarted["current_stage"] is None
+    assert restarted["private_upload_intent"] == before["private_upload_intent"]
+    for stage in PIPELINE_STAGES[:4]:
+        assert restarted["stages"][stage]["status"] == "completed"
+    for stage in PIPELINE_STAGES[4:]:
+        assert restarted["stages"][stage]["status"] == "pending"
+        assert restarted["stages"][stage]["artifacts"] == []
+        assert restarted["stages"][stage]["attempts"] == before["stages"][stage]["attempts"]
+
+
+def test_restart_from_stage_requires_completed_prerequisites(tmp_path):
+    store = ProductionStateStore(tmp_path / "production_state.json")
+    store.initialize("prod-123")
+
+    with pytest.raises(ProductionStateError, match="STAGE_PREREQUISITE_INCOMPLETE"):
+        store.restart_from_stage("image_generation")

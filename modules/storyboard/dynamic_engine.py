@@ -260,6 +260,13 @@ class DynamicStoryboardEngine:
     # PUBLIC
     # ======================================================================
 
+    def apply_production_editorial_callouts(
+        self,
+        scenes: list[StoryboardScene],
+    ) -> list[StoryboardScene]:
+        """Add final-scene one-word callouts at the production cadence."""
+        return self._apply_editorial_callouts(scenes)
+
     def create_pilot_storyboard(
         self,
         source_storyboard: Storyboard,

@@ -11,6 +11,7 @@ from modules.video.models import VideoAssemblyPlan, VideoClip
 from modules.video.pilot_qa import PilotVideoQA, _mp3_duration
 from modules.video.qa_models import AudioImageMatchResult, SceneQAResult
 
+
 def make_png():
     def chunk(kind, payload):
         return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", zlib.crc32(kind + payload) & 0xffffffff)
@@ -99,6 +100,133 @@ def test_audio_image_match_uses_synchronized_scene_range(tmp_path):
     assert results[0].start_seconds == 0
     assert results[0].end_seconds == 2
     assert results[0].status == "PASS"
+
+
+def test_rendered_video_semantic_qa_reviews_frames_at_scene_midpoints(tmp_path, monkeypatch):
+    storyboard, plan, _, _ = make_inputs(tmp_path)
+    video = tmp_path / "rendered.mp4"
+    video.write_bytes(b"video")
+    seen = []
+
+    def fake_run(command, **_kwargs):
+        seen.append(command)
+        Path(command[-1]).write_bytes(make_png())
+
+        class Result:
+            returncode = 0
+            stderr = ""
+
+        return Result()
+
+    class Reviewer:
+        def review(self, image_path, scene):
+            assert image_path.is_file()
+            assert scene.narration == "Pirate narration."
+            assert scene.text_overlay == "ICONIC"
+            return SceneQAResult(
+                scene_id=scene.scene_id,
+                status="PASS",
+                narration_image="PASS",
+                narration_description="PASS",
+                editorial_context="PASS",
+                rationale="The rendered frame matches the aligned scene.",
+            )
+
+    monkeypatch.setattr("modules.video.pilot_qa.subprocess.run", fake_run)
+    report = PilotVideoQA().run_rendered_video_semantic(
+        storyboard,
+        plan,
+        video,
+        Reviewer(),
+        ffmpeg_path="ffmpeg-test",
+    )
+
+    assert report.status == "PASS"
+    assert report.counts == {"PASS": 1, "REVIEW": 0, "FAIL": 0}
+    assert "-ss" in seen[0]
+    assert seen[0][seen[0].index("-ss") + 1] == "1.000"
+
+
+def test_rendered_video_semantic_qa_receives_each_scene_narration_segment(tmp_path, monkeypatch):
+    image = tmp_path / "scene_001.png"
+    image.write_bytes(make_png())
+    storyboard = Storyboard(
+        topic="Pirates",
+        target_duration_seconds=4,
+        total_scene_duration_seconds=4,
+        scenes=[
+            {
+                "scene_id": "scene_001",
+                "section_id": "s1",
+                "start_seconds": 0,
+                "duration_seconds": 2,
+                "narration": "The pirate enters the dark cabin.",
+                "visual_description": "A pirate entering a cabin.",
+                "image_prompt": "Pirate illustration.",
+            },
+            {
+                "scene_id": "scene_002",
+                "section_id": "s1",
+                "start_seconds": 2,
+                "duration_seconds": 2,
+                "narration": "One eye stays adapted to darkness.",
+                "visual_description": "A pirate's adapted eye.",
+                "image_prompt": "Eye illustration.",
+            },
+        ],
+    )
+    plan = VideoAssemblyPlan(
+        topic="Pirates",
+        width=1920,
+        height=1080,
+        fps=30,
+        clips=[
+            VideoClip(scene_id=f"scene_{index:03}", image_path=str(image),
+                      start_seconds=(index - 1) * 2, duration_seconds=2)
+            for index in (1, 2)
+        ],
+        total_duration_seconds=4,
+    )
+    video = tmp_path / "rendered.mp4"
+    video.write_bytes(b"video")
+
+    def fake_run(command, **_kwargs):
+        Path(command[-1]).write_bytes(make_png())
+
+        class Result:
+            returncode = 0
+            stderr = ""
+
+        return Result()
+
+    reviewed_narration = []
+
+    class Reviewer:
+        def review(self, image_path, scene):
+            reviewed_narration.append(scene.narration)
+            return SceneQAResult(
+                scene_id=scene.scene_id,
+                status="REVIEW",
+                narration_image="REVIEW",
+                narration_description="PASS",
+                editorial_context="PASS",
+                rationale="Needs human review.",
+            )
+
+    monkeypatch.setattr("modules.video.pilot_qa.subprocess.run", fake_run)
+    report = PilotVideoQA().run_rendered_video_semantic(
+        storyboard,
+        plan,
+        video,
+        Reviewer(),
+        ffmpeg_path="ffmpeg-test",
+    )
+
+    assert reviewed_narration == [
+        "The pirate enters the dark cabin.",
+        "One eye stays adapted to darkness.",
+    ]
+    assert report.status == "REVIEW"
 
 
 def test_mp3_duration_fallback_counts_frames(tmp_path):

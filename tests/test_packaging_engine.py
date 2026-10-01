@@ -69,7 +69,12 @@ def test_vidiq_candidate_informs_packaging_and_is_persisted(tmp_path: Path):
     )
 
     assert artifact.selected_title == candidate.proposed_title
-    assert "pirate" in " ".join(artifact.metadata.tags).lower()
+    assert artifact.metadata.tags[:3] == [
+        "pirate eye patch",
+        "pirate history",
+        "sailor vision",
+    ]
+    assert len(artifact.metadata.tags) <= 8
     assert "adaptation" in artifact.metadata.description
     assert artifact.opportunity_context["report_id"] == "report-1"
     assert artifact.thumbnail_brief is not None

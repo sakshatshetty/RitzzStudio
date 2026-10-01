@@ -11,8 +11,7 @@ class ImagePromptBuilder:
     - Consistent characters within a video
     - Simple backgrounds
     - Minimal props
-    - Optional editorial text
-    - Simple handwritten editorial lettering
+    - Optional deterministic editorial-word composition
     - No accidental text when editorial text is absent
     """
 
@@ -140,7 +139,6 @@ class ImagePromptBuilder:
     EDITORIAL_ILLUSTRATION_COLOR_INSTRUCTION = (
         "Keep the illustration fully colored using the normal RITZZ flat-color palette. "
         "Use clear colors for the character, clothing, props, and background. "
-        "Only the editorial lettering is limited to solid black or white. "
         "Do not make the illustration monochrome, grayscale, black-and-white, or single-color."
     )
 
@@ -211,29 +209,12 @@ class ImagePromptBuilder:
 
         if has_editorial_text:
             parts.append(
+                "Keep clear negative space near the lower-left for one editorial word. "
+                "The exact word will be composited into the final image after generation. "
+                "Do not render letters, words, captions, labels, or any other typography."
+            )
+            parts.append(
                 self.EDITORIAL_ILLUSTRATION_COLOR_INSTRUCTION
-            )
-
-            editorial_text = scene.text_overlay.strip()
-
-            parts.append(
-                "Editorial text inside the illustration: "
-                f'"{editorial_text}".'
-            )
-
-            parts.append(
-                self.RITZZ_EDITORIAL_TEXT_STYLE
-            )
-
-            parts.append(
-                "Keep the editorial text short, "
-                "simple, readable, and visually secondary "
-                "to the main illustration."
-            )
-
-            parts.append(
-                "The editorial text is part of the artwork, "
-                "not a subtitle or caption."
             )
 
         parts.append(
@@ -254,7 +235,11 @@ class ImagePromptBuilder:
 
         if has_editorial_text:
             parts.append(
-                self.RITZZ_NEGATIVE_STYLE_WITH_EDITORIAL_TEXT
+                self.RITZZ_NEGATIVE_STYLE
+            )
+
+            parts.append(
+                self.RITZZ_STRICT_NO_TEXT
             )
         else:
             parts.append(

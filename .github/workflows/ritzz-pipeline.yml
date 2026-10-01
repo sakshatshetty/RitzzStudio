@@ -15,6 +15,22 @@ on:
         description: Existing production ID for RESUME; optional custom ID for NEW
         required: false
         type: string
+      project_id:
+        description: Existing project ID to find its saved production checkpoint for RESUME
+        required: false
+        type: string
+      rerun_from_stage:
+        description: Restart completed project stages from this point, or continue normally
+        required: true
+        type: choice
+        options:
+          - NONE
+          - voice_generation
+          - storyboard_generation
+          - image_generation
+          - render_video
+          - private_upload
+        default: NONE
       test_run:
         description: Keep all generated output private or unlisted as a test run
         required: true
@@ -80,9 +96,23 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
+      - name: Install FFmpeg and overlay font for media tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ffmpeg fonts-dejavu-core
+
       - name: Run focused pipeline tests
         run: >-
           python -m pytest
+          tests/test_audio_timed_storyboard.py
+          tests/test_image_batch.py
+          tests/test_image_overlays.py
+          tests/test_image_prompt_builder.py
+          tests/test_packaging_engine.py
+          tests/test_pilot_video_qa.py
+          tests/test_run_render_stage.py
+          tests/test_upload_thumbnail_recovery.py
+          tests/test_video_render_engine.py
           tests/test_m7_analytics.py
           tests/test_youtube_provider.py
           tests/test_video_pipeline_engine.py
@@ -96,6 +126,7 @@ jobs:
           tests/test_run_approved_content_workflow.py
           tests/test_select_pipeline_topic.py
           tests/test_production_state.py
+          tests/test_resolve_production_by_project.py
           tests/test_publishing_engine.py
           tests/test_content_workflow.py::test_selected_candidate_is_linked_to_report_and_project
           -q
@@ -145,22 +176,52 @@ jobs:
     needs: validate
     runs-on: ubuntu-latest
     outputs:
-      production_id: ${{ steps.resolve.outputs.production_id }}
-      source_run_id: ${{ steps.resolve.outputs.source_run_id }}
-      source_artifact: ${{ steps.resolve.outputs.source_artifact }}
-      resume_from_index: ${{ steps.inspect.outputs.resume_from_index || steps.resolve.outputs.resume_from_index }}
+      production_id: ${{ steps.resolve-by-project.outputs.production_id || steps.resolve.outputs.production_id }}
+      source_run_id: ${{ inputs.rerun_from_stage != 'NONE' && github.run_id || steps.resolve-by-project.outputs.source_run_id || steps.resolve.outputs.source_run_id }}
+      source_artifact: ${{ steps.resolve-by-project.outputs.source_artifact || steps.resolve.outputs.source_artifact }}
+      resume_from_index: ${{ steps.inspect.outputs.resume_from_index || steps.resolve-by-project.outputs.resume_from_index || steps.resolve.outputs.resume_from_index }}
       approval_issue_number: ${{ steps.inspect.outputs.approval_issue_number }}
-      effective_mode: ${{ steps.resolve.outputs.effective_mode }}
+      effective_mode: ${{ steps.resolve-by-project.outputs.effective_mode || steps.resolve.outputs.effective_mode }}
+      rerun_from_stage: ${{ inputs.rerun_from_stage != 'NONE' && inputs.rerun_from_stage || '' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Validate project-based rerun inputs
+        if: ${{ inputs.rerun_from_stage != 'NONE' || inputs.project_id != '' }}
+        env:
+          MODE: ${{ inputs.mode }}
+          PROJECT_ID: ${{ inputs.project_id }}
+          RERUN_FROM_STAGE: ${{ inputs.rerun_from_stage }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$MODE" != "RESUME" ]]; then
+            echo "Project-ID lookup and stage reruns require mode=RESUME." >&2
+            exit 1
+          fi
+          if [[ -z "$PROJECT_ID" ]]; then
+            echo "A project_id is required when rerun_from_stage is selected." >&2
+            exit 1
+          fi
+
+      - name: Resolve production checkpoint by project ID
+        id: resolve-by-project
+        if: ${{ inputs.mode == 'RESUME' && inputs.project_id != '' }}
+        env:
+          RITZZ_PROJECT_ID: ${{ inputs.project_id }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/resolve_production_by_project.py
+
       - name: Resolve production checkpoint
         id: resolve
+        if: ${{ inputs.project_id == '' || inputs.mode == 'NEW' }}
         uses: actions/github-script@v7
         env:
           MODE: ${{ inputs.mode }}
           REQUESTED_PRODUCTION_ID: ${{ inputs.production_id }}
+          RERUN_FROM_STAGE: ${{ inputs.rerun_from_stage }}
         with:
           script: |
             const mode = process.env.MODE;
@@ -257,21 +318,22 @@ jobs:
             core.setOutput('effective_mode', effectiveMode);
 
       - name: Download saved production checkpoint
-        if: ${{ steps.resolve.outputs.effective_mode == 'RESUME' }}
+        if: ${{ steps.resolve-by-project.outputs.effective_mode == 'RESUME' || steps.resolve.outputs.effective_mode == 'RESUME' }}
         uses: actions/download-artifact@v4
         with:
-          name: ${{ steps.resolve.outputs.source_artifact }}
-          run-id: ${{ steps.resolve.outputs.source_run_id }}
+          name: ${{ steps.resolve-by-project.outputs.source_artifact || steps.resolve.outputs.source_artifact }}
+          run-id: ${{ steps.resolve-by-project.outputs.source_run_id || steps.resolve.outputs.source_run_id }}
           github-token: ${{ github.token }}
           path: .pipeline-artifacts
 
       - name: Validate checkpoint and expose progress
         id: inspect
-        if: ${{ steps.resolve.outputs.effective_mode == 'RESUME' }}
+        if: ${{ steps.resolve-by-project.outputs.effective_mode == 'RESUME' || steps.resolve.outputs.effective_mode == 'RESUME' }}
         env:
-          RITZZ_PRODUCTION_ID: ${{ steps.resolve.outputs.production_id }}
+          RITZZ_PRODUCTION_ID: ${{ steps.resolve-by-project.outputs.production_id || steps.resolve.outputs.production_id }}
           RITZZ_PIPELINE_ARTIFACTS: .pipeline-artifacts
-          CHECKPOINT_INDEX: ${{ steps.resolve.outputs.checkpoint_index }}
+          CHECKPOINT_INDEX: ${{ steps.resolve-by-project.outputs.checkpoint_index || steps.resolve.outputs.checkpoint_index }}
+          RERUN_FROM_STAGE: ${{ inputs.rerun_from_stage }}
         shell: bash
         run: |
           set -euo pipefail
@@ -288,6 +350,7 @@ jobs:
           state = json.loads(Path(".pipeline-artifacts/production_state.json").read_text(encoding="utf-8"))
           stages = list(state["stages"])
           checkpoint_index = int(os.environ["CHECKPOINT_INDEX"])
+          rerun_stage = os.environ["RERUN_FROM_STAGE"]
           expected_stage = stages[checkpoint_index]
           expected_stage_state = state["stages"][expected_stage]
           expected_status = expected_stage_state["status"]
@@ -322,6 +385,44 @@ jobs:
                   "PUBLISH_ATTEMPT_RECONCILIATION_REQUIRED: check YouTube before resuming "
                   "an interrupted private upload."
               )
+          if rerun_stage != "NONE":
+              if rerun_stage not in stages[3:]:
+                  raise SystemExit(f"INVALID_RERUN_STAGE: {rerun_stage}")
+              if state.get("project_id") is None:
+                  raise SystemExit("PROJECT_ID_REQUIRED: rerun stage requires a saved project ID.")
+              import subprocess
+
+              subprocess.run(
+                  [
+                      "python",
+                      "scripts/manage_pipeline_production.py",
+                      "restart",
+                      "--stage",
+                      rerun_stage,
+                  ],
+                  check=True,
+              )
+              state = json.loads(Path(".pipeline-artifacts/production_state.json").read_text(encoding="utf-8"))
+              archive_names = {
+                  "content_preparation": "content-project.tar.gz",
+                  "voice_generation": "voice-project.tar.gz",
+                  "storyboard_generation": "storyboard-project.tar.gz",
+                  "image_generation": "image-project.tar.gz",
+                  "render_video": "rendered-project.tar.gz",
+                  "private_upload": "private-upload-project.tar.gz",
+              }
+              for source_stage in reversed(stages[2:checkpoint_index + 1]):
+                  archive_name = archive_names.get(source_stage)
+                  archive_path = Path(".pipeline-artifacts") / archive_name if archive_name else None
+                  if archive_path and archive_path.is_file():
+                      import shutil
+
+                      shutil.copy2(archive_path, ".pipeline-artifacts/rerun-project.tar.gz")
+                      break
+              else:
+                  raise SystemExit(
+                      "PROJECT_ARCHIVE_MISSING: saved checkpoint contains no project archive to rerun."
+                  )
           for index, stage in enumerate(stages):
               if state["stages"][stage]["status"] != "completed":
                   break
@@ -333,11 +434,23 @@ jobs:
               output.write(f"approval_issue_number={issue_number}\n")
           PY
 
+      - name: Publish rerun checkpoint for downstream stage jobs
+        if: ${{ inputs.rerun_from_stage != 'NONE' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.resolve-by-project.outputs.source_artifact || steps.resolve.outputs.source_artifact }}
+          path: .pipeline-artifacts/
+          if-no-files-found: error
+          include-hidden-files: true
+          overwrite: true
+
       - name: Report production identity
         env:
-          PRODUCTION_ID: ${{ steps.resolve.outputs.production_id }}
-          EFFECTIVE_MODE: ${{ steps.resolve.outputs.effective_mode }}
-          RESUME_FROM_INDEX: ${{ steps.inspect.outputs.resume_from_index || steps.resolve.outputs.resume_from_index }}
+          PRODUCTION_ID: ${{ steps.resolve-by-project.outputs.production_id || steps.resolve.outputs.production_id }}
+          PROJECT_ID: ${{ inputs.project_id }}
+          RERUN_FROM_STAGE: ${{ inputs.rerun_from_stage }}
+          EFFECTIVE_MODE: ${{ steps.resolve-by-project.outputs.effective_mode || steps.resolve.outputs.effective_mode }}
+          RESUME_FROM_INDEX: ${{ steps.inspect.outputs.resume_from_index || steps.resolve-by-project.outputs.resume_from_index || steps.resolve.outputs.resume_from_index }}
         shell: bash
         run: |
           {
@@ -345,6 +458,8 @@ jobs:
             echo "- Production ID: \`$PRODUCTION_ID\`"
             echo "- Mode: \`$EFFECTIVE_MODE\`"
             echo "- Resume stage index: \`$RESUME_FROM_INDEX\`"
+            if [[ -n "$PROJECT_ID" ]]; then echo "- Project ID: \`$PROJECT_ID\`"; fi
+            if [[ "$RERUN_FROM_STAGE" != "NONE" ]]; then echo "- Restart from stage: \`$RERUN_FROM_STAGE\`"; fi
           } >> "$GITHUB_STEP_SUMMARY"
 
   discover-topics:
@@ -730,6 +845,7 @@ jobs:
           ffprobe -version
 
       - name: Download content project
+        if: ${{ needs.restore-production.outputs.rerun_from_stage != 'voice_generation' }}
         uses: actions/download-artifact@v4
         with:
           name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-content_preparation
@@ -737,9 +853,24 @@ jobs:
           github-token: ${{ github.token }}
           path: .pipeline-artifacts
 
+      - name: Download rerun project
+        if: ${{ needs.restore-production.outputs.rerun_from_stage == 'voice_generation' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.restore-production.outputs.source_artifact }}
+          run-id: ${{ needs.restore-production.outputs.source_run_id }}
+          github-token: ${{ github.token }}
+          path: .pipeline-artifacts
+
       - name: Extract content project
+        if: ${{ needs.restore-production.outputs.rerun_from_stage != 'voice_generation' }}
         shell: bash
         run: mkdir -p projects && tar -xzf .pipeline-artifacts/content-project.tar.gz -C projects
+
+      - name: Extract rerun project
+        if: ${{ needs.restore-production.outputs.rerun_from_stage == 'voice_generation' }}
+        shell: bash
+        run: mkdir -p projects && tar -xzf .pipeline-artifacts/rerun-project.tar.gz -C projects
 
       - name: Read project ID
         id: project
@@ -811,7 +942,14 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
+      - name: Install FFmpeg for image text overlays
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ffmpeg fonts-dejavu-core
+          ffmpeg -version
+
       - name: Download storyboard project
+        if: ${{ needs.restore-production.outputs.rerun_from_stage != 'image_generation' }}
         uses: actions/download-artifact@v4
         with:
           name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-storyboard_generation
@@ -819,9 +957,24 @@ jobs:
           github-token: ${{ github.token }}
           path: .pipeline-artifacts
 
+      - name: Download rerun project
+        if: ${{ needs.restore-production.outputs.rerun_from_stage == 'image_generation' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.restore-production.outputs.source_artifact }}
+          run-id: ${{ needs.restore-production.outputs.source_run_id }}
+          github-token: ${{ github.token }}
+          path: .pipeline-artifacts
+
       - name: Extract storyboard project
+        if: ${{ needs.restore-production.outputs.rerun_from_stage != 'image_generation' }}
         shell: bash
         run: mkdir -p projects && tar -xzf .pipeline-artifacts/storyboard-project.tar.gz -C projects
+
+      - name: Extract rerun project
+        if: ${{ needs.restore-production.outputs.rerun_from_stage == 'image_generation' }}
+        shell: bash
+        run: mkdir -p projects && tar -xzf .pipeline-artifacts/rerun-project.tar.gz -C projects
 
       - name: Read project ID
         id: project
@@ -865,6 +1018,7 @@ jobs:
     if: ${{ always() && needs.restore-production.result == 'success' && (needs.restore-production.outputs.effective_mode == 'NEW' || needs.restore-production.outputs.resume_from_index <= 6) && ((needs.image-generation.result == 'success') || (needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index >= 6)) }}
     runs-on: ubuntu-latest
     env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       RITZZ_PRODUCTION_ID: ${{ needs.restore-production.outputs.production_id }}
       RITZZ_PIPELINE_ARTIFACTS: .pipeline-artifacts
     steps:
@@ -888,6 +1042,7 @@ jobs:
           ffprobe -version
 
       - name: Download image project
+        if: ${{ needs.restore-production.outputs.rerun_from_stage != 'render_video' }}
         uses: actions/download-artifact@v4
         with:
           name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-image_generation
@@ -895,10 +1050,24 @@ jobs:
           github-token: ${{ github.token }}
           path: .pipeline-artifacts
 
+      - name: Download rerun project
+        if: ${{ needs.restore-production.outputs.rerun_from_stage == 'render_video' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.restore-production.outputs.source_artifact }}
+          run-id: ${{ needs.restore-production.outputs.source_run_id }}
+          github-token: ${{ github.token }}
+          path: .pipeline-artifacts
+
       - name: Extract image project
+        if: ${{ needs.restore-production.outputs.rerun_from_stage != 'render_video' }}
         shell: bash
         run: mkdir -p projects && tar -xzf .pipeline-artifacts/image-project.tar.gz -C projects
 
+      - name: Extract rerun project
+        if: ${{ needs.restore-production.outputs.rerun_from_stage == 'render_video' }}
+        shell: bash
+        run: mkdir -p projects && tar -xzf .pipeline-artifacts/rerun-project.tar.gz -C projects
       - name: Read project ID
         id: project
         shell: bash
@@ -934,8 +1103,11 @@ jobs:
           set -euo pipefail
           project_directory=$(find projects -mindepth 1 -maxdepth 1 -type d -name "${PROJECT_ID}_*" -print -quit)
           video_file="$project_directory/video/ritzz_test.mp4"
+          thumbnail_file="$project_directory/video/thumbnail.jpg"
           test -s "$video_file"
+          test -s "$thumbnail_file"
           cp "$video_file" .pipeline-artifacts/ritzz_test.mp4
+          cp "$thumbnail_file" .pipeline-artifacts/ritzz_thumbnail.jpg
 
       - name: Upload rendered video artifacts
         uses: actions/upload-artifact@v4
@@ -960,7 +1132,8 @@ jobs:
           PRODUCTION_ID: ${{ needs.restore-production.outputs.production_id }}
         run: |
           echo "Rendered test video passed deterministic technical QA."
-          echo "Download ritzz-production-${PRODUCTION_ID}-render_video and open ritzz_test.mp4 from the artifact root."
+          echo "Download ritzz-production-${PRODUCTION_ID}-render_video and open ritzz_test.mp4 from the artifact root; review ritzz_thumbnail.jpg too."
+          echo "The rendered-video AI review is in rendered-project.tar.gz at qa/rendered_video_semantic_qa.json."
           echo "This is a test video and must remain private or unlisted."
 
   packaging-approval:
@@ -1015,18 +1188,18 @@ jobs:
       - name: Download rendered project
         uses: actions/download-artifact@v4
         with:
-          name: ${{ endsWith(needs.restore-production.outputs.source_artifact, '-private_upload') && needs.restore-production.outputs.source_artifact || steps.pending-upload.outputs.artifact_name || needs.render-video.result == 'success' && format('ritzz-production-{0}-render_video', needs.restore-production.outputs.production_id) || needs.restore-production.outputs.source_artifact || format('ritzz-production-{0}-render_video', needs.restore-production.outputs.production_id) }}
-          run-id: ${{ endsWith(needs.restore-production.outputs.source_artifact, '-private_upload') && needs.restore-production.outputs.source_run_id || steps.pending-upload.outputs.artifact_name != '' && github.run_id || needs.render-video.result == 'success' && github.run_id || needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '7' && needs.restore-production.outputs.source_run_id || github.run_id }}
+          name: ${{ needs.render-video.result == 'success' && format('ritzz-production-{0}-render_video', needs.restore-production.outputs.production_id) || endsWith(needs.restore-production.outputs.source_artifact, '-private_upload') && needs.restore-production.outputs.source_artifact || steps.pending-upload.outputs.artifact_name || needs.restore-production.outputs.source_artifact || format('ritzz-production-{0}-render_video', needs.restore-production.outputs.production_id) }}
+          run-id: ${{ needs.render-video.result == 'success' && github.run_id || endsWith(needs.restore-production.outputs.source_artifact, '-private_upload') && needs.restore-production.outputs.source_run_id || steps.pending-upload.outputs.artifact_name != '' && github.run_id || needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '7' && needs.restore-production.outputs.source_run_id || github.run_id }}
           github-token: ${{ github.token }}
           path: .pipeline-artifacts
 
       - name: Extract rendered project
-        if: ${{ !endsWith(needs.restore-production.outputs.source_artifact, '-private_upload') && !endsWith(steps.pending-upload.outputs.artifact_name, '-private_upload') }}
+        if: ${{ needs.render-video.result == 'success' || (!endsWith(needs.restore-production.outputs.source_artifact, '-private_upload') && !endsWith(steps.pending-upload.outputs.artifact_name, '-private_upload')) }}
         shell: bash
         run: mkdir -p projects && tar -xzf .pipeline-artifacts/rendered-project.tar.gz -C projects
 
       - name: Extract pending upload project
-        if: ${{ endsWith(needs.restore-production.outputs.source_artifact, '-private_upload') || endsWith(steps.pending-upload.outputs.artifact_name, '-private_upload') }}
+        if: ${{ needs.render-video.result != 'success' && (endsWith(needs.restore-production.outputs.source_artifact, '-private_upload') || endsWith(steps.pending-upload.outputs.artifact_name, '-private_upload')) }}
         shell: bash
         run: mkdir -p projects && tar -xzf .pipeline-artifacts/private-upload-project.tar.gz -C projects
 
@@ -1054,6 +1227,10 @@ jobs:
           project_name=$(find projects -mindepth 1 -maxdepth 1 -type d -name "${{ steps.project.outputs.project_id }}_*" -printf "%f\n" | head -n 1)
           tar -czf .pipeline-artifacts/private-upload-project.tar.gz -C projects "$project_name"
 
+      - name: Start private-upload stage for rerun or saved-result retry
+        if: ${{ (needs.restore-production.outputs.rerun_from_stage != '' && endsWith(needs.restore-production.outputs.source_artifact, '-private_upload')) || (needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '7' && endsWith(needs.restore-production.outputs.source_artifact, '-private_upload')) }}
+        run: python scripts/manage_pipeline_production.py start --stage private_upload
+
       - name: Upload pending private-upload checkpoint
         if: ${{ !endsWith(needs.restore-production.outputs.source_artifact, '-private_upload') && steps.pending-upload.outputs.artifact_name == '' }}
         uses: actions/upload-artifact@v4
@@ -1076,7 +1253,26 @@ jobs:
           trap 'python scripts/manage_pipeline_production.py fail --stage "$stage" --error "Private upload failed or returned an uncertain result."' ERR
           python scripts/run_private_upload_stage.py
 
-      - name: Archive uploaded project
+      - name: Archive video upload result before thumbnail update
+        shell: bash
+        run: |
+          project_name=$(find projects -mindepth 1 -maxdepth 1 -type d -name "${{ steps.project.outputs.project_id }}_*" -printf "%f\n" | head -n 1)
+          tar -czf .pipeline-artifacts/private-upload-project.tar.gz -C projects "$project_name"
+          cp "projects/$project_name/publishing/publish.json" .pipeline-artifacts/private-upload-result.json
+
+      - name: Upload YouTube thumbnail
+        shell: bash
+        env:
+          RITZZ_PROJECT_ID: ${{ steps.project.outputs.project_id }}
+          GOOGLE_CLIENT_SECRETS_FILE: ${{ runner.temp }}/youtube-client-secrets.json
+          GOOGLE_TOKEN_FILE: ${{ runner.temp }}/youtube-token.json
+        run: |
+          set -euo pipefail
+          stage=private_upload
+          trap 'python scripts/manage_pipeline_production.py fail --stage "$stage" --artifacts private-upload-result.json private-upload-project.tar.gz --error "Thumbnail upload failed; video result is checkpointed and must not be uploaded again."' ERR
+          python scripts/upload_youtube_thumbnail.py
+
+      - name: Archive project with uploaded thumbnail
         shell: bash
         run: |
           project_name=$(find projects -mindepth 1 -maxdepth 1 -type d -name "${{ steps.project.outputs.project_id }}_*" -printf "%f\n" | head -n 1)
@@ -1087,6 +1283,7 @@ jobs:
         run: python scripts/manage_pipeline_production.py complete --stage private_upload --artifacts private-upload-result.json private-upload-project.tar.gz
 
       - name: Upload private upload checkpoint
+        if: ${{ always() && steps.project.outputs.project_id != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-private_upload
@@ -1117,6 +1314,7 @@ jobs:
         run: python -m pip install -r requirements.txt
 
       - name: Download voice project
+        if: ${{ needs.restore-production.outputs.rerun_from_stage != 'storyboard_generation' }}
         uses: actions/download-artifact@v4
         with:
           name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-voice_generation
@@ -1124,9 +1322,24 @@ jobs:
           github-token: ${{ github.token }}
           path: .pipeline-artifacts
 
+      - name: Download rerun project
+        if: ${{ needs.restore-production.outputs.rerun_from_stage == 'storyboard_generation' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.restore-production.outputs.source_artifact }}
+          run-id: ${{ needs.restore-production.outputs.source_run_id }}
+          github-token: ${{ github.token }}
+          path: .pipeline-artifacts
+
       - name: Extract voice project
+        if: ${{ needs.restore-production.outputs.rerun_from_stage != 'storyboard_generation' }}
         shell: bash
         run: mkdir -p projects && tar -xzf .pipeline-artifacts/voice-project.tar.gz -C projects
+
+      - name: Extract rerun project
+        if: ${{ needs.restore-production.outputs.rerun_from_stage == 'storyboard_generation' }}
+        shell: bash
+        run: mkdir -p projects && tar -xzf .pipeline-artifacts/rerun-project.tar.gz -C projects
 
       - name: Read project ID
         id: project

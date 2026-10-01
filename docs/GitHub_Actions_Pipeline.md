@@ -15,6 +15,14 @@ statuses and SHA-256 hashes for the checkpoint artifacts, and stops with
 `STATE_ARTIFACT_MISMATCH` if a saved state does not match the artifacts it
 references.
 
+To locate a saved production by its project ID, choose `RESUME`, enter the
+`project_id`, and leave `rerun_from_stage` at `NONE` to continue normally.
+Selecting `voice_generation`, `storyboard_generation`, `image_generation`,
+`render_video`, or `private_upload` restarts that stage and the stages after
+it from the saved project archive. Earlier completed stages remain checkpointed.
+The stage rerun option requires a matching unexpired Actions checkpoint and
+does not bypass the existing approval gates or private-upload reconciliation.
+
 Completed discovery and topic selection are reused on resume: they do not call
 vidIQ or GPT again, and a completed selection does not create another topic
 approval issue. Later completed production stages are skipped as well. State
@@ -61,26 +69,52 @@ no provider API calls and does not prove that a key has live service permission.
 8. Pause at the protected test-approval environment.
 9. Run the existing Research -> Outline -> Script content workflow.
 10. Upload the generated project artifacts to the GitHub Actions run.
-11. Use the human-selected topic and its vidIQ opportunity context to inform titles, tags, description framing,
-   and the thumbnail brief; persist the source report and candidate context.
+11. Use the human-selected topic and its vidIQ opportunity context to inform
+   the proposed title and description framing; preserve vidIQ's primary and
+   related keyword phrases as the highest-priority YouTube tags, then fill
+   remaining tag slots from the approved topic and script. Persist the source
+   report and candidate context.
 12. Generate and validate ElevenLabs narration with character alignment.
-13. Build the narrative and audio-timed static storyboard.
-14. Render the test video and run deterministic technical QA.
-15. Pause for human video review and approval.
-16. Pause for packaging approval.
-17. Upload the test video privately through YouTube OAuth.
-18. Keep the current run marked as a test run; public publication remains
+13. Build the narrative and audio-timed static storyboard, then assign
+   production editorial callouts to the final scene grouping.
+14. Generate scene images and composite each exact one-word editorial callout
+   into its image with FFmpeg, rather than relying on image-model lettering.
+15. Render the test video, run deterministic technical QA, and ask OpenAI
+   Vision to review one midpoint frame per scene against its aligned narration,
+   visual description, and callout.
+16. Generate a 1280×720 thumbnail from the opening scene and selected title.
+17. Pause for human review of the video, thumbnail, and saved semantic-QA
+   report.
+18. Pause for packaging approval.
+19. Upload the test video privately through YouTube OAuth, then set its
+   thumbnail separately. A thumbnail-upload retry reuses the saved video
+   result and will not upload a duplicate video.
+20. Keep the current run marked as a test run; public publication remains
    disabled.
 
 Voice validation and video rendering install FFmpeg in their Ubuntu jobs.
 `ffprobe` is required to measure generated narration duration; both `ffmpeg`
-and `ffprobe` are verified before their media stages proceed.
+and `ffprobe` are verified before their media stages proceed. Image generation
+also installs FFmpeg and DejaVu fonts for deterministic, legible callout
+compositing.
 After render and technical QA, download the
 `ritzz-production-<production_id>-render_video` artifact and open
 `ritzz_test.mp4` at the artifact root. The complete project checkpoint is also
-included as `rendered-project.tar.gz`. If rendering ran during a resume, the
-upload stage uses the render artifact from the current workflow run; if render
-was already complete, it restores the saved render artifact.
+included as `rendered-project.tar.gz`; `ritzz_thumbnail.jpg` is available
+alongside the video. The frame-based semantic report is saved in the project
+archive at `qa/rendered_video_semantic_qa.json`. It samples the midpoint of
+each planned scene and compares the rendered image to narration text and
+storyboard context; it is a QA aid, not a frame-by-frame synchronization
+measurement, automatic audio transcription, or a replacement for watching the
+video. An uncertain result is marked `REVIEW`; a clear mismatch blocks
+approval. If rendering ran during a resume, the upload stage uses the render
+artifact from the current workflow run; if render was already complete, it
+restores the saved render artifact.
+The test upload explicitly declares `made_for_kids: false`. YouTube's altered
+or synthetic-content disclosure is a separate Studio setting; this API flow
+does not set it. The intended non-photorealistic cartoon format generally does
+not require that disclosure, but human reviewers must flag any realistic
+synthetic or meaningfully altered content before publication.
 Storyboard scene timing scales outline section estimates proportionally to the
 script's declared duration, so imperfect per-section estimates cannot push the
 final scene to an invalid or negative duration.

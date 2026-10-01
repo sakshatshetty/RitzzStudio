@@ -514,6 +514,57 @@ def test_render_three_scene_video(
     )
 
 
+def test_default_production_render_is_exactly_1080p_30fps_16_9(
+    tmp_path: Path,
+) -> None:
+    image = create_test_images(tmp_path)[0]
+    audio = create_test_audio(tmp_path, duration_seconds=1.0)
+    assembly_plan = VideoAssemblyPlan(
+        topic="Production format",
+        clips=[
+            VideoClip(
+                scene_id="scene_001",
+                image_path=str(image),
+                start_seconds=0.0,
+                duration_seconds=1.0,
+            )
+        ],
+        total_duration_seconds=1.0,
+        audio_path=str(audio),
+    )
+    motion_plan = VideoMotionPlan(
+        topic="Production format",
+        width=1920,
+        height=1080,
+        fps=30,
+        instructions=[
+            MotionInstruction(
+                scene_id="scene_001",
+                start_seconds=0.0,
+                duration_seconds=1.0,
+                motion="static",
+                zoom_start=1.0,
+                zoom_end=1.0,
+                position_x_start=0.5,
+                position_x_end=0.5,
+                position_y_start=0.5,
+                position_y_end=0.5,
+            )
+        ],
+        total_duration_seconds=1.0,
+    )
+    output = tmp_path / "production_format.mp4"
+    renderer = FFmpegVideoRenderer()
+
+    renderer.render(assembly_plan, motion_plan, audio, output)
+    probe = renderer._probe_media(output)
+
+    assert probe["width"] == 1920
+    assert probe["height"] == 1080
+    assert probe["width"] * 9 == probe["height"] * 16
+    assert probe["fps"] == 30.0
+
+
 def test_missing_image_fails(
     tmp_path: Path,
 ) -> None:

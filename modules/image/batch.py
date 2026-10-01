@@ -1,7 +1,8 @@
-from pathlib import Path
 import json
+from pathlib import Path
 
 from modules.image.engine import ImageEngine
+from modules.image.image_overlays import embed_editorial_word
 from modules.image.models import (
     ImageAsset,
     ImageGenerationRequest,
@@ -84,8 +85,19 @@ class ImageBatchEngine:
 
         assets: list[ImageAsset] = []
 
+        scenes_by_id = {
+            scene.scene_id: scene
+            for scene in storyboard.scenes
+        }
         for request in requests:
             asset = self.image_engine.generate_asset(request)
+            scene = scenes_by_id[request.scene_id]
+            if asset.status == "completed" and scene.text_overlay:
+                if not asset.file_path:
+                    raise RuntimeError(
+                        f"Image provider returned no image path for {scene.scene_id}."
+                    )
+                embed_editorial_word(asset.file_path, scene.text_overlay)
             assets.append(asset)
 
         return assets

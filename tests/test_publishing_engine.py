@@ -47,6 +47,7 @@ def test_publish_writes_result_and_stores_video_metadata(tmp_path: Path):
     assert result.video_id
     assert result.url.startswith("https://youtu.be/")
     assert (project_folder / "publishing" / "publish.json").exists()
+    assert engine.load_publish_result(project_folder).video_id == result.video_id
 
 
 def test_publish_schedule_can_be_set_and_saved_per_project(tmp_path: Path):

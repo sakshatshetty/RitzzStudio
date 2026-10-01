@@ -335,7 +335,7 @@ def test_workflow_keeps_dynamic_selection_and_m2_behind_human_approval():
         for line in workflow.splitlines()
         if "tar -xzf .pipeline-artifacts/" in line
     ]
-    assert len(project_extractions) == 6
+    assert len(project_extractions) == 10
     assert all("-C projects" in line for line in project_extractions)
     assert "      - name: Install FFmpeg\n        run: |\n          sudo apt-get update\n          sudo apt-get install --yes ffmpeg\n          ffprobe -version" in workflow
     assert "          ffmpeg -version\n          ffprobe -version" in workflow
@@ -347,3 +347,12 @@ def test_workflow_keeps_dynamic_selection_and_m2_behind_human_approval():
     assert "needs.render-video.result == 'success' && github.run_id" in workflow
     assert "RITZZ topic approval - production ${process.env.PRODUCTION_ID}" in workflow
     assert "Persist private upload intent before contacting YouTube" in workflow
+    assert "      project_id:\n        description: Existing project ID" in workflow
+    assert "      rerun_from_stage:" in workflow
+    assert "        - private_upload" in workflow
+    assert '                      "restart",' in workflow
+    assert "rerun-project.tar.gz" in workflow
+    assert "Download rerun project" in workflow
+    assert "run-id: ${{ needs.render-video.result == 'success' && github.run_id" in workflow
+    assert "if: ${{ needs.render-video.result == 'success' || (!endsWith(" in workflow
+    assert "Start private-upload stage for rerun or saved-result retry" in workflow

@@ -20,6 +20,7 @@ def main() -> int:
         choices=(
             "initialize",
             "resume",
+            "restart",
             "start",
             "complete",
             "fail",
@@ -62,6 +63,10 @@ def main() -> int:
         if not arguments.production_id:
             parser.error("--production-id is required for resume.")
         state = store.resume(arguments.production_id)
+    elif arguments.action == "restart":
+        if not arguments.stage:
+            parser.error("--stage is required for restart.")
+        state = store.restart_from_stage(arguments.stage)
     elif arguments.action == "issue":
         if arguments.issue_number is None:
             parser.error("--issue-number is required for issue.")
