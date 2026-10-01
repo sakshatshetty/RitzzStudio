@@ -68,6 +68,7 @@ def _artifact_payload(report: OpportunityReport) -> dict[str, Any]:
     return {
         "report_id": report.report_id,
         "created_at": report.created_at,
+        "request": report.request.model_dump(mode="json"),
         "provider": report.provider,
         "source": PIPELINE_TOPIC_SOURCE,
         "discovery_mode": DISCOVERY_MODE,

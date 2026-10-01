@@ -11,7 +11,10 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from config import PROJECTS_DIR
 from modules.content_workflow import ContentWorkflow
-from modules.topic_intelligence.models import OpportunityReport
+from modules.topic_intelligence.models import (
+    OpportunityReport,
+    TopicDiscoveryRequest,
+)
 
 
 def main() -> int:
@@ -25,9 +28,21 @@ def main() -> int:
 
     selection = json.loads(selection_path.read_text(encoding="utf-8"))
     candidates_payload = json.loads(candidates_path.read_text(encoding="utf-8"))
+    request_payload = candidates_payload.get("request")
+    if request_payload is None:
+        print(
+            "Warning: topic candidate artifact has no discovery request metadata; "
+            "using the legacy pipeline defaults."
+        )
+        request_payload = TopicDiscoveryRequest(
+            niche="RITZZ mixed curiosity explainers",
+            limit=20,
+            force_refresh=True,
+            pipeline_topic_gate=True,
+        ).model_dump(mode="json")
     report_payload = {
         "report_id": candidates_payload["report_id"],
-        "request": candidates_payload["request"],
+        "request": request_payload,
         "provider": candidates_payload["provider"],
         "candidates": candidates_payload["candidates"],
     }
