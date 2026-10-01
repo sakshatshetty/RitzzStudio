@@ -74,7 +74,18 @@ def _report(candidate_count: int = 5) -> OpportunityReport:
             "gpt_calls_made": 1,
             "gpt_ideas_generated": 9,
             "ideas_rejected_count": 2,
-            "ideas_rejected": [],
+            "ideas_rejected": [
+                {
+                    "title": "The Strange World of Space",
+                    "source_opportunity_id": "opp-01",
+                    "reason": "Topic is too broad.",
+                },
+                {
+                    "title": "Why Is Celebrity Gossip Everywhere?",
+                    "source_opportunity_id": "opp-02",
+                    "reason": "Not suitable for RITZZ: celebrity or gossip content.",
+                },
+            ],
             "final_candidate_count": candidate_count,
         },
     )
@@ -141,6 +152,9 @@ def test_main_writes_artifacts_and_candidate_count_for_human_approval(
     assert "VIDIQ_TO_GPT" in markdown
     assert "vidIQ discovery operations: `1`" in markdown
     assert "GPT calls: `1`" in markdown
+    assert "## Rejected GPT ideas" in markdown
+    assert "The Strange World of Space** — Topic is too broad." in markdown
+    assert len(payload["rejected_ideas"]) == 2
     assert "candidate_count=5" in output_path.read_text(encoding="utf-8")
     assert not (artifact_directory / "topic_selection.json").exists()
     assert summary_path.exists()
@@ -234,9 +248,9 @@ def test_insufficient_qualified_topics_still_write_candidate_diagnostics(
     tmp_path,
     monkeypatch,
 ):
-    report = _report(2)
+    report = _report(1)
     report.discovery_diagnostics["status"] = "INSUFFICIENT_QUALIFIED_TOPICS"
-    report.discovery_diagnostics["final_candidate_count"] = 2
+    report.discovery_diagnostics["final_candidate_count"] = 1
     artifact_directory = tmp_path / "artifacts"
 
     class FixedDiscovery:
@@ -266,7 +280,35 @@ def test_insufficient_qualified_topics_still_write_candidate_diagnostics(
     assert diagnostics["status"] == "INSUFFICIENT_QUALIFIED_TOPICS"
     assert len(json.loads(
         (artifact_directory / "topic_candidates.json").read_text(encoding="utf-8")
-    )["candidates"]) == 2
+    )["candidates"]) == 1
+
+
+def test_main_allows_two_candidates_to_proceed_to_human_selection(
+    tmp_path,
+    monkeypatch,
+):
+    report = _report(2)
+    artifact_directory = tmp_path / "artifacts"
+
+    class FixedDiscovery:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def discover(self, _request):
+            return report
+
+    monkeypatch.setattr(
+        discover_pipeline_topics,
+        "GPTKeywordTopicDiscovery",
+        FixedDiscovery,
+    )
+    monkeypatch.setenv("RITZZ_PIPELINE_ARTIFACTS", str(artifact_directory))
+    monkeypatch.setenv("RITZZ_INVENTORY_FILE", str(tmp_path / "inventory.json"))
+    output_path = tmp_path / "github-output.txt"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output_path))
+
+    assert discover_pipeline_topics.main() == 0
+    assert "candidate_count=2" in output_path.read_text(encoding="utf-8")
 
 
 def test_workflow_keeps_dynamic_selection_and_m2_behind_human_approval():
@@ -276,6 +318,8 @@ def test_workflow_keeps_dynamic_selection_and_m2_behind_human_approval():
 
     assert "candidate_count: ${{ steps.discover.outputs.candidate_count }}" in workflow
     assert "CANDIDATE_COUNT: ${{ steps.candidate-count.outputs.count }}" in workflow
+    assert "candidateCount < 2 || candidateCount > 5" in workflow
+    assert "Expected 2–5 topic candidates" in workflow
     assert "'/^[1-5]$/ && $0 <= max {" in workflow
     assert "^[1-4]$" not in workflow
     assert "content-preparation:\n    name: Research, outline, and script\n    needs: [test-approval, select-topic, restore-production]" in workflow

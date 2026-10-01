@@ -300,6 +300,24 @@ def test_unmatched_opportunity_and_near_duplicate_ideas_are_rejected(tmp_path):
     assert "Near-duplicate" in reasons
 
 
+def test_two_qualified_ideas_pass_with_one_vidiq_and_one_gpt_call(tmp_path):
+    ideas = [
+        _idea(0),
+        _idea(1),
+        *[
+            _idea(index, title="The Strange World of Space")
+            for index in range(2, 8)
+        ],
+    ]
+
+    report, provider, generator = _discover(tmp_path, ideas=ideas)
+
+    assert len(report.candidates) == 2
+    assert report.discovery_diagnostics["status"] == "SUCCESS"
+    assert len(provider.calls) == 1
+    assert len(generator.calls) == 1
+
+
 def test_missing_vidiq_metrics_remain_unavailable_without_fabricated_values(tmp_path):
     opportunities = [_opportunity(index, metrics=False) for index in range(10)]
     report, _, _ = _discover(tmp_path, opportunities=opportunities)
@@ -399,7 +417,7 @@ def test_metric_formatting_keeps_large_search_counts_readable():
 
 
 @pytest.mark.parametrize("idea_count,expected_count", [(8, 5), (9, 5), (10, 5)])
-def test_shortlist_is_three_to_five_and_never_selects_automatically(
+def test_shortlist_is_two_to_five_and_never_selects_automatically(
     tmp_path,
     idea_count,
     expected_count,
@@ -408,10 +426,15 @@ def test_shortlist_is_three_to_five_and_never_selects_automatically(
     report, _, _ = _discover(tmp_path, ideas=ideas)
 
     assert len(report.candidates) == expected_count
-    assert 3 <= len(report.candidates) <= 5
+    assert 2 <= len(report.candidates) <= 5
     assert report.shortlist_candidate_ids
     assert not (tmp_path / "topic_selection.json").exists()
     assert report.discovery_diagnostics["status"] == "SUCCESS"
+    assert report.discovery_diagnostics["ideas_rejected_count"] == idea_count - 5
+    assert all(
+        "shortlist limit" in idea["reason"]
+        for idea in report.discovery_diagnostics["ideas_rejected"]
+    )
 
 
 @pytest.mark.parametrize("valid_count", [3, 4, 5])
@@ -426,7 +449,9 @@ def test_shortlist_allows_three_four_or_five_qualified_ideas(tmp_path, valid_cou
     assert report.discovery_diagnostics["status"] == "SUCCESS"
 
 
-def test_fewer_than_three_qualified_ideas_does_not_manufacture_candidates(tmp_path):
+def test_fewer_than_two_qualified_ideas_does_not_retry_or_manufacture_candidates(
+    tmp_path,
+):
     ideas = [
         _idea(0, title="History of England"),
         _idea(1, title="The Strange World of Space"),
@@ -437,10 +462,12 @@ def test_fewer_than_three_qualified_ideas_does_not_manufacture_candidates(tmp_pa
         _idea(6, title="How Can You Get Better Weight Loss Tips?"),
         _idea(7, title="The History of Rome"),
     ]
-    report, _, _ = _discover(tmp_path, ideas=ideas)
+    report, provider, generator = _discover(tmp_path, ideas=ideas)
 
     assert len(report.candidates) == 0
     assert report.discovery_diagnostics["status"] == "INSUFFICIENT_QUALIFIED_TOPICS"
+    assert len(provider.calls) == 1
+    assert len(generator.calls) == 1
 
 
 def test_vidiq_discovery_adapter_uses_one_keyword_research_tool_call():
