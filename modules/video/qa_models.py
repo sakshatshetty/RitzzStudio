@@ -2,7 +2,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-
 QAStatus = Literal["PASS", "REVIEW", "FAIL"]
 
 
@@ -33,6 +32,19 @@ class AudioImageMatchReport(BaseModel):
     def counts(self) -> dict[str, int]:
         return {status: sum(item.status == status for item in self.results)
                 for status in ("PASS", "REVIEW", "FAIL")}
+
+
+class RenderedVideoSemanticQAReport(BaseModel):
+    status: QAStatus
+    results: list[SceneQAResult] = Field(default_factory=list)
+    sample_policy: str = "One rendered frame at each scene midpoint."
+
+    @property
+    def counts(self) -> dict[str, int]:
+        return {
+            status: sum(item.status == status for item in self.results)
+            for status in ("PASS", "REVIEW", "FAIL")
+        }
 
 
 class TechnicalQAResult(BaseModel):

@@ -5,6 +5,7 @@ from pathlib import Path
 
 from modules.image.prompt_builder import ImagePromptBuilder
 from modules.project.config import ProductionConfig
+from modules.storyboard.dynamic_engine import DynamicStoryboardEngine
 from modules.storyboard.models import Storyboard, StoryboardScene
 from modules.video.sync_engine import VideoSynchronizationEngine
 from modules.video.sync_models import NarrationAlignment
@@ -53,6 +54,9 @@ class AudioTimedStoryboardEngine:
                     f"Audio-timed scene {index + 1} exceeds the configured maximum hold."
                 )
             scenes.append(self._merge_group(group, index + 1, start, duration))
+        scenes = DynamicStoryboardEngine(
+            prompt_builder=self.prompt_builder,
+        ).apply_production_editorial_callouts(scenes)
         total_duration = alignment.audio_duration_seconds
         result = Storyboard(
             topic=storyboard.topic,

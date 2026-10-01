@@ -228,14 +228,12 @@ def test_prompt_adds_editorial_text_when_present() -> None:
 
     prompt = builder.build(scene)
 
-    assert (
-        'Editorial text inside the illustration: '
-        '"THE MYSTERY".'
-        in prompt
-    )
+    assert "exact word will be composited into the final image" in prompt
+    assert "Keep clear negative space near the lower-left" in prompt
+    assert "Do not render letters" in prompt
 
 
-def test_editorial_text_uses_handwritten_typography() -> None:
+def test_editorial_text_is_rendered_after_image_generation() -> None:
     builder = ImagePromptBuilder()
 
     scene = sample_scene()
@@ -243,28 +241,11 @@ def test_editorial_text_uses_handwritten_typography() -> None:
 
     prompt = builder.build(scene)
 
-    assert (
-        "simple, clean, hand-drawn handwritten lettering"
-        in prompt
-    )
-
-    assert (
-        "casual handwritten marker or hand-lettered"
-        in prompt
-    )
-
-    assert (
-        "medium-large and clearly readable"
-        in prompt
-    )
-
-    assert (
-        "visually noticeable but still secondary"
-        in prompt
-    )
+    assert "composited into the final image after generation" in prompt
+    assert "WILD SIZE" not in prompt
 
 
-def test_editorial_text_uses_plain_black_or_white() -> None:
+def test_editorial_text_does_not_change_the_colored_illustration_style() -> None:
     builder = ImagePromptBuilder()
 
     scene = sample_scene()
@@ -272,17 +253,11 @@ def test_editorial_text_uses_plain_black_or_white() -> None:
 
     prompt = builder.build(scene)
 
-    assert (
-        "plain black or plain white"
-        in prompt
-    )
-
-    assert "Use one flat color for the lettering only" in prompt
     assert "Keep the illustration fully colored" in prompt
     assert "Do not make the illustration monochrome" in prompt
 
 
-def test_editorial_text_is_not_cursive() -> None:
+def test_editorial_text_prompt_requires_no_generated_typography() -> None:
     builder = ImagePromptBuilder()
 
     scene = sample_scene()
@@ -290,13 +265,10 @@ def test_editorial_text_is_not_cursive() -> None:
 
     prompt = builder.build(scene)
 
-    assert (
-        "Do not use cursive writing"
-        in prompt
-    )
+    assert "Do not render letters, words, captions, labels, or any other typography." in prompt
 
 
-def test_editorial_text_avoids_decorative_effects() -> None:
+def test_editorial_text_prompt_preserves_negative_space_for_composite() -> None:
     builder = ImagePromptBuilder()
 
     scene = sample_scene()
@@ -304,88 +276,8 @@ def test_editorial_text_avoids_decorative_effects() -> None:
 
     prompt = builder.build(scene)
 
-    assert (
-        "No decorative lettering"
-        in prompt
-    )
-
-    assert (
-        "no thick outline"
-        in prompt
-    )
-
-    assert (
-        "no 3D effects"
-        in prompt
-    )
-
-    assert (
-        "no gradients"
-        in prompt
-    )
-
-    assert (
-        "no bright colors in the lettering"
-        in prompt
-    )
-
-    assert (
-        "no shadows"
-        in prompt
-    )
-
-    assert (
-        "no graphic text effects"
-        in prompt
-    )
-
-
-def test_editorial_text_avoids_large_headline_treatment() -> None:
-    builder = ImagePromptBuilder()
-
-    scene = sample_scene()
-    scene.text_overlay = "THE MYSTERY"
-
-    prompt = builder.build(scene)
-
-    assert (
-        "large headline text"
-        in prompt
-    )
-
-    assert (
-        "oversized display typography"
-        in prompt
-    )
-
-    assert (
-        "bold display typography"
-        in prompt
-    )
-
-
-def test_editorial_text_avoids_colored_text() -> None:
-    builder = ImagePromptBuilder()
-
-    scene = sample_scene()
-    scene.text_overlay = "THE MYSTERY"
-
-    prompt = builder.build(scene)
-
-    assert (
-        "multicolored text"
-        in prompt
-    )
-
-    assert (
-        "yellow text"
-        in prompt
-    )
-
-    assert (
-        "bright colored text"
-        in prompt
-    )
+    assert "Keep clear negative space near the lower-left" in prompt
+    assert "Do not render letters" in prompt
 
 
 def test_editorial_text_avoids_graphic_text_elements() -> None:
@@ -396,25 +288,7 @@ def test_editorial_text_avoids_graphic_text_elements() -> None:
 
     prompt = builder.build(scene)
 
-    assert (
-        "text banners"
-        in prompt
-    )
-
-    assert (
-        "burst shapes"
-        in prompt
-    )
-
-    assert (
-        "gradient text"
-        in prompt
-    )
-
-    assert (
-        "drop shadows"
-        in prompt
-    )
+    assert "Do not render letters" in prompt
 
 
 def test_editorial_text_changes_negative_text_instruction() -> None:
@@ -425,10 +299,7 @@ def test_editorial_text_changes_negative_text_instruction() -> None:
 
     prompt = builder.build(scene)
 
-    assert (
-        "any text beyond the requested editorial callout"
-        in prompt
-    )
+    assert "NO TEXT." in prompt
 
 
 def test_editorial_text_is_trimmed() -> None:
@@ -441,16 +312,7 @@ def test_editorial_text_is_trimmed() -> None:
 
     prompt = builder.build(scene)
 
-    assert (
-        'Editorial text inside the illustration: '
-        '"THE REAL REASON".'
-        in prompt
-    )
-
-    assert (
-        '"   THE REAL REASON   "'
-        not in prompt
-    )
+    assert "exact word will be composited into the final image" in prompt
 
 
 def test_editorial_text_is_part_of_artwork() -> None:
@@ -461,15 +323,7 @@ def test_editorial_text_is_part_of_artwork() -> None:
 
     prompt = builder.build(scene)
 
-    assert (
-        "The editorial text is part of the artwork"
-        in prompt
-    )
-
-    assert (
-        "not a subtitle or caption"
-        in prompt
-    )
+    assert "composited into the final image after generation" in prompt
 
 
 def test_prompt_contains_simple_visual_direction() -> None:

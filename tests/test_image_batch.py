@@ -40,7 +40,7 @@ def create_test_storyboard() -> Storyboard:
                     "eye patch",
                     "ship wheel",
                 ],
-                text_overlay="Why the eye patch?",
+                text_overlay="CURIOSITY",
                 camera_motion="static",
                 transition="cut",
                 research_sources=[
@@ -71,7 +71,7 @@ def create_test_storyboard() -> Storyboard:
                 props=[
                     "eye patch",
                 ],
-                text_overlay="The surprising answer",
+                text_overlay="SURPRISE",
                 camera_motion="slow_zoom_in",
                 transition="cut",
                 research_sources=[
@@ -102,7 +102,7 @@ def create_test_storyboard() -> Storyboard:
                 props=[
                     "wooden barrel",
                 ],
-                text_overlay="Not always an injury",
+                text_overlay="INJURY",
                 camera_motion="pan_right",
                 transition="fade",
                 research_sources=[
@@ -255,69 +255,10 @@ def test_prompts_use_prompt_builder(
         in prompt
     )
 
-    # Editorial text.
-    assert (
-        'Editorial text inside the illustration: '
-        '"Why the eye patch?".'
-        in prompt
-    )
-
-    # New handwritten editorial typography.
-    assert (
-        "simple, clean, hand-drawn handwritten lettering"
-        in prompt
-    )
-
-    assert (
-        "casual handwritten marker or hand-lettered"
-        in prompt
-    )
-
-    assert (
-        "medium-large and clearly readable"
-        in prompt
-    )
-
-    assert (
-        "visually noticeable but still secondary"
-        in prompt
-    )
-
-    assert (
-        "plain black or plain white"
-        in prompt
-    )
-
-    # Prevent the old oversized/decorative treatment.
-    assert (
-        "large headline text"
-        in prompt
-    )
-
-    assert (
-        "oversized display typography"
-        in prompt
-    )
-
-    assert (
-        "bold display typography"
-        in prompt
-    )
-
-    assert (
-        "yellow text"
-        in prompt
-    )
-
-    assert (
-        "thick text outlines"
-        in prompt
-    )
-
-    assert (
-        "3D text"
-        in prompt
-    )
+    assert "exact word will be composited into the final image after generation" in prompt
+    assert "Keep clear negative space near the lower-left" in prompt
+    assert "Do not render letters, words, captions, labels, or any other typography." in prompt
+    assert "CURIOSITY" not in prompt
 
 
 def test_prompt_without_editorial_text_does_not_request_text(
@@ -400,7 +341,7 @@ def test_prompts_use_different_camera_motion(
     )
 
 
-def test_editorial_text_is_preserved_for_each_scene(
+def test_editorial_words_are_composited_after_generation(
     tmp_path: Path,
 ) -> None:
     provider = MockImageProvider()
@@ -414,19 +355,12 @@ def test_editorial_text_is_preserved_for_each_scene(
         output_directory=tmp_path,
     )
 
-    assert (
-        '"Why the eye patch?"'
-        in requests[0].prompt
-    )
-
-    assert (
-        '"The surprising answer"'
-        in requests[1].prompt
-    )
-
-    assert (
-        '"Not always an injury"'
-        in requests[2].prompt
+    assert "CURIOSITY" not in requests[0].prompt
+    assert "SURPRISE" not in requests[1].prompt
+    assert "INJURY" not in requests[2].prompt
+    assert all(
+        "composited into the final image after generation" in request.prompt
+        for request in requests
     )
 
 
@@ -492,7 +426,13 @@ def test_prompts_are_not_scene_image_prompt_directly(
 
 def test_generate_all_images(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
+    overlays = []
+    monkeypatch.setattr(
+        "modules.image.batch.embed_editorial_word",
+        lambda image_path, word: overlays.append((Path(image_path).name, word)),
+    )
     provider = MockImageProvider()
     image_engine = ImageEngine(provider)
     batch_engine = ImageBatchEngine(image_engine)
@@ -510,6 +450,11 @@ def test_generate_all_images(
 
     assert len(assets) == 3
     assert len(provider.calls) == 3
+    assert overlays == [
+        ("scene_001.png", "CURIOSITY"),
+        ("scene_002.png", "SURPRISE"),
+        ("scene_003.png", "INJURY"),
+    ]
 
     for asset in assets:
         assert asset.status == "completed"
@@ -522,7 +467,9 @@ def test_generate_all_images(
 
 def test_scene_to_image_mapping(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
+    monkeypatch.setattr("modules.image.batch.embed_editorial_word", lambda *_args: None)
     provider = MockImageProvider()
     image_engine = ImageEngine(provider)
     batch_engine = ImageBatchEngine(image_engine)
@@ -546,7 +493,9 @@ def test_scene_to_image_mapping(
 
 def test_failed_scene_is_preserved(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
+    monkeypatch.setattr("modules.image.batch.embed_editorial_word", lambda *_args: None)
     provider = MockImageProvider(
         fail_scene_id="scene_002"
     )
@@ -575,7 +524,9 @@ def test_failed_scene_is_preserved(
 
 def test_save_and_load_manifest(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
+    monkeypatch.setattr("modules.image.batch.embed_editorial_word", lambda *_args: None)
     provider = MockImageProvider()
     image_engine = ImageEngine(provider)
     batch_engine = ImageBatchEngine(image_engine)
@@ -623,7 +574,9 @@ def test_manifest_missing_file(
 
 def test_output_files_use_image_ids(
     tmp_path: Path,
+    monkeypatch,
 ) -> None:
+    monkeypatch.setattr("modules.image.batch.embed_editorial_word", lambda *_args: None)
     provider = MockImageProvider()
     image_engine = ImageEngine(provider)
     batch_engine = ImageBatchEngine(image_engine)

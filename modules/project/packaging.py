@@ -355,24 +355,37 @@ class PackagingEngine:
         opportunity_context: dict[str, Any] | None = None,
     ) -> list[str]:
         context = opportunity_context or {}
-        evidence_terms = [
-            str(context.get("primary_keyword", "")),
-            *[str(item) for item in context.get("related_keywords", [])],
-            *[str(item) for item in context.get("related_questions", [])],
+        related_keywords = context.get("related_keywords", [])
+        if isinstance(related_keywords, str):
+            related_keywords = [related_keywords]
+        elif not isinstance(related_keywords, list):
+            related_keywords = []
+        vidiq_terms = [
+            str(context.get("primary_keyword") or ""),
+            *[str(item) for item in related_keywords],
         ]
-        text = f"{topic} {script_excerpt} {' '.join(evidence_terms)}".lower()
+        tags: list[str] = []
+        for candidate in vidiq_terms:
+            tag = re.sub(r"\s+", " ", candidate).strip(" ,")
+            existing = {item.casefold() for item in tags}
+            if tag and len(tag) <= 30 and tag.casefold() not in existing:
+                tags.append(tag)
+            if len(tags) == 8:
+                return tags
+
+        text = f"{topic} {script_excerpt}".lower()
         tokens = re.findall(r"[a-z0-9][a-z0-9'/-]{2,}", text)
-        filtered = []
         for token in tokens:
             if token in {"why", "what", "how", "the", "they", "this", "that", "with", "from", "into", "about", "were", "your", "their", "then", "have", "been", "will", "just", "there", "through", "it", "its", "did", "does"}:
                 continue
             if len(token) < 4:
                 continue
-            if token not in filtered:
-                filtered.append(token)
-        if len(filtered) < 4:
-            filtered.extend(["curiosity", "history", "explainer", "facts"])
-        return filtered[:8]
+            existing = {item.casefold() for item in tags}
+            if token.casefold() not in existing:
+                tags.append(token)
+            if len(tags) == 8:
+                break
+        return tags
 
     @staticmethod
     def _keyword_tokens(text: str) -> set[str]:

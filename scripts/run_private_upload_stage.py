@@ -18,6 +18,12 @@ from modules.publishing.youtube_provider import YouTubeProvider
 
 def main() -> int:
     production_id = os.environ.get("RITZZ_PRODUCTION_ID")
+    project_id = os.environ["RITZZ_PROJECT_ID"]
+    projects_directory = Path("projects")
+    manager = ProjectManager(projects_directory)
+    project = manager.load_project(project_id)
+    project_directory = manager.get_project_path(project)
+    publish_result_file = project_directory / "publishing" / "publish.json"
     if production_id:
         state_store = ProductionStateStore(
             os.environ.get(
@@ -27,16 +33,30 @@ def main() -> int:
             os.environ.get("RITZZ_PIPELINE_ARTIFACTS", ".pipeline-artifacts"),
         )
         state_store.resume(production_id)
-        state_store.validate_private_upload_intent(
-            os.environ["GITHUB_RUN_ID"],
-            int(os.environ["GITHUB_RUN_ATTEMPT"]),
-        )
+        if not publish_result_file.is_file():
+            state_store.validate_private_upload_intent(
+                os.environ["GITHUB_RUN_ID"],
+                int(os.environ["GITHUB_RUN_ATTEMPT"]),
+            )
 
-    project_id = os.environ["RITZZ_PROJECT_ID"]
-    projects_directory = Path("projects")
-    manager = ProjectManager(projects_directory)
-    project = manager.load_project(project_id)
-    project_directory = manager.get_project_path(project)
+    if publish_result_file.is_file():
+        saved_result = PublishingEngine.load_publish_result(project_directory)
+        if not saved_result.video_id.strip():
+            raise RuntimeError(
+                "Saved private-upload result has no YouTube video ID; "
+                "refusing to retry the video upload."
+            )
+        if saved_result.publish_status != "PRIVATE":
+            raise RuntimeError(
+                "Saved upload result is not private; refusing to treat it as "
+                "a completed private test upload."
+            )
+        print(
+            f"Private video {saved_result.video_id} already has a saved result; "
+            "skipping video upload to prevent a duplicate."
+        )
+        return 0
+
     video_file = project_directory / "video" / "ritzz_test.mp4"
     packaging_file = project_directory / "packaging.json"
     if not video_file.is_file() or not packaging_file.is_file():

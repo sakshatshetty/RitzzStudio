@@ -75,6 +75,25 @@ class YouTubeProvider:
             "url": f"https://youtu.be/{video_id}",
         }
 
+    def set_thumbnail(
+        self,
+        *,
+        video_id: str,
+        thumbnail_file: str | Path,
+    ) -> dict[str, Any]:
+        thumbnail_path = Path(thumbnail_file)
+        if not video_id.strip():
+            raise ValueError("A YouTube video ID is required to set its thumbnail.")
+        if not thumbnail_path.is_file() or thumbnail_path.stat().st_size == 0:
+            raise FileNotFoundError(
+                f"Thumbnail image is missing or empty: {thumbnail_path}"
+            )
+        request = self.service.thumbnails().set(
+            videoId=video_id,
+            media_body=self._media_upload_builder(str(thumbnail_path)),
+        )
+        return request.execute()
+
     @staticmethod
     def _build_media_upload(video_file: str) -> Any:
         try:

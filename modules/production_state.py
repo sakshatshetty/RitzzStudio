@@ -109,6 +109,32 @@ class ProductionStateStore:
         self._save(state)
         return state
 
+    def restart_from_stage(self, stage: str) -> dict[str, Any]:
+        state = self._read_state()
+        self._stage(state, stage)
+        restart_index = PIPELINE_STAGES.index(stage)
+        if any(
+            state["stages"][previous]["status"] != "completed"
+            for previous in PIPELINE_STAGES[:restart_index]
+        ):
+            raise ProductionStateError(
+                "STAGE_PREREQUISITE_INCOMPLETE",
+                f"Cannot restart {stage} until every earlier production stage is completed.",
+            )
+
+        for downstream_stage in PIPELINE_STAGES[restart_index:]:
+            state["stages"][downstream_stage].update(
+                status="pending",
+                started_at=None,
+                completed_at=None,
+                error=None,
+                artifacts=[],
+            )
+        state["current_stage"] = None
+        state["status"] = "in_progress"
+        self._save(state)
+        return state
+
     def set_project_id(self, project_id: str) -> dict[str, Any]:
         if not project_id:
             raise ValueError("Project ID cannot be empty.")
