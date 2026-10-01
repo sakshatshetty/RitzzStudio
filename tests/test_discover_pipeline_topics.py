@@ -339,5 +339,11 @@ def test_workflow_keeps_dynamic_selection_and_m2_behind_human_approval():
     assert all("-C projects" in line for line in project_extractions)
     assert "      - name: Install FFmpeg\n        run: |\n          sudo apt-get update\n          sudo apt-get install --yes ffmpeg\n          ffprobe -version" in workflow
     assert "          ffmpeg -version\n          ffprobe -version" in workflow
+    assert "      - name: Add review video to artifact root" in workflow
+    assert 'cp "$video_file" .pipeline-artifacts/ritzz_test.mp4' in workflow
+    assert "open ritzz_test.mp4 from the artifact root" in workflow
+    assert "needs: [packaging-approval, render-video, restore-production]" in workflow
+    assert "needs.render-video.result == 'success' && format('ritzz-production-{0}-render_video'" in workflow
+    assert "needs.render-video.result == 'success' && github.run_id" in workflow
     assert "RITZZ topic approval - production ${process.env.PRODUCTION_ID}" in workflow
     assert "Persist private upload intent before contacting YouTube" in workflow

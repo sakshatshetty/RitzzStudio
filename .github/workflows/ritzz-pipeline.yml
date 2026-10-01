@@ -926,6 +926,17 @@ jobs:
       - name: Complete render checkpoint
         run: python scripts/manage_pipeline_production.py complete --stage render_video --artifacts rendered-project.tar.gz
 
+      - name: Add review video to artifact root
+        shell: bash
+        env:
+          PROJECT_ID: ${{ steps.project.outputs.project_id }}
+        run: |
+          set -euo pipefail
+          project_directory=$(find projects -mindepth 1 -maxdepth 1 -type d -name "${PROJECT_ID}_*" -print -quit)
+          video_file="$project_directory/video/ritzz_test.mp4"
+          test -s "$video_file"
+          cp "$video_file" .pipeline-artifacts/ritzz_test.mp4
+
       - name: Upload rendered video artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -945,9 +956,11 @@ jobs:
       url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - name: Confirm video review boundary
+        env:
+          PRODUCTION_ID: ${{ needs.restore-production.outputs.production_id }}
         run: |
           echo "Rendered test video passed deterministic technical QA."
-          echo "Review the uploaded artifact before approving this environment."
+          echo "Download ritzz-production-${PRODUCTION_ID}-render_video and open ritzz_test.mp4 from the artifact root."
           echo "This is a test video and must remain private or unlisted."
 
   packaging-approval:
@@ -967,7 +980,7 @@ jobs:
 
   private-upload:
     name: Upload test video privately
-    needs: [packaging-approval, restore-production]
+    needs: [packaging-approval, render-video, restore-production]
     if: ${{ always() && needs.restore-production.result == 'success' && (needs.restore-production.outputs.effective_mode == 'NEW' || needs.restore-production.outputs.resume_from_index <= 7) && ((needs.packaging-approval.result == 'success') || (needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '7')) }}
     runs-on: ubuntu-latest
     env:
@@ -1002,8 +1015,8 @@ jobs:
       - name: Download rendered project
         uses: actions/download-artifact@v4
         with:
-          name: ${{ endsWith(needs.restore-production.outputs.source_artifact, '-private_upload') && needs.restore-production.outputs.source_artifact || steps.pending-upload.outputs.artifact_name || needs.restore-production.outputs.source_artifact || format('ritzz-production-{0}-render_video', needs.restore-production.outputs.production_id) }}
-          run-id: ${{ endsWith(needs.restore-production.outputs.source_artifact, '-private_upload') && needs.restore-production.outputs.source_run_id || steps.pending-upload.outputs.artifact_name != '' && github.run_id || needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '7' && needs.restore-production.outputs.source_run_id || github.run_id }}
+          name: ${{ endsWith(needs.restore-production.outputs.source_artifact, '-private_upload') && needs.restore-production.outputs.source_artifact || steps.pending-upload.outputs.artifact_name || needs.render-video.result == 'success' && format('ritzz-production-{0}-render_video', needs.restore-production.outputs.production_id) || needs.restore-production.outputs.source_artifact || format('ritzz-production-{0}-render_video', needs.restore-production.outputs.production_id) }}
+          run-id: ${{ endsWith(needs.restore-production.outputs.source_artifact, '-private_upload') && needs.restore-production.outputs.source_run_id || steps.pending-upload.outputs.artifact_name != '' && github.run_id || needs.render-video.result == 'success' && github.run_id || needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '7' && needs.restore-production.outputs.source_run_id || github.run_id }}
           github-token: ${{ github.token }}
           path: .pipeline-artifacts
 

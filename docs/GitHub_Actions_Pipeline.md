@@ -75,6 +75,12 @@ no provider API calls and does not prove that a key has live service permission.
 Voice validation and video rendering install FFmpeg in their Ubuntu jobs.
 `ffprobe` is required to measure generated narration duration; both `ffmpeg`
 and `ffprobe` are verified before their media stages proceed.
+After render and technical QA, download the
+`ritzz-production-<production_id>-render_video` artifact and open
+`ritzz_test.mp4` at the artifact root. The complete project checkpoint is also
+included as `rendered-project.tar.gz`. If rendering ran during a resume, the
+upload stage uses the render artifact from the current workflow run; if render
+was already complete, it restores the saved render artifact.
 Storyboard scene timing scales outline section estimates proportionally to the
 script's declared duration, so imperfect per-section estimates cannot push the
 final scene to an invalid or negative duration.
