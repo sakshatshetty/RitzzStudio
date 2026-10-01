@@ -330,5 +330,12 @@ def test_workflow_keeps_dynamic_selection_and_m2_behind_human_approval():
     assert 'state.get("current_stage") == expected_stage' in workflow
     assert 'bool(expected_stage_state.get("artifacts"))' in workflow
     assert 'tar -xzf "$checkpoint/content-project.tar.gz" -C projects' in workflow
+    project_extractions = [
+        line.strip()
+        for line in workflow.splitlines()
+        if "tar -xzf .pipeline-artifacts/" in line
+    ]
+    assert len(project_extractions) == 6
+    assert all("-C projects" in line for line in project_extractions)
     assert "RITZZ topic approval - production ${process.env.PRODUCTION_ID}" in workflow
     assert "Persist private upload intent before contacting YouTube" in workflow
