@@ -11,10 +11,34 @@ from scripts import resolve_production_by_project
 from scripts.resolve_production_by_project import find_checkpoint_for_project
 
 
-def checkpoint_archive(production_id: str, project_id: str) -> bytes:
+def checkpoint_archive(
+    production_id: str,
+    project_id: str,
+    *,
+    completed_stages: tuple[str, ...] = PIPELINE_STAGES,
+    stage_statuses: dict[str, str] | None = None,
+    current_stage: str | None = None,
+    production_status: str = "in_progress",
+    private_upload_intent: dict[str, object] | None = None,
+) -> bytes:
     state = {
         "production_id": production_id,
         "project_id": project_id,
+        "status": production_status,
+        "current_stage": current_stage,
+        "private_upload_intent": private_upload_intent,
+        "stages": {
+            stage: {
+                "status": (stage_statuses or {}).get(
+                    stage,
+                    "completed" if stage in completed_stages else "pending",
+                ),
+                "artifacts": [{"path": f"{stage}.tar.gz"}]
+                if stage in completed_stages
+                else [],
+            }
+            for stage in PIPELINE_STAGES
+        },
     }
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
@@ -77,7 +101,11 @@ def test_resolves_project_checkpoint_when_production_id_is_entered():
     result = find_checkpoint_for_project(
         "Test_V1",
         [artifact],
-        lambda _artifact_id: checkpoint_archive("Test_V1", "20261001_001"),
+        lambda _artifact_id: checkpoint_archive(
+            "Test_V1",
+            "20261001_001",
+            completed_stages=PIPELINE_STAGES[:7],
+        ),
     )
 
     assert result == {
@@ -89,6 +117,73 @@ def test_resolves_project_checkpoint_when_production_id_is_entered():
         "effective_mode": "RESUME",
         "matched_by": "production_id",
     }
+
+
+def test_skips_later_pending_checkpoint_and_selects_latest_completed_stage():
+    artifacts = [
+        make_artifact(
+            "Test_V1",
+            "private_upload",
+            20,
+            "2026-10-01T13:15:00Z",
+            200,
+        ),
+        make_artifact(
+            "Test_V1",
+            "image_generation",
+            19,
+            "2026-10-01T10:09:00Z",
+            190,
+        ),
+    ]
+    archives = {
+        20: checkpoint_archive(
+            "Test_V1",
+            "20261001_001",
+            completed_stages=PIPELINE_STAGES[:6],
+        ),
+        19: checkpoint_archive(
+            "Test_V1",
+            "20261001_001",
+            completed_stages=PIPELINE_STAGES[:6],
+        ),
+    }
+
+    result = find_checkpoint_for_project(
+        "20261001_001",
+        artifacts,
+        lambda artifact_id: archives[artifact_id],
+    )
+
+    assert result["source_artifact"] == "ritzz-production-Test_V1-image_generation"
+    assert result["checkpoint_index"] == PIPELINE_STAGES.index("image_generation")
+
+
+def test_allows_interrupted_private_upload_checkpoint_for_reconciliation():
+    artifact = make_artifact(
+        "Test_V1",
+        "private_upload",
+        30,
+        "2026-10-01T13:20:00Z",
+        300,
+    )
+    archive = checkpoint_archive(
+        "Test_V1",
+        "20261001_001",
+        completed_stages=PIPELINE_STAGES[:7],
+        stage_statuses={"private_upload": "running"},
+        current_stage="private_upload",
+        private_upload_intent={"run_id": "300", "run_attempt": 1},
+    )
+
+    result = find_checkpoint_for_project(
+        "Test_V1",
+        [artifact],
+        lambda _artifact_id: archive,
+    )
+
+    assert result["checkpoint_index"] == PIPELINE_STAGES.index("private_upload")
+    assert result["source_artifact"] == "ritzz-production-Test_V1-private_upload"
 
 
 def test_project_checkpoint_resolution_fails_when_project_id_has_no_match():

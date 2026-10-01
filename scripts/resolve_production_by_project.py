@@ -111,14 +111,13 @@ def find_checkpoint_for_project(
         raise ValueError(
             "Project ID must contain only letters, numbers, underscores, or hyphens."
         )
-    eligible = [
-        artifact
-        for artifact in artifacts
-        if not artifact.get("expired")
-        and _artifact_stage(str(artifact.get("name", "")))
-        and _artifact_stage(str(artifact.get("name", "")))[1]
-        in PROJECT_BACKED_STAGES
-    ]
+    eligible = []
+    for artifact in artifacts:
+        if artifact.get("expired"):
+            continue
+        stage_info = _artifact_stage(str(artifact.get("name", "")))
+        if stage_info is not None and stage_info[1] in PROJECT_BACKED_STAGES:
+            eligible.append(artifact)
     eligible.sort(
         key=lambda item: (
             str(item.get("created_at", "")),
@@ -152,6 +151,31 @@ def find_checkpoint_for_project(
             raise RuntimeError(
                 f"Checkpoint artifact {artifact['name']} contains a different production ID."
             )
+        stages = state.get("stages")
+        if not isinstance(stages, dict):
+            raise TypeError(
+                f"Checkpoint artifact {artifact['name']} has no valid stage state."
+            )
+        stage_state = stages.get(stage)
+        if not isinstance(stage_state, dict):
+            raise TypeError(
+                f"Checkpoint artifact {artifact['name']} has no state for stage {stage}."
+            )
+        completed_stage = stage_state.get("status") == "completed"
+        failed_stage_retry = (
+            stage_state.get("status") == "failed"
+            and state.get("status") == "failed"
+            and state.get("current_stage") == stage
+            and bool(stage_state.get("artifacts"))
+        )
+        interrupted_private_upload = (
+            stage == "private_upload"
+            and stage_state.get("status") == "running"
+            and state.get("current_stage") == "private_upload"
+            and bool(state.get("private_upload_intent"))
+        )
+        if not (completed_stage or failed_stage_retry or interrupted_private_upload):
+            continue
         if state.get("project_id") == project_id:
             return {
                 "project_id": project_id,
