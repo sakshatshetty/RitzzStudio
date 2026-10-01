@@ -22,6 +22,13 @@ and project checkpoints are stored as GitHub Actions artifacts, so they remain
 available only for the repository's configured artifact-retention period. Start
 a resume before those artifacts expire.
 
+If content preparation fails, its checkpoint includes the project archive and
+the exact stage error, QA report, and research-validation report when present.
+Resuming that failed stage keeps the same project. When its saved research
+validation status is `FAIL`, research is refreshed before retrying so an invalid
+cached result is not replayed; completed topic discovery and selection are
+still reused.
+
 The private upload stage saves an upload intent checkpoint before contacting
 YouTube and records the GitHub run attempt. If a run is interrupted after that
 checkpoint, the workflow blocks a second upload and requires checking YouTube
