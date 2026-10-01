@@ -16,7 +16,7 @@ on:
         required: false
         type: string
       project_id:
-        description: Existing project ID to find its saved production checkpoint for RESUME
+        description: Existing project ID or production ID to find its saved checkpoint for RESUME
         required: false
         type: string
       rerun_from_stage:

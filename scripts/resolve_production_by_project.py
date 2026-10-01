@@ -1,4 +1,4 @@
-"""Resolve the newest saved production checkpoint matching a project ID."""
+"""Resolve the newest saved production checkpoint by project or production ID."""
 
 from __future__ import annotations
 
@@ -160,9 +160,26 @@ def find_checkpoint_for_project(
                 "source_artifact": str(artifact["name"]),
                 "checkpoint_index": PIPELINE_STAGES.index(stage),
                 "effective_mode": "RESUME",
+                "matched_by": "project_id",
+            }
+        if state.get("production_id") == project_id:
+            actual_project_id = state.get("project_id")
+            if not isinstance(actual_project_id, str) or not actual_project_id:
+                raise RuntimeError(
+                    f"Checkpoint artifact {artifact['name']} has no valid project ID."
+                )
+            return {
+                "project_id": actual_project_id,
+                "production_id": production_id,
+                "source_run_id": str(artifact["workflow_run"]["id"]),
+                "source_artifact": str(artifact["name"]),
+                "checkpoint_index": PIPELINE_STAGES.index(stage),
+                "effective_mode": "RESUME",
+                "matched_by": "production_id",
             }
     raise ValueError(
-        f"No unexpired production checkpoint was found for project ID {project_id}."
+        "No unexpired production checkpoint was found for project ID or "
+        f"production ID {project_id}."
     )
 
 

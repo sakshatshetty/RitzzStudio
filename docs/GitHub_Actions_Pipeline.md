@@ -16,7 +16,10 @@ statuses and SHA-256 hashes for the checkpoint artifacts, and stops with
 references.
 
 To locate a saved production by its project ID, choose `RESUME`, enter the
-`project_id`, and leave `rerun_from_stage` at `NONE` to continue normally.
+`project_id`, and leave `rerun_from_stage` at `NONE` to continue normally. The
+lookup also accepts a `production_id` in that field and reports which ID it
+matched, which is useful when a run summary displays the production ID rather
+than the project ID.
 Selecting `voice_generation`, `storyboard_generation`, `image_generation`,
 `render_video`, or `private_upload` restarts that stage and the stages after
 it from the saved project archive. Earlier completed stages remain checkpointed.

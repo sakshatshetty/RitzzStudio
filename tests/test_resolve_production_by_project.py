@@ -61,6 +61,33 @@ def test_resolves_latest_checkpoint_by_project_id_and_ignores_expired(tmp_path):
         "source_artifact": "ritzz-production-current-prod-private_upload",
         "checkpoint_index": PIPELINE_STAGES.index("private_upload"),
         "effective_mode": "RESUME",
+        "matched_by": "project_id",
+    }
+
+
+def test_resolves_project_checkpoint_when_production_id_is_entered():
+    artifact = make_artifact(
+        "Test_V1",
+        "render_video",
+        9,
+        "2026-10-01T12:00:00Z",
+        123,
+    )
+
+    result = find_checkpoint_for_project(
+        "Test_V1",
+        [artifact],
+        lambda _artifact_id: checkpoint_archive("Test_V1", "20261001_001"),
+    )
+
+    assert result == {
+        "project_id": "20261001_001",
+        "production_id": "Test_V1",
+        "source_run_id": "123",
+        "source_artifact": "ritzz-production-Test_V1-render_video",
+        "checkpoint_index": PIPELINE_STAGES.index("render_video"),
+        "effective_mode": "RESUME",
+        "matched_by": "production_id",
     }
 
 
