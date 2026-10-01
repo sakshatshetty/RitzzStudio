@@ -289,12 +289,24 @@ jobs:
           stages = list(state["stages"])
           checkpoint_index = int(os.environ["CHECKPOINT_INDEX"])
           expected_stage = stages[checkpoint_index]
-          expected_status = state["stages"][expected_stage]["status"]
-          if expected_status != "completed" and not (
+          expected_stage_state = state["stages"][expected_stage]
+          expected_status = expected_stage_state["status"]
+          failed_stage_retry = (
+              expected_status == "failed"
+              and state.get("status") == "failed"
+              and state.get("current_stage") == expected_stage
+              and bool(expected_stage_state.get("artifacts"))
+          )
+          interrupted_private_upload = (
               expected_stage == "private_upload"
               and expected_status == "running"
               and state.get("current_stage") == "private_upload"
               and state.get("private_upload_intent")
+          )
+          if (
+              expected_status != "completed"
+              and not failed_stage_retry
+              and not interrupted_private_upload
           ):
               raise SystemExit(f"STATE_ARTIFACT_MISMATCH: selected checkpoint {expected_stage} is not completed.")
           upload_intent = state.get("private_upload_intent")
