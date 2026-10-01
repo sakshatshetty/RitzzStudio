@@ -130,6 +130,7 @@ def test_main_writes_artifacts_and_candidate_count_for_human_approval(
     assert payload["source"] == PIPELINE_TOPIC_SOURCE
     assert payload["discovery_mode"] == "VIDIQ_TO_GPT"
     assert payload["vidiq_usage_mode"] == "DISCOVERY_ONLY"
+    assert payload["request"] == report.request.model_dump(mode="json")
     assert len(payload["candidates"]) == 5
     assert [
         candidate["candidate_number"]

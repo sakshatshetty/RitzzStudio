@@ -80,6 +80,7 @@ jobs:
           tests/test_discover_pipeline_topics.py
           tests/test_pipeline_prerequisites.py
           tests/test_pipeline_topic_discovery.py
+          tests/test_run_approved_content_workflow.py
           tests/test_select_pipeline_topic.py
           tests/test_content_workflow.py::test_selected_candidate_is_linked_to_report_and_project
           -q
