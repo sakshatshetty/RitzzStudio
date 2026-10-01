@@ -337,5 +337,7 @@ def test_workflow_keeps_dynamic_selection_and_m2_behind_human_approval():
     ]
     assert len(project_extractions) == 6
     assert all("-C projects" in line for line in project_extractions)
+    assert "      - name: Install FFmpeg\n        run: |\n          sudo apt-get update\n          sudo apt-get install --yes ffmpeg\n          ffprobe -version" in workflow
+    assert "          ffmpeg -version\n          ffprobe -version" in workflow
     assert "RITZZ topic approval - production ${process.env.PRODUCTION_ID}" in workflow
     assert "Persist private upload intent before contacting YouTube" in workflow

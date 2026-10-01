@@ -72,6 +72,10 @@ no provider API calls and does not prove that a key has live service permission.
 18. Keep the current run marked as a test run; public publication remains
    disabled.
 
+Voice validation and video rendering install FFmpeg in their Ubuntu jobs.
+`ffprobe` is required to measure generated narration duration; both `ffmpeg`
+and `ffprobe` are verified before their media stages proceed.
+
 Topic duplicate prevention reads the durable repository inventory at
 `data/content_inventory.json`. Test runs do not write to this file and therefore
 do not reserve or permanently exclude their selected topics. A future approved
