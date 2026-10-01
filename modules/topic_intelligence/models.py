@@ -13,6 +13,7 @@ EditorialStatus = Literal["PASS", "REVIEW", "FAIL"]
 ValidationStatus = Literal["RECOMMENDED", "REVIEW", "REJECTED"]
 RitzzFitStatus = Literal["PASS", "REVIEW", "FAIL"]
 InventoryStatus = Literal["ELIGIBLE", "DUPLICATE", "NOT_CHECKED"]
+VidiqStatus = Literal["SCORED", "UNAVAILABLE", "VIDIQ_PROVIDER_ERROR"]
 StoryType = Literal[
     "WHY",
     "HOW",
@@ -97,6 +98,7 @@ class OpportunityCandidate(BaseModel):
     competitor_topic_patterns: list[CompetitorTopicPattern] = Field(default_factory=list)
     current_vidiq_demand_signals: dict[str, EvidenceMetric] = Field(default_factory=dict)
     current_vidiq_demand_available: bool = False
+    vidiq_status: VidiqStatus = "UNAVAILABLE"
     competition_saturation_signal: EvidenceMetric | None = None
     competition_saturation_assessment: str | None = None
     ritzz_differentiation_angle: str | None = None

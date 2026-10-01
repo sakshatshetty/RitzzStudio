@@ -7,36 +7,41 @@ production does not require a local command-line command.
 
 Workflow file: `.github/workflows/ritzz-pipeline.yml`
 
-The current M8 slice performs these steps:
+The default topic-discovery path uses one vidIQ market-opportunity discovery
+operation, followed by one GPT ideation request:
 
-When starting a run, the GitHub form provides `Discovery mode`, `Test run`,
-`Target video duration in minutes`, and `Minimum allowed video duration in
-minutes`. Both duration fields default to 8 minutes, and the minimum cannot
-exceed the target.
+When starting a run, the GitHub form provides `Test run`, `Target video
+duration in minutes`, and `Minimum allowed video duration in minutes`. Both
+duration fields default to 8 minutes, and the minimum cannot exceed the target.
 
 Before tests or external providers run, the workflow validates that all required
 secrets are present and that the Google client and token secrets decode to valid
-OAuth JSON. This preflight makes no provider API calls, so it does not consume
-quota or prove that a key has live service permission; provider failures still
-stop their individual stage.
+OAuth JSON, including the vidIQ API key required for discovery. Preflight makes
+no provider API calls and does not prove that a key has live service permission.
 
 1. Run focused pipeline regression tests.
-2. Discover exactly four trending or evergreen candidates.
-3. Publish the candidates in a GitHub issue and workflow artifact.
-4. Wait for a trusted collaborator to reply with `1`, `2`, `3`, or `4`.
-5. Pause at the protected topic-approval environment.
-6. Pause at the protected test-approval environment.
-7. Run the existing Research -> Outline -> Script content workflow.
-8. Upload the generated project artifacts to the GitHub Actions run.
-9. Use the selected vidIQ candidate to inform titles, tags, description framing,
+2. Make one vidIQ keyword-research call using the `strange history` seed,
+   selected as a market-discovery starting point for the RITZZ profile, to get
+   up to 20 opportunities.
+3. Send that pool, including any provider-supplied metrics, in one OpenAI
+   structured-output request to generate 8–10 video ideas.
+4. Apply simple local RITZZ, originality, and inventory filters; present up to
+   five candidates and require at least three.
+5. Publish the candidates in a GitHub issue and workflow artifact.
+6. Wait for a trusted collaborator to reply with one of the displayed labels.
+7. Pause at the protected topic-approval environment.
+8. Pause at the protected test-approval environment.
+9. Run the existing Research -> Outline -> Script content workflow.
+10. Upload the generated project artifacts to the GitHub Actions run.
+11. Use the human-selected topic and its vidIQ opportunity context to inform titles, tags, description framing,
    and the thumbnail brief; persist the source report and candidate context.
-10. Generate and validate ElevenLabs narration with character alignment.
-11. Build the narrative and audio-timed static storyboard.
-12. Render the test video and run deterministic technical QA.
-13. Pause for human video review and approval.
-14. Pause for packaging approval.
-15. Upload the test video privately through YouTube OAuth.
-16. Keep the current run marked as a test run; public publication remains
+12. Generate and validate ElevenLabs narration with character alignment.
+13. Build the narrative and audio-timed static storyboard.
+14. Render the test video and run deterministic technical QA.
+15. Pause for human video review and approval.
+16. Pause for packaging approval.
+17. Upload the test video privately through YouTube OAuth.
+18. Keep the current run marked as a test run; public publication remains
    disabled.
 
 Topic duplicate prevention reads the durable repository inventory at
@@ -44,7 +49,9 @@ Topic duplicate prevention reads the durable repository inventory at
 do not reserve or permanently exclude their selected topics. A future approved
 V1 release will update the inventory with the final topic and publication data.
 
-Pipeline topic discovery starts from enabled channels in
+## Legacy discovery capabilities (not used by the default workflow)
+
+The existing non-pipeline topic-intelligence engine can start from enabled channels in
 `config/competitors.json` (override with `RITZZ_COMPETITORS_FILE`). The registry
 has three distinct groups: `format_competitors` (similar illustrated/explainer
 formats), `topic_competitors` (overlapping subjects), and `emerging_format`

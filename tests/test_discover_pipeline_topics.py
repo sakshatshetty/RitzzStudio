@@ -1,171 +1,280 @@
-import pytest
+import json
+from pathlib import Path
 
 from modules.topic_intelligence.models import (
+    EvidenceMetric,
     OpportunityCandidate,
     OpportunityReport,
     TopicDiscoveryRequest,
 )
-from scripts import discover_pipeline_topics
-from scripts.discover_pipeline_topics import (
-    _candidate_markdown,
-    discover_four_candidates,
+from modules.topic_intelligence.pipeline_topic_discovery import (
+    DISCOVERY_MODE,
+    PIPELINE_TOPIC_SOURCE,
+    VIDIQ_USAGE_MODE,
+    TopicDiscoveryFailure,
 )
+from scripts import discover_pipeline_topics
+from scripts.discover_pipeline_topics import _candidate_markdown
 
 
-def _candidate(number: int, topic: str) -> OpportunityCandidate:
+def _candidate(index: int) -> OpportunityCandidate:
+    source_topic = f"vidIQ topic opportunity {index}"
     return OpportunityCandidate(
-        candidate_id=f"candidate-{number}",
-        topic=topic,
-        provider="vidiq_mcp",
-        editorial_status="PASS",
-        validation_status="RECOMMENDED",
-        ritzz_fit={
-            "fit_status": "PASS",
-            "fit_score": 80,
-            "reason": "Fixture candidate passes.",
+        candidate_id=f"candidate-{index}",
+        topic=f"Why Did This Ancient Invention Change Everyday Life {index}?",
+        proposed_title=f"Why Did This Ancient Invention Change Everyday Life {index}?",
+        angle="Explain the problem this unusual invention solved.",
+        why_interesting="Its ordinary use concealed an ingenious design.",
+        provider=PIPELINE_TOPIC_SOURCE,
+        evidence={
+            "keyword_score": EvidenceMetric(
+                value=90 - index,
+                unit="0-100",
+                available=True,
+                source="vidIQ MCP",
+            ),
+            "search_volume": EvidenceMetric(
+                value=1200,
+                unit="monthly searches",
+                available=True,
+                source="vidIQ MCP",
+            ),
+        },
+        vidiq_status="SCORED",
+        inventory_status="ELIGIBLE",
+        originality_reason="Focuses on a distinct, practical explanation.",
+        raw_evidence={
+            "vidiq_opportunity": {
+                "topic": source_topic,
+                "raw_evidence": {"keyword": source_topic},
+            },
+            "gpt_generated_idea": {
+                "static_visual_explanation": "Draw the device beside a simple cutaway.",
+                "long_form_depth": "Explain its origin, operation, and historical impact.",
+            },
         },
     )
 
 
-def _report(request: TopicDiscoveryRequest, candidates: list[OpportunityCandidate]) -> OpportunityReport:
+def _report(candidate_count: int = 5) -> OpportunityReport:
+    candidates = [_candidate(index) for index in range(candidate_count)]
     return OpportunityReport(
-        report_id=f"report-{request.trend_topic or 'all'}",
-        request=request,
-        provider="vidiq_mcp",
+        report_id="report-1",
+        request=TopicDiscoveryRequest(pipeline_topic_gate=True),
+        provider=PIPELINE_TOPIC_SOURCE,
         candidates=candidates,
-    )
-
-
-class SequencedEngine:
-    def __init__(self, reports: list[OpportunityReport]):
-        self.reports = reports
-        self.requests = []
-
-    def discover(self, request: TopicDiscoveryRequest) -> OpportunityReport:
-        self.requests.append(request)
-        return self.reports[len(self.requests) - 1]
-
-
-def test_short_category_discovery_backfills_distinct_unscoped_topics():
-    request = TopicDiscoveryRequest(mode="TRENDING", trend_topic="history")
-    report = _report(
-        request,
-        [_candidate(number, f"Topic {number}") for number in range(1, 5)],
-    )
-    report.discovery_diagnostics = {
-        "sources_attempted": ["trending", "rising", "evergreen"],
-        "source_counts": {
-            "trending": {"raw": 2, "unique": 2},
-            "rising": {"raw": 6, "unique": 3},
+        shortlist_candidate_ids=[candidate.candidate_id for candidate in candidates],
+        discovery_diagnostics={
+            "status": "SUCCESS",
+            "source": PIPELINE_TOPIC_SOURCE,
+            "discovery_mode": DISCOVERY_MODE,
+            "vidiq_usage_mode": VIDIQ_USAGE_MODE,
+            "vidiq_discovery_operation_count": 1,
+            "vidiq_opportunities_returned": 20,
+            "gpt_calls_made": 1,
+            "gpt_ideas_generated": 9,
+            "ideas_rejected_count": 2,
+            "ideas_rejected": [],
+            "final_candidate_count": candidate_count,
         },
-    }
-    engine = SequencedEngine([report])
-
-    report, candidates, notes = discover_four_candidates(engine, request)
-
-    assert [candidate.topic for candidate in candidates] == [
-        "Topic 1",
-        "Topic 2",
-        "Topic 3",
-        "Topic 4",
-    ]
-    assert len({candidate.candidate_id for candidate in candidates}) == 4
-    assert len(engine.requests) == 1
-    assert engine.requests[0].trend_topic == "history"
-    assert "rising: raw=6, unique=3" in notes
-
-
-def test_insufficient_results_after_fallback_reports_clear_error():
-    request = TopicDiscoveryRequest(mode="TRENDING", trend_topic="history")
-    report = _report(request, [_candidate(1, "Topic One")])
-    report.discovery_diagnostics = {
-        "sources_attempted": ["trending", "rising", "evergreen", "competitor-outliers", "unscoped-trending"],
-        "sources_unavailable": ["evergreen: unsupported"],
-        "source_counts": {"trending": {"raw": 1, "unique": 1}},
-        "after_inventory_filter": 1,
-        "after_niche_filter": 1,
-        "after_editorial_filter": 1,
-        "after_near_duplicate_filter": 1,
-        "final_count": 1,
-    }
-
-    with pytest.raises(RuntimeError, match="final eligible distinct candidates") as error:
-        discover_four_candidates(SequencedEngine([report]), request)
-    assert "evergreen: unsupported" in str(error.value)
-    assert "competitor-outliers" in str(error.value)
-
-
-def test_approval_summary_separates_editorial_fit_from_evidence_status():
-    candidate = _candidate(1, "Why do cats purr?")
-    candidate.proposed_title = "Why Cats Purr: The Surprising Science"
-    candidate.angle = "Explain the biological purpose behind purring."
-    candidate.validation_status = "REVIEW"
-
-    summary = _candidate_markdown(1, candidate)
-
-    assert "Why Cats Purr: The Surprising Science" in summary
-    assert "Editorial fit: `PASS`" in summary
-    assert "Evidence status: `REVIEW`" in summary
-    assert "Competitor video performance available: `false`" in summary
-    assert "No current demand/trend metric available." in summary
-    assert "Opportunity score" not in summary
-
-
-def test_final_topic_choices_are_presented_alphabetically_not_ranked():
-    request = TopicDiscoveryRequest(mode="TRENDING", trend_topic="history")
-    candidates = [
-        _candidate(1, "Zebra migration"),
-        _candidate(2, "Ancient sleep routines"),
-        _candidate(3, "Maps and distortion"),
-        _candidate(4, "Why castles had moats"),
-    ]
-
-    _, selected, _ = discover_four_candidates(
-        SequencedEngine([_report(request, candidates)]),
-        request,
-    )
-
-    assert [candidate.topic for candidate in selected] == sorted(
-        candidate.topic for candidate in candidates
     )
 
 
-def test_failure_writes_machine_and_human_readable_diagnostics(tmp_path, monkeypatch):
-    request = TopicDiscoveryRequest(mode="TRENDING", trend_topic="history")
-    report = _report(request, [_candidate(1, "Why do maps show sea monsters?")])
-    report.discovery_diagnostics = {
-        "request": request.model_dump(mode="json"),
-        "sources_attempted": ["trending", "rising", "unscoped-trending"],
-        "sources_unavailable": ["evergreen: unsupported"],
-        "source_counts": {"trending": {"raw": 8, "unique": 5}},
-        "final_count": 1,
-        "candidate_exclusions": [{
-            "topic": "England vs Spain",
-            "sources": ["trending"],
-            "ritzz_fit": {"reason": "RITZZ-fit prefilter rejected a live sports matchup."},
-        }],
-    }
+def test_candidate_summary_shows_vidiq_to_gpt_provenance():
+    summary = _candidate_markdown(1, _candidate(1))
 
-    class OneCandidateEngine:
-        def __init__(self, **kwargs):
-            pass
+    assert "Why Did This Ancient Invention Change Everyday Life 1?" in summary
+    assert "vidIQ opportunity: `vidIQ topic opportunity 1`" in summary
+    assert "vidIQ Keyword Score: `89 0-100`" in summary
+    assert "Search Volume: `1,200 monthly searches`" in summary
+    assert "Originality:" in summary
+    assert "RITZZ inventory: `ELIGIBLE`" in summary
+
+
+def test_main_writes_artifacts_and_candidate_count_for_human_approval(
+    tmp_path,
+    monkeypatch,
+):
+    report = _report(5)
+    artifact_directory = tmp_path / "artifacts"
+
+    class FixedDiscovery:
+        def __init__(self, *_args, **_kwargs):
+            self.constructor_args = _args
+            self.constructor_kwargs = _kwargs
 
         def discover(self, _request):
+            self.request = _request
             return report
 
-    monkeypatch.setattr(discover_pipeline_topics, "TopicIntelligenceEngine", OneCandidateEngine)
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("RITZZ_PIPELINE_ARTIFACTS", str(tmp_path / "artifacts"))
+    monkeypatch.setattr(
+        discover_pipeline_topics,
+        "GPTKeywordTopicDiscovery",
+        FixedDiscovery,
+    )
+    monkeypatch.setenv("RITZZ_PIPELINE_ARTIFACTS", str(artifact_directory))
     monkeypatch.setenv("RITZZ_INVENTORY_FILE", str(tmp_path / "inventory.json"))
-    monkeypatch.setenv("RITZZ_TREND_TOPIC", "history")
-    monkeypatch.setenv("RITZZ_DISCOVERY_MODE", "TRENDING")
-    monkeypatch.setenv("RITZZ_DISCOVERY_TIMEFRAME", "this week")
+    output_path = tmp_path / "github-output.txt"
+    summary_path = tmp_path / "github-summary.md"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output_path))
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary_path))
+
+    assert discover_pipeline_topics.main() == 0
+
+    payload = json.loads(
+        (artifact_directory / "topic_candidates.json").read_text(encoding="utf-8")
+    )
+    markdown = (artifact_directory / "topic_candidates.md").read_text(
+        encoding="utf-8"
+    )
+    assert payload["source"] == PIPELINE_TOPIC_SOURCE
+    assert payload["discovery_mode"] == "VIDIQ_TO_GPT"
+    assert payload["vidiq_usage_mode"] == "DISCOVERY_ONLY"
+    assert len(payload["candidates"]) == 5
+    assert [
+        candidate["candidate_number"]
+        for candidate in payload["candidates"]
+    ] == [1, 2, 3, 4, 5]
+    assert [f"### {number}." in markdown for number in range(1, 6)] == [True] * 5
+    assert "not an automatic selection" in markdown
+    assert "VIDIQ_TO_GPT" in markdown
+    assert "vidIQ discovery operations: `1`" in markdown
+    assert "GPT calls: `1`" in markdown
+    assert "candidate_count=5" in output_path.read_text(encoding="utf-8")
+    assert not (artifact_directory / "topic_selection.json").exists()
+    assert summary_path.exists()
+
+
+def test_main_reports_vidiq_provider_error_without_mislabeling_it(tmp_path, monkeypatch):
+    failure = TopicDiscoveryFailure({
+        "status": "VIDIQ_PROVIDER_ERROR",
+        "discovery_mode": DISCOVERY_MODE,
+        "vidiq_usage_mode": VIDIQ_USAGE_MODE,
+        "vidiq_discovery_operation_count": 1,
+        "provider_error": "vidIQ API unavailable",
+        "provider_error_type": "INSUFFICIENT_CREDITS",
+    })
+
+    class FailedDiscovery:
+        def __init__(self, *_args, **_kwargs):
+            self.constructor_args = _args
+            self.constructor_kwargs = _kwargs
+
+        def discover(self, _request):
+            self.request = _request
+            raise failure
+
+    monkeypatch.setattr(
+        discover_pipeline_topics,
+        "GPTKeywordTopicDiscovery",
+        FailedDiscovery,
+    )
+    artifact_directory = tmp_path / "artifacts"
+    monkeypatch.setenv("RITZZ_PIPELINE_ARTIFACTS", str(artifact_directory))
+    monkeypatch.setenv("RITZZ_INVENTORY_FILE", str(tmp_path / "inventory.json"))
     monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
 
     assert discover_pipeline_topics.main() == 1
 
-    output = tmp_path / "artifacts"
-    assert (output / "topic_discovery_diagnostics.json").exists()
-    markdown = (output / "topic_discovery_diagnostics.md").read_text()
-    assert "evergreen: unsupported" in markdown
-    assert "England vs Spain" in markdown
+    diagnostics = json.loads(
+        (artifact_directory / "topic_discovery_diagnostics.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    markdown = (artifact_directory / "topic_candidates.md").read_text(
+        encoding="utf-8"
+    )
+    assert diagnostics["status"] == "VIDIQ_PROVIDER_ERROR"
+    assert diagnostics["provider_error_type"] == "INSUFFICIENT_CREDITS"
+    assert "`VIDIQ_PROVIDER_ERROR`" in markdown
+    assert "OPENAI_PROVIDER_ERROR" not in markdown
+
+
+def test_main_reports_gpt_provider_error(tmp_path, monkeypatch):
+    failure = TopicDiscoveryFailure({
+        "status": "OPENAI_PROVIDER_ERROR",
+        "discovery_mode": DISCOVERY_MODE,
+        "vidiq_usage_mode": VIDIQ_USAGE_MODE,
+        "vidiq_discovery_operation_count": 1,
+        "vidiq_opportunities_returned": 12,
+        "gpt_calls_made": 1,
+        "provider_error": "GPT unavailable",
+    })
+
+    class FailedDiscovery:
+        def __init__(self, *_args, **_kwargs):
+            self.constructor_args = _args
+            self.constructor_kwargs = _kwargs
+
+        def discover(self, _request):
+            self.request = _request
+            raise failure
+
+    monkeypatch.setattr(
+        discover_pipeline_topics,
+        "GPTKeywordTopicDiscovery",
+        FailedDiscovery,
+    )
+    artifact_directory = tmp_path / "artifacts"
+    monkeypatch.setenv("RITZZ_PIPELINE_ARTIFACTS", str(artifact_directory))
+    monkeypatch.setenv("RITZZ_INVENTORY_FILE", str(tmp_path / "inventory.json"))
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+
+    assert discover_pipeline_topics.main() == 1
+    diagnostics = json.loads(
+        (artifact_directory / "topic_discovery_diagnostics.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert diagnostics["status"] == "OPENAI_PROVIDER_ERROR"
+
+
+def test_insufficient_qualified_topics_still_write_candidate_diagnostics(
+    tmp_path,
+    monkeypatch,
+):
+    report = _report(2)
+    report.discovery_diagnostics["status"] = "INSUFFICIENT_QUALIFIED_TOPICS"
+    report.discovery_diagnostics["final_candidate_count"] = 2
+    artifact_directory = tmp_path / "artifacts"
+
+    class FixedDiscovery:
+        def __init__(self, *_args, **_kwargs):
+            self.constructor_args = _args
+            self.constructor_kwargs = _kwargs
+
+        def discover(self, _request):
+            self.request = _request
+            return report
+
+    monkeypatch.setattr(
+        discover_pipeline_topics,
+        "GPTKeywordTopicDiscovery",
+        FixedDiscovery,
+    )
+    monkeypatch.setenv("RITZZ_PIPELINE_ARTIFACTS", str(artifact_directory))
+    monkeypatch.setenv("RITZZ_INVENTORY_FILE", str(tmp_path / "inventory.json"))
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+
+    assert discover_pipeline_topics.main() == 1
+    diagnostics = json.loads(
+        (artifact_directory / "topic_discovery_diagnostics.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert diagnostics["status"] == "INSUFFICIENT_QUALIFIED_TOPICS"
+    assert len(json.loads(
+        (artifact_directory / "topic_candidates.json").read_text(encoding="utf-8")
+    )["candidates"]) == 2
+
+
+def test_workflow_keeps_dynamic_selection_and_m2_behind_human_approval():
+    workflow = Path(".github/workflows/ritzz-pipeline.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "candidate_count: ${{ steps.discover.outputs.candidate_count }}" in workflow
+    assert "CANDIDATE_COUNT: ${{ needs.discover-topics.outputs.candidate_count }}" in workflow
+    assert "'/^[1-5]$/ && $0 <= max {" in workflow
+    assert "^[1-4]$" not in workflow
+    assert "content-preparation:\n    name: Research, outline, and script\n    needs: test-approval" in workflow
