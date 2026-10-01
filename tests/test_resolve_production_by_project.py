@@ -1,6 +1,8 @@
 import io
 import json
+import subprocess
 import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -103,3 +105,54 @@ def test_github_request_authenticates_with_provided_token(monkeypatch):
     ) == {"ok": True}
     assert captured["authorization"] == "Bearer test-token"
     assert captured["timeout"] == 60
+
+
+def test_checkpoint_archive_uses_github_cli_run_download(monkeypatch):
+    artifact = make_artifact(
+        "production-1",
+        "private_upload",
+        42,
+        "2026-10-01T12:00:00Z",
+        123,
+    )
+    captured = {}
+
+    def fake_run(command, *, check, capture_output, text):
+        captured["command"] = command
+        captured["check"] = check
+        captured["capture_output"] = capture_output
+        captured["text"] = text
+        output_directory = command[-1]
+        state_directory = Path(output_directory) / artifact["name"]
+        state_directory.mkdir(parents=True)
+        (state_directory / "production_state.json").write_text(
+            json.dumps({"production_id": "production-1", "project_id": "PROJECT_1"}),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(resolve_production_by_project.subprocess, "run", fake_run)
+
+    archive_bytes = resolve_production_by_project._download_artifact_archive(
+        artifact,
+        "sakshatshetty/RitzzStudio",
+    )
+    with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
+        state = json.loads(archive.read("production_state.json"))
+
+    assert state["project_id"] == "PROJECT_1"
+    assert captured["command"][:9] == [
+        "gh",
+        "run",
+        "download",
+        "123",
+        "--repo",
+        "sakshatshetty/RitzzStudio",
+        "--name",
+        artifact["name"],
+        "--dir",
+    ]
+    assert Path(captured["command"][-1]).name.startswith("ritzz-checkpoint-")
+    assert captured["check"] is True
+    assert captured["capture_output"] is True
+    assert captured["text"] is True
