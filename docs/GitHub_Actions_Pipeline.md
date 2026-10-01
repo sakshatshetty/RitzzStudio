@@ -7,10 +7,31 @@ production does not require a local command-line command.
 
 Workflow file: `.github/workflows/ritzz-pipeline.yml`
 
+Choose `NEW` to create a production, or `RESUME` and supply its existing
+`production_id` to continue from the latest saved checkpoint. A `NEW` run may
+omit the ID; the workflow then assigns `run-<GitHub run ID>`. A production ID
+is printed in the run summary and cannot be reused. The workflow records stage
+statuses and SHA-256 hashes for the checkpoint artifacts, and stops with
+`STATE_ARTIFACT_MISMATCH` if a saved state does not match the artifacts it
+references.
+
+Completed discovery and topic selection are reused on resume: they do not call
+vidIQ or GPT again, and a completed selection does not create another topic
+approval issue. Later completed production stages are skipped as well. State
+and project checkpoints are stored as GitHub Actions artifacts, so they remain
+available only for the repository's configured artifact-retention period. Start
+a resume before those artifacts expire.
+
+The private upload stage saves an upload intent checkpoint before contacting
+YouTube and records the GitHub run attempt. If a run is interrupted after that
+checkpoint, the workflow blocks a second upload and requires checking YouTube
+to reconcile the uncertain outcome; this favors avoiding duplicate uploads
+over automatically retrying an ambiguous external side effect.
+
 The default topic-discovery path uses one vidIQ market-opportunity discovery
 operation, followed by one GPT ideation request:
 
-When starting a run, the GitHub form provides `Test run`, `Target video
+The GitHub form also provides `Test run`, `Target video
 duration in minutes`, and `Minimum allowed video duration in minutes`. Both
 duration fields default to 8 minutes, and the minimum cannot exceed the target.
 

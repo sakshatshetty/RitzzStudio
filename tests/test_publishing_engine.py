@@ -132,6 +132,74 @@ def test_private_publish_does_not_require_schedule(tmp_path: Path):
     assert result.scheduled_for is None
 
 
+def test_publish_retry_does_not_upload_twice(tmp_path: Path):
+    projects_dir = tmp_path / "projects"
+    manager = ProjectManager(projects_dir)
+    project = manager.create_project("Idempotent private test")
+    project_folder = projects_dir / f"{project.project_id}_{project.slug}"
+    video_file = project_folder / "video" / "test.mp4"
+    video_file.parent.mkdir(parents=True, exist_ok=True)
+    video_file.write_bytes(b"video")
+    provider = FakeYouTubeProvider()
+    engine = PublishingEngine(projects_dir, provider=provider)
+    engine.create_approval(project, approved=True, approved_by="human")
+
+    engine.publish_video(
+        project=project,
+        video_file=video_file,
+        title="Idempotent private test",
+        description="A private test upload.",
+        metadata={"privacy_status": "private"},
+    )
+
+    with pytest.raises(ValueError, match="already has a publish result"):
+        engine.publish_video(
+            project=project,
+            video_file=video_file,
+            title="Idempotent private test",
+            description="A private test upload.",
+            metadata={"privacy_status": "private"},
+        )
+
+    assert len(provider.calls) == 1
+
+
+def test_uncertain_publish_attempt_is_not_retried(tmp_path: Path):
+    projects_dir = tmp_path / "projects"
+    manager = ProjectManager(projects_dir)
+    project = manager.create_project("Uncertain private test")
+    project_folder = projects_dir / f"{project.project_id}_{project.slug}"
+    video_file = project_folder / "video" / "test.mp4"
+    video_file.parent.mkdir(parents=True, exist_ok=True)
+    video_file.write_bytes(b"video")
+
+    class FailingProvider:
+        def __init__(self):
+            self.calls = 0
+
+        def upload_video(self, **kwargs):
+            self.calls += 1
+            raise TimeoutError("upload response timed out")
+
+    provider = FailingProvider()
+    engine = PublishingEngine(projects_dir, provider=provider)
+    engine.create_approval(project, approved=True, approved_by="human")
+    upload_arguments = {
+        "project": project,
+        "video_file": video_file,
+        "title": "Uncertain private test",
+        "description": "A private test upload.",
+        "metadata": {"privacy_status": "private"},
+    }
+
+    with pytest.raises(TimeoutError, match="timed out"):
+        engine.publish_video(**upload_arguments)
+    with pytest.raises(RuntimeError, match="Reconcile its status"):
+        engine.publish_video(**upload_arguments)
+
+    assert provider.calls == 1
+
+
 def test_publish_workflow_runs_as_single_orchestrated_action(tmp_path: Path):
     projects_dir = tmp_path / "projects"
     manager = ProjectManager(projects_dir)

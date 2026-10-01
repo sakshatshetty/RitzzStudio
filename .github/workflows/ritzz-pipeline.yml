@@ -3,6 +3,18 @@ name: RITZZ Video Pipeline
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: Start a new production or resume a saved production
+        required: true
+        type: choice
+        options:
+          - NEW
+          - RESUME
+        default: NEW
+      production_id:
+        description: Existing production ID for RESUME; optional custom ID for NEW
+        required: false
+        type: string
       test_run:
         description: Keep all generated output private or unlisted as a test run
         required: true
@@ -20,6 +32,7 @@ on:
         default: 8
 
 permissions:
+  actions: read
   contents: read
   issues: write
 
@@ -82,6 +95,8 @@ jobs:
           tests/test_pipeline_topic_discovery.py
           tests/test_run_approved_content_workflow.py
           tests/test_select_pipeline_topic.py
+          tests/test_production_state.py
+          tests/test_publishing_engine.py
           tests/test_content_workflow.py::test_selected_candidate_is_linked_to_report_and_project
           -q
 
@@ -95,6 +110,7 @@ jobs:
         shell: bash
         env:
           TEST_RUN: ${{ inputs.test_run }}
+          MODE: ${{ inputs.mode }}
         run: |
           mkdir -p .pipeline-artifacts
           python - <<'PY'
@@ -105,6 +121,7 @@ jobs:
           manifest = {
               "workflow": "RITZZ Video Pipeline",
               "topic_discovery_mode": "VIDIQ_TO_GPT",
+              "mode": os.environ["MODE"],
               "test_run": os.environ["TEST_RUN"].lower() == "true",
               "public_publish_allowed": False,
               "approval_status": "PENDING",
@@ -123,9 +140,205 @@ jobs:
           if-no-files-found: error
           include-hidden-files: true
 
+  restore-production:
+    name: Create or restore production checkpoint
+    needs: validate
+    runs-on: ubuntu-latest
+    outputs:
+      production_id: ${{ steps.resolve.outputs.production_id }}
+      source_run_id: ${{ steps.resolve.outputs.source_run_id }}
+      source_artifact: ${{ steps.resolve.outputs.source_artifact }}
+      resume_from_index: ${{ steps.inspect.outputs.resume_from_index || steps.resolve.outputs.resume_from_index }}
+      approval_issue_number: ${{ steps.inspect.outputs.approval_issue_number }}
+      effective_mode: ${{ steps.resolve.outputs.effective_mode }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Resolve production checkpoint
+        id: resolve
+        uses: actions/github-script@v7
+        env:
+          MODE: ${{ inputs.mode }}
+          REQUESTED_PRODUCTION_ID: ${{ inputs.production_id }}
+        with:
+          script: |
+            const mode = process.env.MODE;
+            const requestedId = process.env.REQUESTED_PRODUCTION_ID.trim();
+            if (mode !== 'NEW' && mode !== 'RESUME') {
+              core.setFailed(`Unsupported production mode: ${mode}`);
+              return;
+            }
+            if (mode === 'RESUME' && !requestedId) {
+              core.setFailed('PRODUCTION_NOT_FOUND: production_id is required for RESUME.');
+              return;
+            }
+            const productionId = mode === 'NEW'
+              ? (requestedId || `run-${context.runId}`)
+              : requestedId;
+            if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/.test(productionId)) {
+              core.setFailed('Production ID must be 1–80 letters, numbers, underscores, or hyphens.');
+              return;
+            }
+            const allArtifacts = await github.paginate(
+              github.rest.actions.listArtifactsForRepo,
+              { owner: context.repo.owner, repo: context.repo.repo, per_page: 100 }
+            );
+            const prefix = `ritzz-production-${productionId}-`;
+            const productionArtifacts = allArtifacts.filter(
+              artifact => artifact.name.startsWith(prefix)
+            );
+            let effectiveMode = mode;
+            if (mode === 'NEW') {
+              const artifactsFromOtherRuns = productionArtifacts.filter(
+                artifact => artifact.workflow_run.id !== context.runId
+              );
+              const approvalTitle = `RITZZ topic approval - production ${productionId}`;
+              const matchingIssues = await github.rest.search.issuesAndPullRequests({
+                q: `repo:${context.repo.owner}/${context.repo.repo} is:issue in:title "${approvalTitle}"`,
+                per_page: 10
+              });
+              const issueExists = matchingIssues.data.items.some(
+                issue => issue.title === approvalTitle
+              );
+              if (artifactsFromOtherRuns.length) {
+                core.setFailed(`PRODUCTION_ALREADY_EXISTS: ${productionId}`);
+                return;
+              }
+              if (issueExists && !productionArtifacts.some(artifact =>
+                artifact.workflow_run.id === context.runId
+              )) {
+                core.setFailed(`PRODUCTION_ALREADY_EXISTS: ${productionId}`);
+                return;
+              }
+              if (productionArtifacts.length) {
+                effectiveMode = 'RESUME';
+              }
+            }
+            if (effectiveMode === 'NEW') {
+              core.setOutput('production_id', productionId);
+              core.setOutput('source_run_id', String(context.runId));
+              core.setOutput('source_artifact', '');
+              core.setOutput('resume_from_index', '0');
+              core.setOutput('checkpoint_index', '-1');
+              core.setOutput('effective_mode', effectiveMode);
+              return;
+            }
+            const stages = [
+              'topic_discovery',
+              'topic_selection',
+              'content_preparation',
+              'voice_generation',
+              'storyboard_generation',
+              'image_generation',
+              'render_video',
+              'private_upload'
+            ];
+            let checkpoint;
+            let checkpointIndex = -1;
+            for (let index = stages.length - 1; index >= 0; index--) {
+              checkpoint = productionArtifacts.find(
+                artifact => artifact.name === `${prefix}${stages[index]}` && !artifact.expired
+              );
+              if (checkpoint) {
+                checkpointIndex = index;
+                break;
+              }
+            }
+            if (!checkpoint) {
+              core.setFailed(`PRODUCTION_NOT_FOUND: no saved checkpoint for ${productionId}.`);
+              return;
+            }
+            core.setOutput('production_id', productionId);
+            core.setOutput('source_run_id', String(checkpoint.workflow_run.id));
+            core.setOutput('source_artifact', checkpoint.name);
+            core.setOutput('resume_from_index', String(checkpointIndex + 1));
+            core.setOutput('checkpoint_index', String(checkpointIndex));
+            core.setOutput('effective_mode', effectiveMode);
+
+      - name: Download saved production checkpoint
+        if: ${{ steps.resolve.outputs.effective_mode == 'RESUME' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.resolve.outputs.source_artifact }}
+          run-id: ${{ steps.resolve.outputs.source_run_id }}
+          github-token: ${{ github.token }}
+          path: .pipeline-artifacts
+
+      - name: Validate checkpoint and expose progress
+        id: inspect
+        if: ${{ steps.resolve.outputs.effective_mode == 'RESUME' }}
+        env:
+          RITZZ_PRODUCTION_ID: ${{ steps.resolve.outputs.production_id }}
+          RITZZ_PIPELINE_ARTIFACTS: .pipeline-artifacts
+          CHECKPOINT_INDEX: ${{ steps.resolve.outputs.checkpoint_index }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -f .pipeline-artifacts/production_state.json ]]; then
+            echo "STATE_ARTIFACT_MISMATCH: saved production checkpoint has no state file." >&2
+            exit 1
+          fi
+          python scripts/manage_pipeline_production.py resume
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          state = json.loads(Path(".pipeline-artifacts/production_state.json").read_text(encoding="utf-8"))
+          stages = list(state["stages"])
+          checkpoint_index = int(os.environ["CHECKPOINT_INDEX"])
+          expected_stage = stages[checkpoint_index]
+          expected_status = state["stages"][expected_stage]["status"]
+          if expected_status != "completed" and not (
+              expected_stage == "private_upload"
+              and expected_status == "running"
+              and state.get("current_stage") == "private_upload"
+              and state.get("private_upload_intent")
+          ):
+              raise SystemExit(f"STATE_ARTIFACT_MISMATCH: selected checkpoint {expected_stage} is not completed.")
+          upload_intent = state.get("private_upload_intent")
+          if (
+              expected_stage == "private_upload"
+              and expected_status == "running"
+              and (
+                  upload_intent.get("run_id") != os.environ["GITHUB_RUN_ID"]
+                  or upload_intent.get("run_attempt") != int(os.environ["GITHUB_RUN_ATTEMPT"])
+              )
+          ):
+              raise SystemExit(
+                  "PUBLISH_ATTEMPT_RECONCILIATION_REQUIRED: check YouTube before resuming "
+                  "an interrupted private upload."
+              )
+          for index, stage in enumerate(stages):
+              if state["stages"][stage]["status"] != "completed":
+                  break
+          else:
+              index = len(stages)
+          issue_number = state.get("approval_issue_number") or ""
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"resume_from_index={index}\n")
+              output.write(f"approval_issue_number={issue_number}\n")
+          PY
+
+      - name: Report production identity
+        env:
+          PRODUCTION_ID: ${{ steps.resolve.outputs.production_id }}
+          EFFECTIVE_MODE: ${{ steps.resolve.outputs.effective_mode }}
+          RESUME_FROM_INDEX: ${{ steps.inspect.outputs.resume_from_index || steps.resolve.outputs.resume_from_index }}
+        shell: bash
+        run: |
+          {
+            echo "## Production checkpoint"
+            echo "- Production ID: \`$PRODUCTION_ID\`"
+            echo "- Mode: \`$EFFECTIVE_MODE\`"
+            echo "- Resume stage index: \`$RESUME_FROM_INDEX\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   discover-topics:
     name: Generate and score topic candidates
-    needs: validate
+    needs: [validate, restore-production]
+    if: ${{ always() && needs.validate.result == 'success' && needs.restore-production.result == 'success' && (needs.restore-production.outputs.effective_mode == 'NEW' || needs.restore-production.outputs.resume_from_index == '0') }}
     runs-on: ubuntu-latest
     outputs:
       issue_number: ${{ steps.create-approval-issue.outputs.issue_number }}
@@ -134,6 +347,8 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       VIDIQ_MCP_API_KEY: ${{ secrets.VIDIQ_MCP_API_KEY }}
       RITZZ_INVENTORY_FILE: data/content_inventory.json
+      RITZZ_PRODUCTION_ID: ${{ needs.restore-production.outputs.production_id }}
+      RITZZ_PIPELINE_ARTIFACTS: .pipeline-artifacts
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -147,18 +362,29 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
+      - name: Initialize production state
+        if: ${{ needs.restore-production.outputs.effective_mode == 'NEW' }}
+        run: python scripts/manage_pipeline_production.py initialize --production-id "${{ needs.restore-production.outputs.production_id }}"
+
       - name: Generate and score 3–5 candidates
         id: discover
-        run: python scripts/discover_pipeline_topics.py
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage=topic_discovery
+          python scripts/manage_pipeline_production.py start --stage "$stage"
+          trap 'python scripts/manage_pipeline_production.py fail --stage "$stage" --error "Topic discovery command failed."' ERR
+          python scripts/discover_pipeline_topics.py
+          python scripts/manage_pipeline_production.py complete --stage "$stage" --artifacts topic_candidates.json topic_candidates.md topic_discovery_diagnostics.json
 
-      - name: Upload topic candidates
-        if: always()
+      - name: Persist topic discovery before creating approval issue
         uses: actions/upload-artifact@v4
         with:
-          name: ritzz-topic-candidates-${{ github.run_id }}
+          name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-topic_discovery
           path: .pipeline-artifacts/
-          if-no-files-found: warn
+          if-no-files-found: error
           include-hidden-files: true
+          overwrite: true
 
       - name: Create browser approval issue
         id: create-approval-issue
@@ -166,6 +392,7 @@ jobs:
         env:
           CANDIDATE_SUMMARY: .pipeline-artifacts/topic_candidates.md
           CANDIDATE_COUNT: ${{ steps.discover.outputs.candidate_count }}
+          PRODUCTION_ID: ${{ needs.restore-production.outputs.production_id }}
         with:
           script: |
             const fs = require('fs');
@@ -176,32 +403,121 @@ jobs:
               return;
             }
             const choices = Array.from({ length: candidateCount }, (_, index) => `\`${index + 1}\``).join(', ');
-            const issue = await github.rest.issues.create({
+            const title = `RITZZ topic approval - production ${process.env.PRODUCTION_ID}`;
+            const existing = await github.paginate(github.rest.issues.listForRepo, {
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `RITZZ topic approval - run ${context.runId}`,
-              body: `${summary}\n\nReply with exactly one selection label: ${choices}. Only trusted repository collaborators may approve this run.`,
+              state: 'all',
+              per_page: 100
             });
-            core.setOutput('issue_number', issue.data.number);
+            const priorIssue = existing.find(issue => issue.title === title);
+            const issue = priorIssue || (await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body: `${summary}\n\nReply with exactly one selection label: ${choices}. Only trusted repository collaborators may approve this run.`,
+            })).data;
+            core.setOutput('issue_number', issue.number);
             core.summary.addHeading('Topic approval issue');
-            core.summary.addLink(`Open topic approval issue #${issue.data.number}`, issue.data.html_url);
+            core.summary.addLink(`Open topic approval issue #${issue.number}`, issue.html_url);
             await core.summary.write();
+
+      - name: Save approval issue number
+        env:
+          ISSUE_NUMBER: ${{ steps.create-approval-issue.outputs.issue_number }}
+        run: python scripts/manage_pipeline_production.py issue --issue-number "$ISSUE_NUMBER"
+
+      - name: Upload topic discovery checkpoint
+        if: ${{ always() && steps.discover.outcome == 'success' && steps.create-approval-issue.outcome == 'success' && steps.create-approval-issue.outputs.issue_number != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-topic_discovery
+          path: .pipeline-artifacts/
+          if-no-files-found: error
+          include-hidden-files: true
+          overwrite: true
+
+      - name: Upload failed discovery diagnostics
+        if: ${{ failure() && hashFiles('.pipeline-artifacts/topic_discovery_diagnostics.json') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ritzz-topic-discovery-diagnostics-${{ github.run_id }}
+          path: .pipeline-artifacts/
+          if-no-files-found: warn
+          include-hidden-files: true
 
   select-topic:
     name: Wait for topic selection
-    needs: discover-topics
+    needs: [discover-topics, restore-production]
+    if: ${{ always() && needs.restore-production.result == 'success' && needs.discover-topics.result != 'failure' && needs.discover-topics.result != 'cancelled' && (needs.restore-production.outputs.effective_mode == 'NEW' || needs.restore-production.outputs.resume_from_index <= 1) }}
     runs-on: ubuntu-latest
     outputs:
       selection: ${{ steps.wait-for-selection.outputs.selection }}
     env:
-      ISSUE_NUMBER: ${{ needs.discover-topics.outputs.issue_number }}
       GH_TOKEN: ${{ github.token }}
-      CANDIDATE_COUNT: ${{ needs.discover-topics.outputs.candidate_count }}
+      RITZZ_PRODUCTION_ID: ${{ needs.restore-production.outputs.production_id }}
+      RITZZ_PIPELINE_ARTIFACTS: .pipeline-artifacts
       RITZZ_TARGET_DURATION_MINUTES: ${{ inputs.target_duration_minutes }}
       RITZZ_MINIMUM_DURATION_MINUTES: ${{ inputs.minimum_duration_minutes }}
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Download topic candidates
+        uses: actions/download-artifact@v4
+        with:
+          name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-topic_discovery
+          run-id: ${{ needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '1' && needs.restore-production.outputs.source_run_id || github.run_id }}
+          github-token: ${{ github.token }}
+          path: .pipeline-artifacts
+
+      - name: Read candidate count
+        id: candidate-count
+        shell: bash
+        run: |
+          count=$(python -c "import json; print(len(json.load(open('.pipeline-artifacts/topic_candidates.json', encoding='utf-8'))['candidates']))")
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve approval issue
+        id: approval-issue
+        env:
+          SAVED_ISSUE_NUMBER: ${{ needs.restore-production.outputs.approval_issue_number }}
+          CANDIDATE_SUMMARY: .pipeline-artifacts/topic_candidates.md
+        shell: bash
+        run: |
+          set -euo pipefail
+          issue_number="$SAVED_ISSUE_NUMBER"
+          if [[ -z "$issue_number" ]]; then
+            issue_number=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues?state=all&per_page=100" \
+              --jq '.[] | select(.title == "RITZZ topic approval - production '"$RITZZ_PRODUCTION_ID"'") | .number' | head -n 1)
+          fi
+          if [[ -z "$issue_number" ]]; then
+            body="$(cat "$CANDIDATE_SUMMARY")"
+            body+=$'\n\nReply with exactly one candidate number to approve. Only trusted repository collaborators may approve.'
+            issue_number=$(gh api --method POST "repos/${GITHUB_REPOSITORY}/issues" \
+              -f "title=RITZZ topic approval - production ${RITZZ_PRODUCTION_ID}" \
+              -f "body=$body" --jq '.number')
+          fi
+          if [[ ! "$issue_number" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Could not find or create an approval issue for production $RITZZ_PRODUCTION_ID." >&2
+            exit 1
+          fi
+          echo "issue_number=$issue_number" >> "$GITHUB_OUTPUT"
+
       - name: Wait for numbered browser selection
         id: wait-for-selection
+        env:
+          ISSUE_NUMBER: ${{ steps.approval-issue.outputs.issue_number }}
+          CANDIDATE_COUNT: ${{ steps.candidate-count.outputs.count }}
         shell: bash
         run: |
           set -euo pipefail
@@ -223,40 +539,32 @@ jobs:
           echo "Timed out waiting for topic selection." >&2
           exit 1
 
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-
-      - name: Install dependencies
-        run: python -m pip install -r requirements.txt
-
-      - name: Download topic candidates
-        uses: actions/download-artifact@v4
-        with:
-          name: ritzz-topic-candidates-${{ github.run_id }}
-          path: .pipeline-artifacts
-
       - name: Persist selected topic
+        id: persist-selection
         env:
           RITZZ_SELECTED_TOPIC_NUMBER: ${{ steps.wait-for-selection.outputs.selection }}
-        run: python scripts/select_pipeline_topic.py
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage=topic_selection
+          python scripts/manage_pipeline_production.py start --stage "$stage"
+          trap 'python scripts/manage_pipeline_production.py fail --stage "$stage" --error "Topic selection command failed."' ERR
+          python scripts/select_pipeline_topic.py
+          python scripts/manage_pipeline_production.py complete --stage "$stage" --artifacts topic_selection.json
 
       - name: Upload approved topic selection
         uses: actions/upload-artifact@v4
         with:
-          name: ritzz-approved-topic-${{ github.run_id }}
-          path: .pipeline-artifacts/topic_selection.json
+          name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-topic_selection
+          path: .pipeline-artifacts/
           if-no-files-found: error
           include-hidden-files: true
+          overwrite: true
 
   topic-approval:
     name: Approve selected topic
-    needs: select-topic
+    needs: [select-topic, restore-production]
+    if: ${{ always() && needs.restore-production.result == 'success' && (needs.restore-production.outputs.effective_mode == 'NEW' || needs.restore-production.outputs.resume_from_index <= 2) && (needs.select-topic.result == 'success' || (needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == 2)) }}
     runs-on: ubuntu-latest
     outputs:
       selection: ${{ needs.select-topic.outputs.selection }}
@@ -270,7 +578,8 @@ jobs:
 
   test-approval:
     name: Human approval for test pipeline
-    needs: topic-approval
+    needs: [topic-approval, restore-production]
+    if: ${{ always() && needs.restore-production.result == 'success' && (needs.restore-production.outputs.effective_mode == 'NEW' || needs.restore-production.outputs.resume_from_index <= 2) && (needs.topic-approval.result == 'success') }}
     runs-on: ubuntu-latest
     environment:
       name: ritzz-test-approval
@@ -286,12 +595,14 @@ jobs:
 
   content-preparation:
     name: Research, outline, and script
-    needs: test-approval
+    needs: [test-approval, select-topic, restore-production]
+    if: ${{ always() && needs.restore-production.result == 'success' && needs.test-approval.result == 'success' && (needs.restore-production.outputs.effective_mode == 'NEW' || needs.restore-production.outputs.resume_from_index <= 2) }}
     runs-on: ubuntu-latest
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       VIDIQ_MCP_API_KEY: ${{ secrets.VIDIQ_MCP_API_KEY }}
       RITZZ_PIPELINE_ARTIFACTS: .pipeline-artifacts
+      RITZZ_PRODUCTION_ID: ${{ needs.restore-production.outputs.production_id }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -305,20 +616,22 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
-      - name: Download topic candidates
-        uses: actions/download-artifact@v4
-        with:
-          name: ritzz-topic-candidates-${{ github.run_id }}
-          path: .pipeline-artifacts
-
       - name: Download approved topic
         uses: actions/download-artifact@v4
         with:
-          name: ritzz-approved-topic-${{ github.run_id }}
+          name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-topic_selection
+          run-id: ${{ needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '2' && needs.restore-production.outputs.source_run_id || github.run_id }}
+          github-token: ${{ github.token }}
           path: .pipeline-artifacts
 
       - name: Run approved content workflow
-        run: python scripts/run_approved_content_workflow.py
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage=content_preparation
+          python scripts/manage_pipeline_production.py start --stage "$stage"
+          trap 'python scripts/manage_pipeline_production.py fail --stage "$stage" --error "Content preparation command failed."' ERR
+          python scripts/run_approved_content_workflow.py
 
       - name: Archive generated project artifacts
         shell: bash
@@ -327,21 +640,31 @@ jobs:
           project_name=$(find projects -mindepth 1 -maxdepth 1 -type d -name "${project_id}_*" -printf "%f\n" | head -n 1)
           tar -czf .pipeline-artifacts/content-project.tar.gz -C projects "$project_name"
 
+      - name: Complete content preparation checkpoint
+        shell: bash
+        run: |
+          project_id=$(python -c "import json; print(json.load(open('.pipeline-artifacts/content_workflow_result.json'))['project_id'])")
+          python scripts/manage_pipeline_production.py complete --stage content_preparation --project-id "$project_id" --artifacts content_workflow_result.json content-project.tar.gz
+
       - name: Upload content artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ritzz-content-project-${{ github.run_id }}
+          name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-content_preparation
           path: .pipeline-artifacts/
           if-no-files-found: error
           include-hidden-files: true
+          overwrite: true
 
   voice-generation:
     name: Generate and validate narration
-    needs: content-preparation
+    needs: [content-preparation, restore-production]
+    if: ${{ always() && needs.restore-production.result == 'success' && (needs.restore-production.outputs.effective_mode == 'NEW' || needs.restore-production.outputs.resume_from_index <= 3) && ((needs.content-preparation.result == 'success') || (needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index >= 3)) }}
     runs-on: ubuntu-latest
     env:
       ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
       RITZZ_VOICE_ID: ${{ secrets.RITZZ_VOICE_ID }}
+      RITZZ_PRODUCTION_ID: ${{ needs.restore-production.outputs.production_id }}
+      RITZZ_PIPELINE_ARTIFACTS: .pipeline-artifacts
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -358,7 +681,9 @@ jobs:
       - name: Download content project
         uses: actions/download-artifact@v4
         with:
-          name: ritzz-content-project-${{ github.run_id }}
+          name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-content_preparation
+          run-id: ${{ needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '3' && needs.restore-production.outputs.source_run_id || github.run_id }}
+          github-token: ${{ github.token }}
           path: .pipeline-artifacts
 
       - name: Extract content project
@@ -373,9 +698,15 @@ jobs:
           echo "project_id=$project_id" >> "$GITHUB_OUTPUT"
 
       - name: Generate and validate narration
+        shell: bash
         env:
           RITZZ_PROJECT_ID: ${{ steps.project.outputs.project_id }}
-        run: python scripts/run_voice_stage.py
+        run: |
+          set -euo pipefail
+          stage=voice_generation
+          python scripts/manage_pipeline_production.py start --stage "$stage"
+          trap 'python scripts/manage_pipeline_production.py fail --stage "$stage" --error "Voice generation command failed."' ERR
+          python scripts/run_voice_stage.py
 
       - name: Archive voice project artifacts
         shell: bash
@@ -383,17 +714,22 @@ jobs:
           project_name=$(find projects -mindepth 1 -maxdepth 1 -type d -name "${{ steps.project.outputs.project_id }}_*" -printf "%f\n" | head -n 1)
           tar -czf .pipeline-artifacts/voice-project.tar.gz -C projects "$project_name"
 
+      - name: Complete voice generation checkpoint
+        run: python scripts/manage_pipeline_production.py complete --stage voice_generation --artifacts voice-project.tar.gz
+
       - name: Upload voice artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ritzz-voice-project-${{ github.run_id }}
+          name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-voice_generation
           path: .pipeline-artifacts/
           if-no-files-found: error
           include-hidden-files: true
+          overwrite: true
 
   pipeline-placeholder:
     name: Production stages pending M8 implementation
-    needs: private-upload
+    needs: [private-upload, restore-production]
+    if: ${{ always() && needs.restore-production.result == 'success' && (needs.private-upload.result == 'success' || (needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index > 7)) }}
     runs-on: ubuntu-latest
     steps:
       - name: Report current implementation boundary
@@ -404,10 +740,13 @@ jobs:
 
   image-generation:
     name: Generate timed-scene images
-    needs: storyboard-generation
+    needs: [storyboard-generation, restore-production]
+    if: ${{ always() && needs.restore-production.result == 'success' && (needs.restore-production.outputs.effective_mode == 'NEW' || needs.restore-production.outputs.resume_from_index <= 5) && ((needs.storyboard-generation.result == 'success') || (needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index >= 5)) }}
     runs-on: ubuntu-latest
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      RITZZ_PRODUCTION_ID: ${{ needs.restore-production.outputs.production_id }}
+      RITZZ_PIPELINE_ARTIFACTS: .pipeline-artifacts
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -424,7 +763,9 @@ jobs:
       - name: Download storyboard project
         uses: actions/download-artifact@v4
         with:
-          name: ritzz-storyboard-project-${{ github.run_id }}
+          name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-storyboard_generation
+          run-id: ${{ needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '5' && needs.restore-production.outputs.source_run_id || github.run_id }}
+          github-token: ${{ github.token }}
           path: .pipeline-artifacts
 
       - name: Extract storyboard project
@@ -439,9 +780,15 @@ jobs:
           echo "project_id=$project_id" >> "$GITHUB_OUTPUT"
 
       - name: Generate timed-scene images
+        shell: bash
         env:
           RITZZ_PROJECT_ID: ${{ steps.project.outputs.project_id }}
-        run: python scripts/run_image_stage.py
+        run: |
+          set -euo pipefail
+          stage=image_generation
+          python scripts/manage_pipeline_production.py start --stage "$stage"
+          trap 'python scripts/manage_pipeline_production.py fail --stage "$stage" --error "Image generation command failed."' ERR
+          python scripts/run_image_stage.py
 
       - name: Archive image project artifacts
         shell: bash
@@ -449,18 +796,26 @@ jobs:
           project_name=$(find projects -mindepth 1 -maxdepth 1 -type d -name "${{ steps.project.outputs.project_id }}_*" -printf "%f\n" | head -n 1)
           tar -czf .pipeline-artifacts/image-project.tar.gz -C projects "$project_name"
 
+      - name: Complete image generation checkpoint
+        run: python scripts/manage_pipeline_production.py complete --stage image_generation --artifacts image-project.tar.gz
+
       - name: Upload image artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ritzz-image-project-${{ github.run_id }}
+          name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-image_generation
           path: .pipeline-artifacts/
           if-no-files-found: error
           include-hidden-files: true
+          overwrite: true
 
   render-video:
     name: Render and run technical QA
-    needs: image-generation
+    needs: [image-generation, restore-production]
+    if: ${{ always() && needs.restore-production.result == 'success' && (needs.restore-production.outputs.effective_mode == 'NEW' || needs.restore-production.outputs.resume_from_index <= 6) && ((needs.image-generation.result == 'success') || (needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index >= 6)) }}
     runs-on: ubuntu-latest
+    env:
+      RITZZ_PRODUCTION_ID: ${{ needs.restore-production.outputs.production_id }}
+      RITZZ_PIPELINE_ARTIFACTS: .pipeline-artifacts
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -477,7 +832,9 @@ jobs:
       - name: Download image project
         uses: actions/download-artifact@v4
         with:
-          name: ritzz-image-project-${{ github.run_id }}
+          name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-image_generation
+          run-id: ${{ needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '6' && needs.restore-production.outputs.source_run_id || github.run_id }}
+          github-token: ${{ github.token }}
           path: .pipeline-artifacts
 
       - name: Extract image project
@@ -492,9 +849,15 @@ jobs:
           echo "project_id=$project_id" >> "$GITHUB_OUTPUT"
 
       - name: Render test video and run technical QA
+        shell: bash
         env:
           RITZZ_PROJECT_ID: ${{ steps.project.outputs.project_id }}
-        run: python scripts/run_render_stage.py
+        run: |
+          set -euo pipefail
+          stage=render_video
+          python scripts/manage_pipeline_production.py start --stage "$stage"
+          trap 'python scripts/manage_pipeline_production.py fail --stage "$stage" --error "Render or technical QA failed."' ERR
+          python scripts/run_render_stage.py
 
       - name: Archive rendered project
         shell: bash
@@ -502,17 +865,22 @@ jobs:
           project_name=$(find projects -mindepth 1 -maxdepth 1 -type d -name "${{ steps.project.outputs.project_id }}_*" -printf "%f\n" | head -n 1)
           tar -czf .pipeline-artifacts/rendered-project.tar.gz -C projects "$project_name"
 
+      - name: Complete render checkpoint
+        run: python scripts/manage_pipeline_production.py complete --stage render_video --artifacts rendered-project.tar.gz
+
       - name: Upload rendered video artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ritzz-rendered-project-${{ github.run_id }}
+          name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-render_video
           path: .pipeline-artifacts/
           if-no-files-found: error
           include-hidden-files: true
+          overwrite: true
 
   video-approval:
     name: Human approval for generated test video
-    needs: render-video
+    needs: [render-video, restore-production]
+    if: ${{ always() && needs.restore-production.result == 'success' && (needs.render-video.result == 'success' || (needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '7')) && (needs.restore-production.outputs.effective_mode == 'NEW' || needs.restore-production.outputs.resume_from_index <= 7) }}
     runs-on: ubuntu-latest
     environment:
       name: ritzz-video-approval
@@ -526,7 +894,8 @@ jobs:
 
   packaging-approval:
     name: Human approval for packaging
-    needs: video-approval
+    needs: [video-approval, restore-production]
+    if: ${{ always() && needs.restore-production.result == 'success' && (needs.video-approval.result == 'success' || (needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '7')) && (needs.restore-production.outputs.effective_mode == 'NEW' || needs.restore-production.outputs.resume_from_index <= 7) }}
     runs-on: ubuntu-latest
     environment:
       name: ritzz-packaging-approval
@@ -540,11 +909,15 @@ jobs:
 
   private-upload:
     name: Upload test video privately
-    needs: packaging-approval
+    needs: [packaging-approval, restore-production]
+    if: ${{ always() && needs.restore-production.result == 'success' && (needs.restore-production.outputs.effective_mode == 'NEW' || needs.restore-production.outputs.resume_from_index <= 7) && ((needs.packaging-approval.result == 'success') || (needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '7')) }}
     runs-on: ubuntu-latest
     env:
       GOOGLE_CLIENT_SECRETS_B64: ${{ secrets.GOOGLE_CLIENT_SECRETS_B64 }}
       GOOGLE_TOKEN_B64: ${{ secrets.GOOGLE_TOKEN_B64 }}
+      RITZZ_PRODUCTION_ID: ${{ needs.restore-production.outputs.production_id }}
+      RITZZ_PIPELINE_ARTIFACTS: .pipeline-artifacts
+      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -558,15 +931,33 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
+      - name: Detect a private-upload checkpoint from this workflow attempt
+        id: pending-upload
+        shell: bash
+        run: |
+          artifact_name="ritzz-production-${RITZZ_PRODUCTION_ID}-private_upload"
+          artifact=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts" \
+            | jq -r --arg name "$artifact_name" '.artifacts[]? | select(.name == $name and (.expired | not)) | .name' \
+            | head -n 1)
+          echo "artifact_name=$artifact" >> "$GITHUB_OUTPUT"
+
       - name: Download rendered project
         uses: actions/download-artifact@v4
         with:
-          name: ritzz-rendered-project-${{ github.run_id }}
+          name: ${{ endsWith(needs.restore-production.outputs.source_artifact, '-private_upload') && needs.restore-production.outputs.source_artifact || steps.pending-upload.outputs.artifact_name || needs.restore-production.outputs.source_artifact || format('ritzz-production-{0}-render_video', needs.restore-production.outputs.production_id) }}
+          run-id: ${{ endsWith(needs.restore-production.outputs.source_artifact, '-private_upload') && needs.restore-production.outputs.source_run_id || steps.pending-upload.outputs.artifact_name != '' && github.run_id || needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '7' && needs.restore-production.outputs.source_run_id || github.run_id }}
+          github-token: ${{ github.token }}
           path: .pipeline-artifacts
 
       - name: Extract rendered project
+        if: ${{ !endsWith(needs.restore-production.outputs.source_artifact, '-private_upload') && !endsWith(steps.pending-upload.outputs.artifact_name, '-private_upload') }}
         shell: bash
         run: tar -xzf .pipeline-artifacts/rendered-project.tar.gz
+
+      - name: Extract pending upload project
+        if: ${{ endsWith(needs.restore-production.outputs.source_artifact, '-private_upload') || endsWith(steps.pending-upload.outputs.artifact_name, '-private_upload') }}
+        shell: bash
+        run: tar -xzf .pipeline-artifacts/private-upload-project.tar.gz
 
       - name: Read project ID
         id: project
@@ -581,17 +972,66 @@ jobs:
           printf '%s' "$GOOGLE_CLIENT_SECRETS_B64" | base64 --decode > "$RUNNER_TEMP/youtube-client-secrets.json"
           printf '%s' "$GOOGLE_TOKEN_B64" | base64 --decode > "$RUNNER_TEMP/youtube-token.json"
 
+      - name: Persist private upload intent before contacting YouTube
+        if: ${{ !endsWith(needs.restore-production.outputs.source_artifact, '-private_upload') && steps.pending-upload.outputs.artifact_name == '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage=private_upload
+          python scripts/manage_pipeline_production.py start --stage "$stage"
+          python scripts/manage_pipeline_production.py intent --run-id "$GITHUB_RUN_ID" --run-attempt "$GITHUB_RUN_ATTEMPT"
+          project_name=$(find projects -mindepth 1 -maxdepth 1 -type d -name "${{ steps.project.outputs.project_id }}_*" -printf "%f\n" | head -n 1)
+          tar -czf .pipeline-artifacts/private-upload-project.tar.gz -C projects "$project_name"
+
+      - name: Upload pending private-upload checkpoint
+        if: ${{ !endsWith(needs.restore-production.outputs.source_artifact, '-private_upload') && steps.pending-upload.outputs.artifact_name == '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-private_upload
+          path: .pipeline-artifacts/
+          if-no-files-found: error
+          include-hidden-files: true
+          overwrite: true
+
       - name: Upload test video privately
+        shell: bash
         env:
           RITZZ_PROJECT_ID: ${{ steps.project.outputs.project_id }}
           GOOGLE_CLIENT_SECRETS_FILE: ${{ runner.temp }}/youtube-client-secrets.json
           GOOGLE_TOKEN_FILE: ${{ runner.temp }}/youtube-token.json
-        run: python scripts/run_private_upload_stage.py
+        run: |
+          set -euo pipefail
+          stage=private_upload
+          trap 'python scripts/manage_pipeline_production.py fail --stage "$stage" --error "Private upload failed or returned an uncertain result."' ERR
+          python scripts/run_private_upload_stage.py
+
+      - name: Archive uploaded project
+        shell: bash
+        run: |
+          project_name=$(find projects -mindepth 1 -maxdepth 1 -type d -name "${{ steps.project.outputs.project_id }}_*" -printf "%f\n" | head -n 1)
+          tar -czf .pipeline-artifacts/private-upload-project.tar.gz -C projects "$project_name"
+          cp "projects/$project_name/publishing/publish.json" .pipeline-artifacts/private-upload-result.json
+
+      - name: Complete private upload checkpoint
+        run: python scripts/manage_pipeline_production.py complete --stage private_upload --artifacts private-upload-result.json private-upload-project.tar.gz
+
+      - name: Upload private upload checkpoint
+        uses: actions/upload-artifact@v4
+        with:
+          name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-private_upload
+          path: .pipeline-artifacts/
+          if-no-files-found: error
+          include-hidden-files: true
+          overwrite: true
 
   storyboard-generation:
     name: Build audio-timed storyboard
-    needs: voice-generation
+    needs: [voice-generation, restore-production]
+    if: ${{ always() && needs.restore-production.result == 'success' && (needs.restore-production.outputs.effective_mode == 'NEW' || needs.restore-production.outputs.resume_from_index <= 4) && ((needs.voice-generation.result == 'success') || (needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index >= 4)) }}
     runs-on: ubuntu-latest
+    env:
+      RITZZ_PRODUCTION_ID: ${{ needs.restore-production.outputs.production_id }}
+      RITZZ_PIPELINE_ARTIFACTS: .pipeline-artifacts
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -608,7 +1048,9 @@ jobs:
       - name: Download voice project
         uses: actions/download-artifact@v4
         with:
-          name: ritzz-voice-project-${{ github.run_id }}
+          name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-voice_generation
+          run-id: ${{ needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '4' && needs.restore-production.outputs.source_run_id || github.run_id }}
+          github-token: ${{ github.token }}
           path: .pipeline-artifacts
 
       - name: Extract voice project
@@ -623,9 +1065,15 @@ jobs:
           echo "project_id=$project_id" >> "$GITHUB_OUTPUT"
 
       - name: Build narrative and audio-timed storyboards
+        shell: bash
         env:
           RITZZ_PROJECT_ID: ${{ steps.project.outputs.project_id }}
-        run: python scripts/run_storyboard_stage.py
+        run: |
+          set -euo pipefail
+          stage=storyboard_generation
+          python scripts/manage_pipeline_production.py start --stage "$stage"
+          trap 'python scripts/manage_pipeline_production.py fail --stage "$stage" --error "Storyboard generation command failed."' ERR
+          python scripts/run_storyboard_stage.py
 
       - name: Archive storyboard project artifacts
         shell: bash
@@ -633,10 +1081,14 @@ jobs:
           project_name=$(find projects -mindepth 1 -maxdepth 1 -type d -name "${{ steps.project.outputs.project_id }}_*" -printf "%f\n" | head -n 1)
           tar -czf .pipeline-artifacts/storyboard-project.tar.gz -C projects "$project_name"
 
+      - name: Complete storyboard checkpoint
+        run: python scripts/manage_pipeline_production.py complete --stage storyboard_generation --artifacts storyboard-project.tar.gz
+
       - name: Upload storyboard artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ritzz-storyboard-project-${{ github.run_id }}
+          name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-storyboard_generation
           path: .pipeline-artifacts/
           if-no-files-found: error
           include-hidden-files: true
+          overwrite: true

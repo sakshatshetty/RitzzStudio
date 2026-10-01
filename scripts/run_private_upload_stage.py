@@ -9,6 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from modules.production_state import ProductionStateStore
 from modules.project.manager import ProjectManager
 from modules.project.packaging import PackagingArtifact
 from modules.publishing.engine import PublishingEngine
@@ -16,6 +17,21 @@ from modules.publishing.youtube_provider import YouTubeProvider
 
 
 def main() -> int:
+    production_id = os.environ.get("RITZZ_PRODUCTION_ID")
+    if production_id:
+        state_store = ProductionStateStore(
+            os.environ.get(
+                "RITZZ_PRODUCTION_STATE_FILE",
+                ".pipeline-artifacts/production_state.json",
+            ),
+            os.environ.get("RITZZ_PIPELINE_ARTIFACTS", ".pipeline-artifacts"),
+        )
+        state_store.resume(production_id)
+        state_store.validate_private_upload_intent(
+            os.environ["GITHUB_RUN_ID"],
+            int(os.environ["GITHUB_RUN_ATTEMPT"]),
+        )
+
     project_id = os.environ["RITZZ_PROJECT_ID"]
     projects_directory = Path("projects")
     manager = ProjectManager(projects_directory)
