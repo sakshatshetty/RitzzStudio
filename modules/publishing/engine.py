@@ -139,17 +139,55 @@ class PublishingEngine:
         if not schedule and not private_only:
             raise ValueError("Uploads require a publish schedule before publishing.")
 
-        response = self.provider.upload_video(
-            video_file=video_file,
-            title=title,
-            description=description,
-            metadata=metadata,
-            scheduled_for=schedule,
-        )
-
         project_path = self.projects_dir / f"{project.project_id}_{project.slug}"
         publish_dir = project_path / "publishing"
         publish_dir.mkdir(parents=True, exist_ok=True)
+        result_path = publish_dir / "publish.json"
+        attempt_path = publish_dir / "publish_attempt.json"
+        if result_path.exists():
+            raise ValueError(
+                "This project already has a publish result; refusing to upload it again."
+            )
+        if attempt_path.exists():
+            raise RuntimeError(
+                "A prior upload attempt has no saved result. Reconcile its status "
+                "before retrying to avoid a duplicate upload."
+            )
+
+        attempt = {
+            "status": "uploading",
+            "title": title,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            with attempt_path.open("x", encoding="utf-8") as file:
+                json.dump(attempt, file, indent=2)
+        except FileExistsError as exc:
+            raise RuntimeError(
+                "Another upload attempt has already claimed this project."
+            ) from exc
+        try:
+            response = self.provider.upload_video(
+                video_file=video_file,
+                title=title,
+                description=description,
+                metadata=metadata,
+                scheduled_for=schedule,
+            )
+        except Exception as exc:
+            attempt_path.write_text(
+                json.dumps(
+                    {
+                        "status": "outcome_unknown",
+                        "title": title,
+                        "started_at": datetime.now(timezone.utc).isoformat(),
+                        "error": str(exc),
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            raise
 
         result = PublishResult(
             publish_status="PRIVATE" if private_only else "PUBLISHED",
@@ -158,7 +196,18 @@ class PublishingEngine:
             title=title,
             scheduled_for=schedule,
         )
-        (publish_dir / "publish.json").write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")
+        result_path.write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")
+        attempt_path.write_text(
+            json.dumps(
+                {
+                    "status": "completed",
+                    "title": title,
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
         return result
 
     def publish_project(

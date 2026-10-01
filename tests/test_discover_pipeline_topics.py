@@ -275,7 +275,10 @@ def test_workflow_keeps_dynamic_selection_and_m2_behind_human_approval():
     )
 
     assert "candidate_count: ${{ steps.discover.outputs.candidate_count }}" in workflow
-    assert "CANDIDATE_COUNT: ${{ needs.discover-topics.outputs.candidate_count }}" in workflow
+    assert "CANDIDATE_COUNT: ${{ steps.candidate-count.outputs.count }}" in workflow
     assert "'/^[1-5]$/ && $0 <= max {" in workflow
     assert "^[1-4]$" not in workflow
-    assert "content-preparation:\n    name: Research, outline, and script\n    needs: test-approval" in workflow
+    assert "content-preparation:\n    name: Research, outline, and script\n    needs: [test-approval, select-topic, restore-production]" in workflow
+    assert "needs.restore-production.outputs.resume_from_index <= 1" in workflow
+    assert "RITZZ topic approval - production ${process.env.PRODUCTION_ID}" in workflow
+    assert "Persist private upload intent before contacting YouTube" in workflow
