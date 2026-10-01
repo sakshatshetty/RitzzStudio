@@ -23,8 +23,10 @@ The GitHub production pipeline additionally runs the rendered-video midpoint
 review after technical QA, before human approval. It records
 `qa/rendered_video_semantic_qa.json` and checks the frame that will actually be
 seen after image compositing and rendering. One OpenAI Vision call is made per
-scene; this check is not a substitute for listening to the complete audio or
-watching the video.
+scene using strict JSON-schema output. Empty, incomplete, or malformed model
+output fails the QA stage with response-status context instead of being
+accepted as a result. This check is not a substitute for listening to the
+complete audio or watching the video.
 
 ## Current limits
 
