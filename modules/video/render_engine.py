@@ -2,7 +2,6 @@ import json
 import os
 import shutil
 import subprocess
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -257,96 +256,79 @@ class FFmpegVideoRenderer:
             motion_plan,
         )
 
-        with tempfile.TemporaryDirectory(
-            prefix="ritzz_ffmpeg_"
-        ) as temp_directory:
+        command = [
+            self.ffmpeg_path,
+            "-y",
+        ]
 
-            filter_file = (
-                Path(temp_directory)
-                / "filter_complex.txt"
-            )
-
-            filter_file.write_text(
-                filter_script,
-                encoding="utf-8",
-            )
-
-            # FFmpeg 9 uses the file-input syntax
-            # -/filter_complex instead of the removed
-            # -filter_complex_script option.
-            command = [
-                self.ffmpeg_path,
-                "-y",
-            ]
-
-            for image_path in image_paths:
-                command.extend(
-                    [
-                        "-i",
-                        str(image_path),
-                    ]
-                )
-
-            audio_input_index = len(
-                image_paths
-            )
-
+        for image_path in image_paths:
             command.extend(
                 [
                     "-i",
-                    str(audio_path),
-
-                    "-/filter_complex",
-                    str(filter_file),
-
-                    "-map",
-                    "[vout]",
-
-                    "-map",
-                    f"{audio_input_index}:a:0",
-
-                    "-t",
-                    f"{assembly_plan.total_duration_seconds:.3f}",
-
-                    "-c:v",
-                    self.DEFAULT_CODEC,
-
-                    "-preset",
-                    self.DEFAULT_PRESET,
-
-                    "-crf",
-                    self.DEFAULT_CRF,
-
-                    "-pix_fmt",
-                    "yuv420p",
-
-                    "-c:a",
-                    self.DEFAULT_AUDIO_CODEC,
-
-                    "-b:a",
-                    self.DEFAULT_AUDIO_BITRATE,
-
-                    "-movflags",
-                    "+faststart",
-
-                    str(output_path),
+                    str(image_path),
                 ]
             )
 
-            completed = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+        audio_input_index = len(
+            image_paths
+        )
 
-            if completed.returncode != 0:
-                raise RuntimeError(
-                    "FFmpeg rendering failed.\n"
-                    f"Command: {' '.join(command)}\n"
-                    f"STDOUT:\n{completed.stdout}\n"
-                    f"STDERR:\n{completed.stderr}"
-                )
+        command.extend(
+            [
+                "-i",
+                str(audio_path),
+
+                "-filter_complex",
+                filter_script,
+
+                "-map",
+                "[vout]",
+
+                "-map",
+                f"{audio_input_index}:a:0",
+
+                "-t",
+                f"{assembly_plan.total_duration_seconds:.3f}",
+
+                "-c:v",
+                self.DEFAULT_CODEC,
+
+                "-preset",
+                self.DEFAULT_PRESET,
+
+                "-crf",
+                self.DEFAULT_CRF,
+
+                "-pix_fmt",
+                "yuv420p",
+
+                "-c:a",
+                self.DEFAULT_AUDIO_CODEC,
+
+                "-b:a",
+                self.DEFAULT_AUDIO_BITRATE,
+
+                "-movflags",
+                "+faststart",
+
+                str(output_path),
+            ]
+        )
+
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        if completed.returncode != 0:
+            raise RuntimeError(
+                "FFmpeg rendering failed.\n"
+                f"Command: {' '.join(command)}\n"
+                f"STDOUT:\n{completed.stdout}\n"
+                f"STDERR:\n{completed.stderr}"
+            )
 
         if not output_path.exists():
             raise RuntimeError(
