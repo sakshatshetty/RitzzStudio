@@ -5,7 +5,9 @@ from __future__ import annotations
 import io
 import json
 import os
+import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -26,8 +28,6 @@ API_ROOT = "https://api.github.com"
 def _github_request(
     url: str,
     token: str,
-    *,
-    binary: bool = False,
 ) -> Any:
     request = urllib.request.Request(
         url,
@@ -42,8 +42,6 @@ def _github_request(
             content = response.read()
     except (OSError, urllib.error.HTTPError) as exc:
         raise RuntimeError(f"GitHub API request failed for {url}: {exc}") from exc
-    if binary:
-        return content
     try:
         return json.loads(content)
     except json.JSONDecodeError as exc:
@@ -61,6 +59,47 @@ def _artifact_stage(name: str) -> tuple[str, str] | None:
             if production_id:
                 return production_id, stage
     return None
+
+
+def _download_artifact_archive(artifact: dict[str, Any], repository: str) -> bytes:
+    run_id = str(artifact["workflow_run"]["id"])
+    artifact_name = str(artifact["name"])
+    with tempfile.TemporaryDirectory(prefix="ritzz-checkpoint-") as directory:
+        try:
+            subprocess.run(
+                [
+                    "gh",
+                    "run",
+                    "download",
+                    run_id,
+                    "--repo",
+                    repository,
+                    "--name",
+                    artifact_name,
+                    "--dir",
+                    directory,
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            details = (exc.stderr or exc.stdout or "No CLI error details returned.").strip()
+            raise RuntimeError(
+                f"GitHub CLI could not download artifact {artifact_name} "
+                f"from run {run_id}: {details}"
+            ) from exc
+
+        state_files = list(Path(directory).rglob("production_state.json"))
+        if len(state_files) != 1:
+            raise RuntimeError(
+                f"Artifact {artifact_name} must contain exactly one production_state.json; "
+                f"found {len(state_files)}."
+            )
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("production_state.json", state_files[0].read_bytes())
+        return buffer.getvalue()
 
 
 def find_checkpoint_for_project(
@@ -153,11 +192,17 @@ def resolve_from_github(
         page += 1
 
     def download_archive(artifact_id: int) -> bytes:
-        return _github_request(
-            f"{API_ROOT}/repos/{encoded_repo}/actions/artifacts/{artifact_id}/zip",
-            token,
-            binary=True,
+        artifact = next(
+            (
+                item
+                for item in artifacts
+                if int(item.get("id", 0)) == artifact_id
+            ),
+            None,
         )
+        if artifact is None:
+            raise RuntimeError(f"Artifact {artifact_id} disappeared from the listing.")
+        return _download_artifact_archive(artifact, repository)
 
     return find_checkpoint_for_project(project_id, artifacts, download_archive)
 
