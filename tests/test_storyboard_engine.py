@@ -3,9 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from modules.storyboard.engine import StoryboardEngine
 from modules.project.config import ProductionConfig
-
+from modules.script.models import Script, ScriptSection
+from modules.storyboard.engine import StoryboardEngine
 
 PROJECT_DIR = Path(
     "projects/20260820_001_why_do_pirates_wear_eye_patches"
@@ -108,6 +108,37 @@ def test_storyboard_duration():
         480,
         abs=0.1,
     )
+
+
+def test_storyboard_scales_section_estimates_to_declared_script_duration():
+    script = Script(
+        topic="A duration mismatch",
+        target_duration_seconds=30,
+        target_word_count=10,
+        hook="A short hook.",
+        sections=[
+            ScriptSection(
+                section_id="s1",
+                section_type="hook",
+                title="Hook",
+                narration="One two three four five six seven eight nine ten.",
+                estimated_seconds=60,
+                research_sources=["source_001"],
+            )
+        ],
+        total_estimated_seconds=30,
+        total_word_count=10,
+        closing_message="The end.",
+    )
+
+    storyboard = StoryboardEngine()._build_storyboard(script)
+
+    assert storyboard.total_scene_duration_seconds == pytest.approx(30, abs=0.01)
+    assert sum(scene.duration_seconds for scene in storyboard.scenes) == pytest.approx(
+        30, abs=0.01
+    )
+    assert all(scene.duration_seconds > 0 for scene in storyboard.scenes)
+    assert all(scene.duration_seconds <= 30 for scene in storyboard.scenes)
 
 
 def test_storyboard_contains_all_sections():

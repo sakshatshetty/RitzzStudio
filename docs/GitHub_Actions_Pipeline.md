@@ -75,6 +75,9 @@ no provider API calls and does not prove that a key has live service permission.
 Voice validation and video rendering install FFmpeg in their Ubuntu jobs.
 `ffprobe` is required to measure generated narration duration; both `ffmpeg`
 and `ffprobe` are verified before their media stages proceed.
+Storyboard scene timing scales outline section estimates proportionally to the
+script's declared duration, so imperfect per-section estimates cannot push the
+final scene to an invalid or negative duration.
 
 Topic duplicate prevention reads the durable repository inventory at
 `data/content_inventory.json`. Test runs do not write to this file and therefore

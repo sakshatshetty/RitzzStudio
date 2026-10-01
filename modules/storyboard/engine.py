@@ -111,6 +111,15 @@ class StoryboardEngine:
             config.scene_minimum_duration_seconds,
             min(self.target_scene_duration_seconds, config.scene_maximum_duration_seconds),
         )
+        expected_duration = float(script.total_estimated_seconds)
+        section_duration_total = sum(
+            float(section.estimated_seconds) for section in script.sections
+        )
+        if expected_duration <= 0 or section_duration_total <= 0:
+            raise ValueError(
+                "Script and section estimated durations must be greater than zero."
+            )
+        section_duration_scale = expected_duration / section_duration_total
         scenes: list[StoryboardScene] = []
 
         current_time = 0.0
@@ -135,9 +144,7 @@ class StoryboardEngine:
                     "contains no words."
                 )
 
-            section_duration = float(
-                section.estimated_seconds
-            )
+            section_duration = float(section.estimated_seconds) * section_duration_scale
 
             section_scene_count = max(
                 1,
@@ -254,7 +261,6 @@ class StoryboardEngine:
             scene.duration_seconds
             for scene in scenes
         )
-        expected_duration = float(script.total_estimated_seconds)
         duration_delta = round(expected_duration - total_duration, 2)
         if scenes and duration_delta:
             final_scene = scenes[-1]
