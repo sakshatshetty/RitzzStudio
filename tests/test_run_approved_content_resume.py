@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -72,7 +73,8 @@ def test_failed_content_run_saves_details_and_resume_reuses_project(
     monkeypatch,
     capsys,
 ):
-    artifacts_directory = tmp_path / "artifacts"
+    monkeypatch.chdir(tmp_path)
+    artifacts_directory = Path(".pipeline-artifacts")
     artifacts_directory.mkdir()
     projects_directory = tmp_path / "projects"
     _prepare_failed_content_stage(artifacts_directory)
