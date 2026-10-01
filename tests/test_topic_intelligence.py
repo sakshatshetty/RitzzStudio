@@ -1366,6 +1366,28 @@ def test_provider_parses_structured_candidate_without_inventing_metrics():
     assert item.raw_evidence == record
 
 
+def test_provider_keeps_vidiq_volume_score_distinct_from_monthly_searches():
+    record = {
+        "keyword": "history",
+        "volume": 100,
+        "overall": 75.32,
+        "estimatedMonthlySearch": 6_302_913,
+        "competition": 61.7,
+        "searchDemandGrowthPct": 6.99,
+    }
+
+    item = VidiqMcpProvider._candidate(record, 0)
+
+    assert item.evidence["volume_score"].value == 100
+    assert item.evidence["volume_score"].unit == "0-100"
+    assert item.evidence["search_volume"].value == 6_302_913
+    assert item.evidence["search_volume"].unit == "monthly searches"
+    assert item.evidence["keyword_score"].value == 75.32
+    assert item.evidence["competition"].value == 61.7
+    assert item.evidence["growth"].value == 6.99
+    assert "volume" not in item.evidence
+
+
 def test_provider_applies_requested_mode_if_result_does_not_label_candidate():
     item = VidiqMcpProvider._candidate({"keyword": "A durable question"}, 0, "EVERGREEN")
     assert item.opportunity_type == "EVERGREEN"

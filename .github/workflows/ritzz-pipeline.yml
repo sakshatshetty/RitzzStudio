@@ -3,14 +3,6 @@ name: RITZZ Video Pipeline
 on:
   workflow_dispatch:
     inputs:
-      discovery_mode:
-        description: Topic discovery mode
-        required: true
-        type: choice
-        options:
-          - TRENDING
-          - EVERGREEN
-        default: TRENDING
       test_run:
         description: Keep all generated output private or unlisted as a test run
         required: true
@@ -86,9 +78,10 @@ jobs:
           tests/test_competitor_opportunities.py
           tests/test_config_settings.py
           tests/test_discover_pipeline_topics.py
+          tests/test_pipeline_prerequisites.py
+          tests/test_pipeline_topic_discovery.py
           tests/test_select_pipeline_topic.py
           tests/test_content_workflow.py::test_selected_candidate_is_linked_to_report_and_project
-          tests/test_config_settings.py
           -q
 
       - name: Enforce test-only release boundary
@@ -100,7 +93,6 @@ jobs:
       - name: Write run manifest
         shell: bash
         env:
-          DISCOVERY_MODE: ${{ inputs.discovery_mode }}
           TEST_RUN: ${{ inputs.test_run }}
         run: |
           mkdir -p .pipeline-artifacts
@@ -111,7 +103,7 @@ jobs:
 
           manifest = {
               "workflow": "RITZZ Video Pipeline",
-              "discovery_mode": os.environ["DISCOVERY_MODE"],
+              "topic_discovery_mode": "VIDIQ_TO_GPT",
               "test_run": os.environ["TEST_RUN"].lower() == "true",
               "public_publish_allowed": False,
               "approval_status": "PENDING",
@@ -131,24 +123,15 @@ jobs:
           include-hidden-files: true
 
   discover-topics:
-    name: Discover four competitor-led topics
+    name: Generate and score topic candidates
     needs: validate
     runs-on: ubuntu-latest
     outputs:
       issue_number: ${{ steps.create-approval-issue.outputs.issue_number }}
+      candidate_count: ${{ steps.discover.outputs.candidate_count }}
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       VIDIQ_MCP_API_KEY: ${{ secrets.VIDIQ_MCP_API_KEY }}
-      RITZZ_DISCOVERY_MODE: ${{ inputs.discovery_mode }}
-      RITZZ_DISCOVERY_TIMEFRAME: this week
-      RITZZ_TREND_TOPIC: history
-      RITZZ_CANDIDATE_POOL_TARGET: 30
-      RITZZ_DISCOVERY_FALLBACK_STAGES: broader-trending,rising,evergreen,long-tail,competitor-outliers,unscoped
-      RITZZ_COMPETITORS_FILE: config/competitors.json
-      RITZZ_COMPETITOR_LOOKBACK_DAYS: 365
-      RITZZ_COMPETITOR_VIDEO_LIMIT: 20
-      RITZZ_OUTLIER_MIN_SCORE: 2
-      RITZZ_M7_INVENTORY_FILE: projects/inventory.json
       RITZZ_INVENTORY_FILE: data/content_inventory.json
     steps:
       - name: Check out repository
@@ -163,7 +146,8 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
-      - name: Discover exactly four candidates
+      - name: Generate and score 3–5 candidates
+        id: discover
         run: python scripts/discover_pipeline_topics.py
 
       - name: Upload topic candidates
@@ -180,15 +164,22 @@ jobs:
         uses: actions/github-script@v7
         env:
           CANDIDATE_SUMMARY: .pipeline-artifacts/topic_candidates.md
+          CANDIDATE_COUNT: ${{ steps.discover.outputs.candidate_count }}
         with:
           script: |
             const fs = require('fs');
             const summary = fs.readFileSync(process.env.CANDIDATE_SUMMARY, 'utf8');
+            const candidateCount = Number(process.env.CANDIDATE_COUNT);
+            if (!Number.isInteger(candidateCount) || candidateCount < 3 || candidateCount > 5) {
+              core.setFailed(`Expected 3–5 topic candidates; received ${process.env.CANDIDATE_COUNT}.`);
+              return;
+            }
+            const choices = Array.from({ length: candidateCount }, (_, index) => `\`${index + 1}\``).join(', ');
             const issue = await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
               title: `RITZZ topic approval - run ${context.runId}`,
-              body: `${summary}\n\nReply with exactly 1, 2, 3, or 4 to select a topic. Only trusted repository collaborators may approve this run.`,
+              body: `${summary}\n\nReply with exactly one selection label: ${choices}. Only trusted repository collaborators may approve this run.`,
             });
             core.setOutput('issue_number', issue.data.number);
             core.summary.addHeading('Topic approval issue');
@@ -204,6 +195,7 @@ jobs:
     env:
       ISSUE_NUMBER: ${{ needs.discover-topics.outputs.issue_number }}
       GH_TOKEN: ${{ github.token }}
+      CANDIDATE_COUNT: ${{ needs.discover-topics.outputs.candidate_count }}
       RITZZ_TARGET_DURATION_MINUTES: ${{ inputs.target_duration_minutes }}
       RITZZ_MINIMUM_DURATION_MINUTES: ${{ inputs.minimum_duration_minutes }}
     steps:
@@ -218,13 +210,13 @@ jobs:
               "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}/comments" \
               --jq '.[] | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR") | .body' \
               | tr -d '\r' \
-              | awk '/^[1-4]$/{value=$0} END{print value}')
-            if [[ "$selection" =~ ^[1-4]$ ]]; then
+              | awk -v max="$CANDIDATE_COUNT" '/^[1-5]$/ && $0 <= max {value=$0} END{print value}')
+            if [[ "$selection" =~ ^[1-5]$ ]] && (( selection <= CANDIDATE_COUNT )); then
               echo "Selected topic number: $selection"
               echo "selection=$selection" >> "$GITHUB_OUTPUT"
               exit 0
             fi
-            echo "Waiting for a trusted collaborator to reply with 1, 2, 3, or 4 (attempt $attempt/240)."
+            echo "Waiting for a trusted collaborator to reply with a selection from 1 to ${CANDIDATE_COUNT} (attempt $attempt/240)."
             sleep 30
           done
           echo "Timed out waiting for topic selection." >&2
@@ -286,7 +278,7 @@ jobs:
       - name: Confirm approval boundary
         run: |
           echo "Test pipeline approved."
-          echo "Discovery mode: ${{ inputs.discovery_mode }}"
+          echo "Topic discovery mode: GPT generation with vidIQ keyword-score validation."
           echo "Selected topic number: ${{ needs.topic-approval.outputs.selection }}"
           echo "All output must remain private or unlisted."
           echo "Video generation and publishing stages will be added behind this gate."

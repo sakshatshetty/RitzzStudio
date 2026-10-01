@@ -45,8 +45,12 @@ def main() -> int:
             "provider": candidate.get("provider"),
             "discovery_sources": candidate.get("discovery_sources", []),
             "raw_evidence": candidate.get("raw_evidence", {}),
+            "vidiq_status": candidate.get("vidiq_status", "UNAVAILABLE"),
         },
-        trend_evidence=candidate.get("current_vidiq_demand_signals", {}),
+        trend_evidence=(
+            candidate.get("current_vidiq_demand_signals")
+            or candidate.get("evidence", {})
+        ),
         competition_evidence=candidate.get("competition_saturation_signal"),
         competitor_evidence=candidate.get("competitor_evidence", []),
         ritzz_fit=candidate.get("ritzz_fit", {}),

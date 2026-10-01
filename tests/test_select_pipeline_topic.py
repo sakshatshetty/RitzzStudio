@@ -53,3 +53,59 @@ def test_numbered_selection_persists_candidate_provenance(tmp_path, monkeypatch)
     assert selection["ritzz_fit"]["fit_status"] == "PASS"
     assert selection["ritzz_learning_signals"]["sample_size"] == "INSUFFICIENT"
     assert selection["approval_metadata"]["selection_number"] == 1
+
+
+def test_human_can_select_a_lower_ranked_candidate_without_automatic_selection(
+    tmp_path,
+    monkeypatch,
+):
+    artifact_directory = tmp_path / ".pipeline-artifacts"
+    artifact_directory.mkdir()
+    (artifact_directory / "topic_candidates.json").write_text(json.dumps({
+        "report_id": "report-2",
+        "candidates": [
+            {
+                "candidate_id": "high-score",
+                "topic": "Why Does the First Topic Score Highest?",
+                "provider": "gpt_topic_generation + vidiq_keyword_score",
+                "evidence": {"keyword_score": {"value": 95}},
+                "vidiq_status": "SCORED",
+            },
+            {
+                "candidate_id": "human-choice",
+                "topic": "Why Did Ancient Builders Use Hidden Drainage?",
+                "provider": "gpt_topic_generation + vidiq_keyword_score",
+                "evidence": {"keyword_score": {"value": 42}},
+                "current_vidiq_demand_signals": {
+                    "keyword_score": {
+                        "value": 42,
+                        "source": "vidIQ MCP",
+                        "available": True,
+                    },
+                },
+                "vidiq_status": "SCORED",
+            },
+            {
+                "candidate_id": "third-choice",
+                "topic": "How Do Desert Plants Store Water?",
+                "provider": "gpt_topic_generation + vidiq_keyword_score",
+                "evidence": {},
+                "vidiq_status": "UNAVAILABLE",
+            },
+        ],
+    }))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("RITZZ_SELECTED_TOPIC_NUMBER", "2")
+    monkeypatch.setenv("RITZZ_TARGET_DURATION_MINUTES", "8")
+    monkeypatch.setenv("RITZZ_MINIMUM_DURATION_MINUTES", "8")
+
+    assert main() == 0
+
+    selection = json.loads(
+        (artifact_directory / "topic_selection.json").read_text()
+    )
+    assert selection["topic"] == "Why Did Ancient Builders Use Hidden Drainage?"
+    assert selection["candidate_id"] == "human-choice"
+    assert selection["approval_metadata"]["selection_number"] == 2
+    assert selection["source_evidence"]["vidiq_status"] == "SCORED"
+    assert selection["trend_evidence"]["keyword_score"]["value"] == 42

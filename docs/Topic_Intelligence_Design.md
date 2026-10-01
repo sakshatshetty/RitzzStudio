@@ -1,6 +1,6 @@
 ﻿# Topic Intelligence / Opportunity Engine — Design
 
-**Status:** Competitor-led discovery supports separate format/topic/emerging-format groups and channel handles/URLs; live validation requires configured real competitors; EVERGREEN adapter validation remains
+**Status:** The GitHub Actions workflow uses vidIQ opportunity discovery followed by GPT ideation. The legacy competitor-led discovery engine remains available separately.
 **Scope:** Discover, evaluate, and present video topic opportunities; let the user select one; hand the selected or manually entered topic to Research → Outline → Script.
 **Out of scope:** Automatic publishing or topic approval, downstream video production changes, full 8-minute image generation, and fabricated provider metrics.
 
@@ -14,6 +14,30 @@ Support two entry paths:
 2. **Enter a topic:** Skip discovery and continue through the same content preparation workflow.
 
 A selected candidate is a topic suggestion, not a commitment to produce or publish a video.
+
+## GitHub Actions default topic path
+
+The pipeline's default discovery is deliberately separate from the legacy
+competitor-led opportunity engine described below. It makes one vidIQ keyword
+research discovery call using the `strange history` seed, then makes one
+structured OpenAI request using the returned opportunity pool and full RITZZ
+channel profile. GPT transforms
+market keywords into concrete, curiosity-driven RITZZ ideas; vidIQ remains the
+source of market evidence. The current integration supports a single discovery
+query rather than a batch of separate queries. The pipeline does not call
+trending, rising, evergreen fallback, long-tail, or competitor discovery tools.
+
+The pipeline applies simple local RITZZ, originality, and content-inventory
+filters, then presents 3–5 qualified candidates for mandatory human selection.
+Candidates are ranked by available vidIQ market metrics, but are never selected
+automatically. Provider metrics are copied through unchanged; missing metrics
+remain unavailable. A vidIQ or GPT provider error is surfaced distinctly and
+does not produce a misleading empty-topic success. `config/competitors.json`
+is not used by this default pipeline path.
+
+The design sections below document the separate legacy opportunity engine and
+its broader provider capabilities unless they explicitly mention the GitHub
+Actions default path.
 
 ## 2. Current repository baseline
 

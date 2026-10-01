@@ -1,0 +1,41 @@
+{
+  "status": "SUCCESS",
+  "source": "vidiq_discovery + gpt_ideation",
+  "discovery_mode": "VIDIQ_TO_GPT",
+  "vidiq_usage_mode": "DISCOVERY_ONLY",
+  "vidiq_discovery_operation_count": 1,
+  "vidiq_opportunities_returned": 10,
+  "gpt_calls_made": 1,
+  "gpt_ideas_generated": 9,
+  "ideas_rejected": [
+    {
+      "title": "The Real Reason Some Old Maps Put Monsters at the Edge of the World",
+      "source_opportunity_id": "vidiq_001",
+      "reason": "Topic is not framed as a curiosity-driven question."
+    },
+    {
+      "title": "The Lost Civilizations We Can Only See From the Air",
+      "source_opportunity_id": "vidiq_002",
+      "reason": "Topic is not framed as a curiosity-driven question."
+    },
+    {
+      "title": "The Oldest 'Mistakes' in Science That Turned Out to Be Important",
+      "source_opportunity_id": "vidiq_007",
+      "reason": "Topic is not framed as a curiosity-driven question."
+    },
+    {
+      "title": "The Strange Reason Some Places Become 'Forgotten' Even When They Were Once Famous",
+      "source_opportunity_id": "vidiq_004",
+      "reason": "Topic is not framed as a curiosity-driven question."
+    }
+  ],
+  "final_candidate_count": 5,
+  "ideas_rejected_count": 4,
+  "final_candidates": [
+    "How a Single Invention Changed Timekeeping for Everyone",
+    "Why Ancient Cities Were Built on Top of Other Cities",
+    "Why Some Ancient Roads Still Exist While Others Vanished Completely",
+    "Why Humans Keep Building on Islands That Seem Impossible to Live On",
+    "Why People Keep Inventing Ways to Store Water in the Worst Places"
+  ]
+}

@@ -118,6 +118,8 @@ class VidiqMcpProvider:
             "status": "unavailable",
             "error_type": "CAPABILITY_UNAVAILABLE",
             "message": "",
+            "call_made": "false",
+            "tool_discovery_call_made": "false",
             "fallback_behavior": "Retain the candidate with demand and competition marked unavailable.",
         }
         result: TopicDemandEnrichment = {
@@ -130,6 +132,9 @@ class VidiqMcpProvider:
             operation["message"] = "vidIQ MCP is not configured."
             return result
         try:
+            operation["tool_discovery_call_made"] = str(
+                self._tools_cache is None
+            ).lower()
             tools = self._list_tools()
             tool = self._find_keyword_research_tool(tools)
             if tool is None:
@@ -145,6 +150,7 @@ class VidiqMcpProvider:
                     "The keyword-research tool has required fields that cannot be mapped safely."
                 )
                 return result
+            operation["call_made"] = "true"
             response = self._rpc("tools/call", {
                 "name": tool["name"],
                 "arguments": arguments,
@@ -2391,16 +2397,60 @@ class VidiqMcpProvider:
         kind = "TREND_TO_EVERGREEN" if "TREND_TO_EVERGREEN" in raw_type else "EVERGREEN" if "EVERGREEN" in raw_type else "TRENDING"
         evidence: dict[str, EvidenceMetric] = {}
         aliases = {
-            "search_volume": ("search_volume", "volume", "monthly_searches", "searchVolume", "monthlySearches", "countryVolume"),
-            "keyword_score": ("keyword_score", "overall_score", "score", "keywordScore", "overallScore"),
+            "search_volume": (
+                "search_volume",
+                "estimated_monthly_search",
+                "estimatedMonthlySearch",
+                "monthly_searches",
+                "searchVolume",
+                "monthlySearches",
+                "countryVolume",
+            ),
+            "volume_score": ("volume_score", "volumeScore"),
+            "keyword_score": (
+                "keyword_score",
+                "overall",
+                "overall_score",
+                "score",
+                "keywordScore",
+                "overallScore",
+            ),
             "competition": ("competition", "competition_score", "competitionScore"),
             "growth": ("growth", "growth_percent", "trend_growth", "growth_score", "searchDemandGrowthPct", "growthPercent", "growthPct", "volumeChange", "volume_change"),
         }
         for metric, keys in aliases.items():
             value = next((normalized_record.get(re.sub(r"[^a-z0-9]", "", key.casefold())) for key in keys if normalized_record.get(re.sub(r"[^a-z0-9]", "", key.casefold())) is not None), None)
+            if (
+                metric == "volume_score"
+                and value is None
+                and isinstance(normalized_record.get("volume"), (int, float))
+                and 0 <= normalized_record["volume"] <= 100
+            ):
+                value = normalized_record["volume"]
             if value is not None:
-                unit = "0-100" if metric == "keyword_score" and isinstance(value, (int, float)) and 0 <= value <= 100 else None
+                unit = (
+                    "monthly searches"
+                    if metric == "search_volume"
+                    else "0-100"
+                    if metric in {"keyword_score", "volume_score", "competition"}
+                    and isinstance(value, (int, float))
+                    and 0 <= value <= 100
+                    else "%"
+                    if metric == "growth"
+                    else None
+                )
                 evidence[metric] = EvidenceMetric(value=value if isinstance(value, (int, float, str)) else str(value), unit=unit, available=True, source="vidIQ MCP")
+        if (
+            "search_volume" not in evidence
+            and isinstance(normalized_record.get("volume"), (int, float))
+            and normalized_record["volume"] > 100
+        ):
+            evidence["search_volume"] = EvidenceMetric(
+                value=normalized_record["volume"],
+                unit="monthly searches",
+                available=True,
+                source="vidIQ MCP",
+            )
         keywords = normalized_record.get("relatedkeywords", [])
         questions = normalized_record.get("relatedquestions", normalized_record.get("questions", []))
         candidate_id = str(normalized_record.get("id", f"vidiq_{index + 1:03d}"))

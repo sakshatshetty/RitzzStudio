@@ -1,0 +1,1192 @@
+{
+  "report_id": "pipeline-topics-c37867d8ce7c",
+  "created_at": "2026-10-01T05:15:22.359854+00:00",
+  "provider": "vidiq_discovery + gpt_ideation",
+  "source": "vidiq_discovery + gpt_ideation",
+  "discovery_mode": "VIDIQ_TO_GPT",
+  "vidiq_usage_mode": "DISCOVERY_ONLY",
+  "diagnostics": {
+    "status": "SUCCESS",
+    "source": "vidiq_discovery + gpt_ideation",
+    "discovery_mode": "VIDIQ_TO_GPT",
+    "vidiq_usage_mode": "DISCOVERY_ONLY",
+    "vidiq_discovery_operation_count": 1,
+    "vidiq_opportunities_returned": 10,
+    "gpt_calls_made": 1,
+    "gpt_ideas_generated": 9,
+    "ideas_rejected": [
+      {
+        "title": "The Real Reason Some Old Maps Put Monsters at the Edge of the World",
+        "source_opportunity_id": "vidiq_001",
+        "reason": "Topic is not framed as a curiosity-driven question."
+      },
+      {
+        "title": "The Lost Civilizations We Can Only See From the Air",
+        "source_opportunity_id": "vidiq_002",
+        "reason": "Topic is not framed as a curiosity-driven question."
+      },
+      {
+        "title": "The Oldest 'Mistakes' in Science That Turned Out to Be Important",
+        "source_opportunity_id": "vidiq_007",
+        "reason": "Topic is not framed as a curiosity-driven question."
+      },
+      {
+        "title": "The Strange Reason Some Places Become 'Forgotten' Even When They Were Once Famous",
+        "source_opportunity_id": "vidiq_004",
+        "reason": "Topic is not framed as a curiosity-driven question."
+      }
+    ],
+    "final_candidate_count": 5,
+    "ideas_rejected_count": 4,
+    "final_candidates": [
+      "How a Single Invention Changed Timekeeping for Everyone",
+      "Why Ancient Cities Were Built on Top of Other Cities",
+      "Why Some Ancient Roads Still Exist While Others Vanished Completely",
+      "Why Humans Keep Building on Islands That Seem Impossible to Live On",
+      "Why People Keep Inventing Ways to Store Water in the Worst Places"
+    ]
+  },
+  "warnings": [],
+  "candidates": [
+    {
+      "candidate_number": 1,
+      "candidate_id": "gpt-topic-003",
+      "topic": "How a Single Invention Changed Timekeeping for Everyone",
+      "proposed_title": "How a Single Invention Changed Timekeeping for Everyone",
+      "angle": "A curiosity explainer on one specific invention or system that made everyday time more uniform—showing why clocks, schedules, railways, and cities eventually needed the same time.",
+      "why_interesting": "Why did humans spend most of history arguing with the clock?",
+      "primary_keyword": "history",
+      "related_keywords": [],
+      "related_questions": [],
+      "opportunity_type": "EVERGREEN",
+      "evidence": {
+        "search_volume": {
+          "value": 6302913.0,
+          "unit": "monthly searches",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "volume_score": {
+          "value": 100.0,
+          "unit": "0-100",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "keyword_score": {
+          "value": 75.32,
+          "unit": "0-100",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "competition": {
+          "value": 61.7,
+          "unit": "0-100",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "growth": {
+          "value": 6.998018226072975,
+          "unit": "%",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        }
+      },
+      "editorial_scores": {},
+      "editorial_status": "PASS",
+      "component_scores": {},
+      "opportunity_score": null,
+      "score_completeness": 0.0,
+      "rationale": [],
+      "filter_reasons": [],
+      "validation_status": "RECOMMENDED",
+      "validation_reasons": [],
+      "inventory_status": "ELIGIBLE",
+      "provider": "vidiq_discovery + gpt_ideation",
+      "discovery_sources": [
+        "vidiq_discovery",
+        "gpt_ideation"
+      ],
+      "discovered_at": "2026-10-01T05:15:22.357662+00:00",
+      "raw_evidence": {
+        "vidiq_opportunity": {
+          "candidate_id": "vidiq_005",
+          "topic": "history",
+          "evidence": {
+            "search_volume": {
+              "value": 6302913.0,
+              "unit": "monthly searches",
+              "observed_at": null,
+              "available": true,
+              "source": "vidIQ MCP"
+            },
+            "volume_score": {
+              "value": 100.0,
+              "unit": "0-100",
+              "observed_at": null,
+              "available": true,
+              "source": "vidIQ MCP"
+            },
+            "keyword_score": {
+              "value": 75.32,
+              "unit": "0-100",
+              "observed_at": null,
+              "available": true,
+              "source": "vidIQ MCP"
+            },
+            "competition": {
+              "value": 61.7,
+              "unit": "0-100",
+              "observed_at": null,
+              "available": true,
+              "source": "vidIQ MCP"
+            },
+            "growth": {
+              "value": 6.998018226072975,
+              "unit": "%",
+              "observed_at": null,
+              "available": true,
+              "source": "vidIQ MCP"
+            }
+          },
+          "raw_evidence": {
+            "keyword": "history",
+            "relatedScore": 1.2064327485380115,
+            "volume": 100,
+            "competition": 61.7,
+            "overall": 75.32,
+            "estimatedMonthlySearch": 6302913,
+            "baselineMonthlySearches30d": 5890682,
+            "searchDemandGrowthPct": 6.998018226072975,
+            "metricsAsOf": "2026-09-30T08:56:21.000Z",
+            "monthlySearchesDisplay": "6,302,913",
+            "volumeScoreLabel": "Very high",
+            "countryVolume": null,
+            "topMarkets": [
+              {
+                "country": "PK",
+                "pct": 0.15395683
+              },
+              {
+                "country": "IN",
+                "pct": 0.09841727
+              },
+              {
+                "country": "US",
+                "pct": 0.09726619
+              },
+              {
+                "country": "VN",
+                "pct": 0.07223021
+              },
+              {
+                "country": "DE",
+                "pct": 0.045179855
+              }
+            ]
+          }
+        },
+        "gpt_generated_idea": {
+          "title": "How a Single Invention Changed Timekeeping for Everyone",
+          "source_opportunity_id": "vidiq_005",
+          "angle": "A curiosity explainer on one specific invention or system that made everyday time more uniform—showing why clocks, schedules, railways, and cities eventually needed the same time.",
+          "curiosity_hook": "Why did humans spend most of history arguing with the clock?",
+          "static_visual_explanation": "Visualize sun time vs city time vs train time with clocks, train stations, factory bells, and a simple before/after timeline of daily life.",
+          "long_form_depth": "Strong for 8–10 minutes if structured around the problem, the invention, the adoption process, and the strange consequences for ordinary people.",
+          "originality_note": "This avoids the generic keyword 'history' by focusing on one durable, visual systems-change story that can be researched and illustrated clearly."
+        },
+        "discovery_mode": "VIDIQ_TO_GPT",
+        "vidiq_usage_mode": "DISCOVERY_ONLY",
+        "generation_order": 3
+      },
+      "competitor_topic_performance_available": false,
+      "competitor_evidence": [],
+      "competitor_topic_patterns": [],
+      "current_vidiq_demand_signals": {
+        "search_volume": {
+          "value": 6302913.0,
+          "unit": "monthly searches",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "volume_score": {
+          "value": 100.0,
+          "unit": "0-100",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "keyword_score": {
+          "value": 75.32,
+          "unit": "0-100",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "competition": {
+          "value": 61.7,
+          "unit": "0-100",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "growth": {
+          "value": 6.998018226072975,
+          "unit": "%",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        }
+      },
+      "current_vidiq_demand_available": true,
+      "vidiq_status": "SCORED",
+      "competition_saturation_signal": {
+        "value": 61.7,
+        "unit": "0-100",
+        "observed_at": null,
+        "available": true,
+        "source": "vidIQ MCP"
+      },
+      "competition_saturation_assessment": null,
+      "ritzz_differentiation_angle": "A curiosity explainer on one specific invention or system that made everyday time more uniform—showing why clocks, schedules, railways, and cities eventually needed the same time.",
+      "observed_pattern": null,
+      "concrete_subject": null,
+      "subject_evidence_refs": [],
+      "originality_reason": "This avoids the generic keyword 'history' by focusing on one durable, visual systems-change story that can be researched and illustrated clearly.",
+      "curiosity_family": null,
+      "ritzz_fit": {
+        "fit_status": "PASS",
+        "fit_score": null,
+        "story_type": "OTHER",
+        "curiosity_strength": null,
+        "researchability": null,
+        "story_depth": null,
+        "originality": null,
+        "visual_potential": null,
+        "format_fit": null,
+        "evergreen_potential": null,
+        "audience_value": null,
+        "temporary_trend_dependency": null,
+        "reason": "Passed the local RITZZ curiosity, specificity, visual, and inventory filters."
+      },
+      "ritzz_learning_signals": {}
+    },
+    {
+      "candidate_number": 2,
+      "candidate_id": "gpt-topic-001",
+      "topic": "Why Ancient Cities Were Built on Top of Other Cities",
+      "proposed_title": "Why Ancient Cities Were Built on Top of Other Cities",
+      "angle": "Instead of a generic 'ancient history' video, this explores the strange pattern of layered settlements: why people kept rebuilding in the exact same spots, how ruins become foundations, and what archaeologists can learn from the stacked remains.",
+      "why_interesting": "How can one city hide another city under its streets for thousands of years?",
+      "primary_keyword": "ancient history",
+      "related_keywords": [],
+      "related_questions": [],
+      "opportunity_type": "EVERGREEN",
+      "evidence": {
+        "search_volume": {
+          "value": 927718.0,
+          "unit": "monthly searches",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "volume_score": {
+          "value": 89.0796044644579,
+          "unit": "0-100",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "keyword_score": {
+          "value": 71.84776267867474,
+          "unit": "0-100",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "competition": {
+          "value": 54.0,
+          "unit": "0-100",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "growth": {
+          "value": 15.505471369467156,
+          "unit": "%",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        }
+      },
+      "editorial_scores": {},
+      "editorial_status": "PASS",
+      "component_scores": {},
+      "opportunity_score": null,
+      "score_completeness": 0.0,
+      "rationale": [],
+      "filter_reasons": [],
+      "validation_status": "RECOMMENDED",
+      "validation_reasons": [],
+      "inventory_status": "ELIGIBLE",
+      "provider": "vidiq_discovery + gpt_ideation",
+      "discovery_sources": [
+        "vidiq_discovery",
+        "gpt_ideation"
+      ],
+      "discovered_at": "2026-10-01T05:15:22.357218+00:00",
+      "raw_evidence": {
+        "vidiq_opportunity": {
+          "candidate_id": "vidiq_006",
+          "topic": "ancient history",
+          "evidence": {
+            "search_volume": {
+              "value": 927718.0,
+              "unit": "monthly searches",
+              "observed_at": null,
+              "available": true,
+              "source": "vidIQ MCP"
+            },
+            "volume_score": {
+              "value": 89.0796044644579,
+              "unit": "0-100",
+              "observed_at": null,
+              "available": true,
+              "source": "vidIQ MCP"
+            },
+            "keyword_score": {
+              "value": 71.84776267867474,
+              "unit": "0-100",
+              "observed_at": null,
+              "available": true,
+              "source": "vidIQ MCP"
+            },
+            "competition": {
+              "value": 54.0,
+              "unit": "0-100",
+              "observed_at": null,
+              "available": true,
+              "source": "vidIQ MCP"
+            },
+            "growth": {
+              "value": 15.505471369467156,
+              "unit": "%",
+              "observed_at": null,
+              "available": true,
+              "source": "vidIQ MCP"
+            }
+          },
+          "raw_evidence": {
+            "keyword": "ancient history",
+            "relatedScore": 1.2,
+            "volume": 89.0796044644579,
+            "competition": 54,
+            "overall": 71.84776267867474,
+            "estimatedMonthlySearch": 927718,
+            "baselineMonthlySearches30d": 803181,
+            "searchDemandGrowthPct": 15.505471369467156,
+            "metricsAsOf": "2026-09-30T08:56:21.000Z",
+            "monthlySearchesDisplay": "927,718",
+            "volumeScoreLabel": "Very high",
+            "countryVolume": null,
+            "topMarkets": [
+              {
+                "country": "PK",
+                "pct": 0.22493887
+              },
+              {
+                "country": "IN",
+                "pct": 0.18826406
+              },
+              {
+                "country": "VN",
+                "pct": 0.10513447
+              },
+              {
+                "country": "US",
+                "pct": 0.09535452
+              },
+              {
+                "country": "NG",
+                "pct": 0.024449877
+              }
+            ]
+          }
+        },
+        "gpt_generated_idea": {
+          "title": "Why Ancient Cities Were Built on Top of Other Cities",
+          "source_opportunity_id": "vidiq_006",
+          "angle": "Instead of a generic 'ancient history' video, this explores the strange pattern of layered settlements: why people kept rebuilding in the exact same spots, how ruins become foundations, and what archaeologists can learn from the stacked remains.",
+          "curiosity_hook": "How can one city hide another city under its streets for thousands of years?",
+          "static_visual_explanation": "Use a cutaway cross-section of a hill with stacked city layers, labeled timeline bands, stair-step ruins, and simple icons for floods, war, trade, and rebuilding.",
+          "long_form_depth": "Enough for 8–10 minutes by moving through 3–4 real examples, explaining the practical reasons for reuse, what gets preserved or lost, and how excavation turns vertical time into a map.",
+          "originality_note": "This is not a broad ancient-history overview; it is a specific explanation of a visually strong archaeological pattern that turns history into layers."
+        },
+        "discovery_mode": "VIDIQ_TO_GPT",
+        "vidiq_usage_mode": "DISCOVERY_ONLY",
+        "generation_order": 1
+      },
+      "competitor_topic_performance_available": false,
+      "competitor_evidence": [],
+      "competitor_topic_patterns": [],
+      "current_vidiq_demand_signals": {
+        "search_volume": {
+          "value": 927718.0,
+          "unit": "monthly searches",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "volume_score": {
+          "value": 89.0796044644579,
+          "unit": "0-100",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "keyword_score": {
+          "value": 71.84776267867474,
+          "unit": "0-100",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "competition": {
+          "value": 54.0,
+          "unit": "0-100",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "growth": {
+          "value": 15.505471369467156,
+          "unit": "%",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        }
+      },
+      "current_vidiq_demand_available": true,
+      "vidiq_status": "SCORED",
+      "competition_saturation_signal": {
+        "value": 54.0,
+        "unit": "0-100",
+        "observed_at": null,
+        "available": true,
+        "source": "vidIQ MCP"
+      },
+      "competition_saturation_assessment": null,
+      "ritzz_differentiation_angle": "Instead of a generic 'ancient history' video, this explores the strange pattern of layered settlements: why people kept rebuilding in the exact same spots, how ruins become foundations, and what archaeologists can learn from the stacked remains.",
+      "observed_pattern": null,
+      "concrete_subject": null,
+      "subject_evidence_refs": [],
+      "originality_reason": "This is not a broad ancient-history overview; it is a specific explanation of a visually strong archaeological pattern that turns history into layers.",
+      "curiosity_family": null,
+      "ritzz_fit": {
+        "fit_status": "PASS",
+        "fit_score": null,
+        "story_type": "OTHER",
+        "curiosity_strength": null,
+        "researchability": null,
+        "story_depth": null,
+        "originality": null,
+        "visual_potential": null,
+        "format_fit": null,
+        "evergreen_potential": null,
+        "audience_value": null,
+        "temporary_trend_dependency": null,
+        "reason": "Passed the local RITZZ curiosity, specificity, visual, and inventory filters."
+      },
+      "ritzz_learning_signals": {}
+    },
+    {
+      "candidate_number": 3,
+      "candidate_id": "gpt-topic-007",
+      "topic": "Why Some Ancient Roads Still Exist While Others Vanished Completely",
+      "proposed_title": "Why Some Ancient Roads Still Exist While Others Vanished Completely",
+      "angle": "A historical infrastructure explainer about the survival of roads: why some routes keep getting reused for centuries while others disappear under farms, forests, or cities.",
+      "why_interesting": "How can a road outlive the people who built it?",
+      "primary_keyword": "ancient history",
+      "related_keywords": [],
+      "related_questions": [],
+      "opportunity_type": "EVERGREEN",
+      "evidence": {
+        "search_volume": {
+          "value": 927718.0,
+          "unit": "monthly searches",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "volume_score": {
+          "value": 89.0796044644579,
+          "unit": "0-100",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "keyword_score": {
+          "value": 71.84776267867474,
+          "unit": "0-100",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "competition": {
+          "value": 54.0,
+          "unit": "0-100",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "growth": {
+          "value": 15.505471369467156,
+          "unit": "%",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        }
+      },
+      "editorial_scores": {},
+      "editorial_status": "PASS",
+      "component_scores": {},
+      "opportunity_score": null,
+      "score_completeness": 0.0,
+      "rationale": [],
+      "filter_reasons": [],
+      "validation_status": "RECOMMENDED",
+      "validation_reasons": [],
+      "inventory_status": "ELIGIBLE",
+      "provider": "vidiq_discovery + gpt_ideation",
+      "discovery_sources": [
+        "vidiq_discovery",
+        "gpt_ideation"
+      ],
+      "discovered_at": "2026-10-01T05:15:22.358920+00:00",
+      "raw_evidence": {
+        "vidiq_opportunity": {
+          "candidate_id": "vidiq_006",
+          "topic": "ancient history",
+          "evidence": {
+            "search_volume": {
+              "value": 927718.0,
+              "unit": "monthly searches",
+              "observed_at": null,
+              "available": true,
+              "source": "vidIQ MCP"
+            },
+            "volume_score": {
+              "value": 89.0796044644579,
+              "unit": "0-100",
+              "observed_at": null,
+              "available": true,
+              "source": "vidIQ MCP"
+            },
+            "keyword_score": {
+              "value": 71.84776267867474,
+              "unit": "0-100",
+              "observed_at": null,
+              "available": true,
+              "source": "vidIQ MCP"
+            },
+            "competition": {
+              "value": 54.0,
+              "unit": "0-100",
+              "observed_at": null,
+              "available": true,
+              "source": "vidIQ MCP"
+            },
+            "growth": {
+              "value": 15.505471369467156,
+              "unit": "%",
+              "observed_at": null,
+              "available": true,
+              "source": "vidIQ MCP"
+            }
+          },
+          "raw_evidence": {
+            "keyword": "ancient history",
+            "relatedScore": 1.2,
+            "volume": 89.0796044644579,
+            "competition": 54,
+            "overall": 71.84776267867474,
+            "estimatedMonthlySearch": 927718,
+            "baselineMonthlySearches30d": 803181,
+            "searchDemandGrowthPct": 15.505471369467156,
+            "metricsAsOf": "2026-09-30T08:56:21.000Z",
+            "monthlySearchesDisplay": "927,718",
+            "volumeScoreLabel": "Very high",
+            "countryVolume": null,
+            "topMarkets": [
+              {
+                "country": "PK",
+                "pct": 0.22493887
+              },
+              {
+                "country": "IN",
+                "pct": 0.18826406
+              },
+              {
+                "country": "VN",
+                "pct": 0.10513447
+              },
+              {
+                "country": "US",
+                "pct": 0.09535452
+              },
+              {
+                "country": "NG",
+                "pct": 0.024449877
+              }
+            ]
+          }
+        },
+        "gpt_generated_idea": {
+          "title": "Why Some Ancient Roads Still Exist While Others Vanished Completely",
+          "source_opportunity_id": "vidiq_006",
+          "angle": "A historical infrastructure explainer about the survival of roads: why some routes keep getting reused for centuries while others disappear under farms, forests, or cities.",
+          "curiosity_hook": "How can a road outlive the people who built it?",
+          "static_visual_explanation": "Show a road cross-section, erosion, overgrowth, city expansion, and layered route maps from ancient path to modern highway.",
+          "long_form_depth": "Strong 8–10 minute structure: why roads are chosen, what makes them survive, how terrain preserves them, and how modern routes often follow ancient ones.",
+          "originality_note": "This uses ancient history as a lens on infrastructure persistence, making it more specific and visual than a general history topic."
+        },
+        "discovery_mode": "VIDIQ_TO_GPT",
+        "vidiq_usage_mode": "DISCOVERY_ONLY",
+        "generation_order": 7
+      },
+      "competitor_topic_performance_available": false,
+      "competitor_evidence": [],
+      "competitor_topic_patterns": [],
+      "current_vidiq_demand_signals": {
+        "search_volume": {
+          "value": 927718.0,
+          "unit": "monthly searches",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "volume_score": {
+          "value": 89.0796044644579,
+          "unit": "0-100",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "keyword_score": {
+          "value": 71.84776267867474,
+          "unit": "0-100",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "competition": {
+          "value": 54.0,
+          "unit": "0-100",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "growth": {
+          "value": 15.505471369467156,
+          "unit": "%",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        }
+      },
+      "current_vidiq_demand_available": true,
+      "vidiq_status": "SCORED",
+      "competition_saturation_signal": {
+        "value": 54.0,
+        "unit": "0-100",
+        "observed_at": null,
+        "available": true,
+        "source": "vidIQ MCP"
+      },
+      "competition_saturation_assessment": null,
+      "ritzz_differentiation_angle": "A historical infrastructure explainer about the survival of roads: why some routes keep getting reused for centuries while others disappear under farms, forests, or cities.",
+      "observed_pattern": null,
+      "concrete_subject": null,
+      "subject_evidence_refs": [],
+      "originality_reason": "This uses ancient history as a lens on infrastructure persistence, making it more specific and visual than a general history topic.",
+      "curiosity_family": null,
+      "ritzz_fit": {
+        "fit_status": "PASS",
+        "fit_score": null,
+        "story_type": "OTHER",
+        "curiosity_strength": null,
+        "researchability": null,
+        "story_depth": null,
+        "originality": null,
+        "visual_potential": null,
+        "format_fit": null,
+        "evergreen_potential": null,
+        "audience_value": null,
+        "temporary_trend_dependency": null,
+        "reason": "Passed the local RITZZ curiosity, specificity, visual, and inventory filters."
+      },
+      "ritzz_learning_signals": {}
+    },
+    {
+      "candidate_number": 4,
+      "candidate_id": "gpt-topic-005",
+      "topic": "Why Humans Keep Building on Islands That Seem Impossible to Live On",
+      "proposed_title": "Why Humans Keep Building on Islands That Seem Impossible to Live On",
+      "angle": "A geography-and-history explainer on why people settle tiny, remote, rocky, or waterlocked islands despite difficult living conditions—trade, defense, fishing, religion, and isolation all play a role.",
+      "why_interesting": "What makes a place with almost no space worth living in for centuries?",
+      "primary_keyword": "history channel",
+      "related_keywords": [],
+      "related_questions": [],
+      "opportunity_type": "EVERGREEN",
+      "evidence": {
+        "search_volume": {
+          "value": 693823.0,
+          "unit": "monthly searches",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "volume_score": {
+          "value": 87.1962210411511,
+          "unit": "0-100",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "keyword_score": {
+          "value": 68.71773262469067,
+          "unit": "0-100",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "competition": {
+          "value": 59.0,
+          "unit": "0-100",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "growth": {
+          "value": 18.36387581929039,
+          "unit": "%",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        }
+      },
+      "editorial_scores": {},
+      "editorial_status": "PASS",
+      "component_scores": {},
+      "opportunity_score": null,
+      "score_completeness": 0.0,
+      "rationale": [],
+      "filter_reasons": [],
+      "validation_status": "RECOMMENDED",
+      "validation_reasons": [],
+      "inventory_status": "ELIGIBLE",
+      "provider": "vidiq_discovery + gpt_ideation",
+      "discovery_sources": [
+        "vidiq_discovery",
+        "gpt_ideation"
+      ],
+      "discovered_at": "2026-10-01T05:15:22.358189+00:00",
+      "raw_evidence": {
+        "vidiq_opportunity": {
+          "candidate_id": "vidiq_003",
+          "topic": "history channel",
+          "evidence": {
+            "search_volume": {
+              "value": 693823.0,
+              "unit": "monthly searches",
+              "observed_at": null,
+              "available": true,
+              "source": "vidIQ MCP"
+            },
+            "volume_score": {
+              "value": 87.1962210411511,
+              "unit": "0-100",
+              "observed_at": null,
+              "available": true,
+              "source": "vidIQ MCP"
+            },
+            "keyword_score": {
+              "value": 68.71773262469067,
+              "unit": "0-100",
+              "observed_at": null,
+              "available": true,
+              "source": "vidIQ MCP"
+            },
+            "competition": {
+              "value": 59.0,
+              "unit": "0-100",
+              "observed_at": null,
+              "available": true,
+              "source": "vidIQ MCP"
+            },
+            "growth": {
+              "value": 18.36387581929039,
+              "unit": "%",
+              "observed_at": null,
+              "available": true,
+              "source": "vidIQ MCP"
+            }
+          },
+          "raw_evidence": {
+            "keyword": "history channel",
+            "relatedScore": 1.5,
+            "volume": 87.1962210411511,
+            "competition": 59,
+            "overall": 68.71773262469067,
+            "estimatedMonthlySearch": 693823,
+            "baselineMonthlySearches30d": 586178,
+            "searchDemandGrowthPct": 18.36387581929039,
+            "metricsAsOf": "2026-09-30T08:56:21.000Z",
+            "monthlySearchesDisplay": "693,823",
+            "volumeScoreLabel": "Very high",
+            "countryVolume": null,
+            "topMarkets": [
+              {
+                "country": "IN",
+                "pct": 0.15254237
+              },
+              {
+                "country": "US",
+                "pct": 0.13898306
+              },
+              {
+                "country": "PK",
+                "pct": 0.12542373
+              },
+              {
+                "country": "BR",
+                "pct": 0.10169491
+              },
+              {
+                "country": "DE",
+                "pct": 0.040677965
+              }
+            ]
+          }
+        },
+        "gpt_generated_idea": {
+          "title": "Why Humans Keep Building on Islands That Seem Impossible to Live On",
+          "source_opportunity_id": "vidiq_003",
+          "angle": "A geography-and-history explainer on why people settle tiny, remote, rocky, or waterlocked islands despite difficult living conditions—trade, defense, fishing, religion, and isolation all play a role.",
+          "curiosity_hook": "What makes a place with almost no space worth living in for centuries?",
+          "static_visual_explanation": "Show a tiny island map with boats, fishing nets, cliffs, water tanks, trade arrows, and a simple compare chart of benefits vs problems.",
+          "long_form_depth": "Enough for 8–10 minutes by comparing 3–4 island cases and explaining the human reasons behind these stubborn settlements.",
+          "originality_note": "This takes the broad 'history channel' signal and turns it into a concrete human-geography story with strong visuals and a clear explanatory question."
+        },
+        "discovery_mode": "VIDIQ_TO_GPT",
+        "vidiq_usage_mode": "DISCOVERY_ONLY",
+        "generation_order": 5
+      },
+      "competitor_topic_performance_available": false,
+      "competitor_evidence": [],
+      "competitor_topic_patterns": [],
+      "current_vidiq_demand_signals": {
+        "search_volume": {
+          "value": 693823.0,
+          "unit": "monthly searches",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "volume_score": {
+          "value": 87.1962210411511,
+          "unit": "0-100",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "keyword_score": {
+          "value": 68.71773262469067,
+          "unit": "0-100",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "competition": {
+          "value": 59.0,
+          "unit": "0-100",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "growth": {
+          "value": 18.36387581929039,
+          "unit": "%",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        }
+      },
+      "current_vidiq_demand_available": true,
+      "vidiq_status": "SCORED",
+      "competition_saturation_signal": {
+        "value": 59.0,
+        "unit": "0-100",
+        "observed_at": null,
+        "available": true,
+        "source": "vidIQ MCP"
+      },
+      "competition_saturation_assessment": null,
+      "ritzz_differentiation_angle": "A geography-and-history explainer on why people settle tiny, remote, rocky, or waterlocked islands despite difficult living conditions—trade, defense, fishing, religion, and isolation all play a role.",
+      "observed_pattern": null,
+      "concrete_subject": null,
+      "subject_evidence_refs": [],
+      "originality_reason": "This takes the broad 'history channel' signal and turns it into a concrete human-geography story with strong visuals and a clear explanatory question.",
+      "curiosity_family": null,
+      "ritzz_fit": {
+        "fit_status": "PASS",
+        "fit_score": null,
+        "story_type": "OTHER",
+        "curiosity_strength": null,
+        "researchability": null,
+        "story_depth": null,
+        "originality": null,
+        "visual_potential": null,
+        "format_fit": null,
+        "evergreen_potential": null,
+        "audience_value": null,
+        "temporary_trend_dependency": null,
+        "reason": "Passed the local RITZZ curiosity, specificity, visual, and inventory filters."
+      },
+      "ritzz_learning_signals": {}
+    },
+    {
+      "candidate_number": 5,
+      "candidate_id": "gpt-topic-009",
+      "topic": "Why People Keep Inventing Ways to Store Water in the Worst Places",
+      "proposed_title": "Why People Keep Inventing Ways to Store Water in the Worst Places",
+      "angle": "A curious history-of-technology video about human solutions for water storage in deserts, dry islands, rocky hills, and cities—showing how necessity shapes clever designs.",
+      "why_interesting": "How do you keep water alive when the place itself seems determined to lose it?",
+      "primary_keyword": "boring history for sleep",
+      "related_keywords": [],
+      "related_questions": [],
+      "opportunity_type": "EVERGREEN",
+      "evidence": {
+        "search_volume": {
+          "value": 504753.0,
+          "unit": "monthly searches",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "volume_score": {
+          "value": 85.13366838725443,
+          "unit": "0-100",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "keyword_score": {
+          "value": 67.76020103235265,
+          "unit": "0-100",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "competition": {
+          "value": 58.3,
+          "unit": "0-100",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "growth": {
+          "value": -9.519609793872645,
+          "unit": "%",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        }
+      },
+      "editorial_scores": {},
+      "editorial_status": "PASS",
+      "component_scores": {},
+      "opportunity_score": null,
+      "score_completeness": 0.0,
+      "rationale": [],
+      "filter_reasons": [],
+      "validation_status": "RECOMMENDED",
+      "validation_reasons": [],
+      "inventory_status": "ELIGIBLE",
+      "provider": "vidiq_discovery + gpt_ideation",
+      "discovery_sources": [
+        "vidiq_discovery",
+        "gpt_ideation"
+      ],
+      "discovered_at": "2026-10-01T05:15:22.359801+00:00",
+      "raw_evidence": {
+        "vidiq_opportunity": {
+          "candidate_id": "vidiq_010",
+          "topic": "boring history for sleep",
+          "evidence": {
+            "search_volume": {
+              "value": 504753.0,
+              "unit": "monthly searches",
+              "observed_at": null,
+              "available": true,
+              "source": "vidIQ MCP"
+            },
+            "volume_score": {
+              "value": 85.13366838725443,
+              "unit": "0-100",
+              "observed_at": null,
+              "available": true,
+              "source": "vidIQ MCP"
+            },
+            "keyword_score": {
+              "value": 67.76020103235265,
+              "unit": "0-100",
+              "observed_at": null,
+              "available": true,
+              "source": "vidIQ MCP"
+            },
+            "competition": {
+              "value": 58.3,
+              "unit": "0-100",
+              "observed_at": null,
+              "available": true,
+              "source": "vidIQ MCP"
+            },
+            "growth": {
+              "value": -9.519609793872645,
+              "unit": "%",
+              "observed_at": null,
+              "available": true,
+              "source": "vidIQ MCP"
+            }
+          },
+          "raw_evidence": {
+            "keyword": "boring history for sleep",
+            "relatedScore": 1.0499999999999998,
+            "volume": 85.13366838725443,
+            "competition": 58.3,
+            "overall": 67.76020103235265,
+            "estimatedMonthlySearch": 504753,
+            "baselineMonthlySearches30d": 557859,
+            "searchDemandGrowthPct": -9.519609793872645,
+            "metricsAsOf": "2026-09-30T08:56:21.000Z",
+            "monthlySearchesDisplay": "504,753",
+            "volumeScoreLabel": "Very high",
+            "countryVolume": null,
+            "topMarkets": [
+              {
+                "country": "VN",
+                "pct": 0.20792079
+              },
+              {
+                "country": "BD",
+                "pct": 0.16831683
+              },
+              {
+                "country": "PK",
+                "pct": 0.12871288
+              },
+              {
+                "country": "IN",
+                "pct": 0.089108914
+              },
+              {
+                "country": "BR",
+                "pct": 0.07920792
+              }
+            ]
+          }
+        },
+        "gpt_generated_idea": {
+          "title": "Why People Keep Inventing Ways to Store Water in the Worst Places",
+          "source_opportunity_id": "vidiq_010",
+          "angle": "A curious history-of-technology video about human solutions for water storage in deserts, dry islands, rocky hills, and cities—showing how necessity shapes clever designs.",
+          "curiosity_hook": "How do you keep water alive when the place itself seems determined to lose it?",
+          "static_visual_explanation": "Show cisterns, jars, canals, rooftop collection, desert settlements, and a simple diagram of rain capture and storage across different environments.",
+          "long_form_depth": "Enough for 8–10 minutes by comparing several storage methods, the problems they solved, and why some solutions lasted for centuries.",
+          "originality_note": "This takes the broad 'boring history for sleep' signal and flips it into an interesting, practical invention story with strong doodle-friendly visuals."
+        },
+        "discovery_mode": "VIDIQ_TO_GPT",
+        "vidiq_usage_mode": "DISCOVERY_ONLY",
+        "generation_order": 9
+      },
+      "competitor_topic_performance_available": false,
+      "competitor_evidence": [],
+      "competitor_topic_patterns": [],
+      "current_vidiq_demand_signals": {
+        "search_volume": {
+          "value": 504753.0,
+          "unit": "monthly searches",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "volume_score": {
+          "value": 85.13366838725443,
+          "unit": "0-100",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "keyword_score": {
+          "value": 67.76020103235265,
+          "unit": "0-100",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "competition": {
+          "value": 58.3,
+          "unit": "0-100",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        },
+        "growth": {
+          "value": -9.519609793872645,
+          "unit": "%",
+          "observed_at": null,
+          "available": true,
+          "source": "vidIQ MCP"
+        }
+      },
+      "current_vidiq_demand_available": true,
+      "vidiq_status": "SCORED",
+      "competition_saturation_signal": {
+        "value": 58.3,
+        "unit": "0-100",
+        "observed_at": null,
+        "available": true,
+        "source": "vidIQ MCP"
+      },
+      "competition_saturation_assessment": null,
+      "ritzz_differentiation_angle": "A curious history-of-technology video about human solutions for water storage in deserts, dry islands, rocky hills, and cities—showing how necessity shapes clever designs.",
+      "observed_pattern": null,
+      "concrete_subject": null,
+      "subject_evidence_refs": [],
+      "originality_reason": "This takes the broad 'boring history for sleep' signal and flips it into an interesting, practical invention story with strong doodle-friendly visuals.",
+      "curiosity_family": null,
+      "ritzz_fit": {
+        "fit_status": "PASS",
+        "fit_score": null,
+        "story_type": "OTHER",
+        "curiosity_strength": null,
+        "researchability": null,
+        "story_depth": null,
+        "originality": null,
+        "visual_potential": null,
+        "format_fit": null,
+        "evergreen_potential": null,
+        "audience_value": null,
+        "temporary_trend_dependency": null,
+        "reason": "Passed the local RITZZ curiosity, specificity, visual, and inventory filters."
+      },
+      "ritzz_learning_signals": {}
+    }
+  ]
+}
