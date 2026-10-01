@@ -14,11 +14,11 @@ from typing import Any, Protocol
 
 from dotenv import load_dotenv
 from openai import OpenAI
+from openai.types.responses import ResponseTextConfigParam
 
 from modules.storyboard.models import Storyboard
 from modules.video.models import VideoAssemblyPlan
 from modules.video.qa_models import (
-    AudioImageMatchReport,
     AudioImageMatchResult,
     PilotQAReport,
     QAStatus,
@@ -32,6 +32,44 @@ load_dotenv()
 
 class SemanticReviewer(Protocol):
     def review(self, image_path: Path, scene: Any) -> SceneQAResult: ...
+
+
+_SCENE_REVIEW_RESPONSE_FORMAT: ResponseTextConfigParam = {
+    "format": {
+        "type": "json_schema",
+        "name": "rendered_scene_review",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "narration_image": {
+                    "type": "string",
+                    "enum": ["PASS", "REVIEW", "FAIL"],
+                },
+                "narration_description": {
+                    "type": "string",
+                    "enum": ["PASS", "REVIEW", "FAIL"],
+                },
+                "editorial_context": {
+                    "type": "string",
+                    "enum": ["PASS", "REVIEW", "FAIL"],
+                },
+                "rationale": {"type": "string"},
+                "correction_prompt": {"type": ["string", "null"]},
+                "suggested_editorial_scene_id": {"type": ["string", "null"]},
+            },
+            "required": [
+                "narration_image",
+                "narration_description",
+                "editorial_context",
+                "rationale",
+                "correction_prompt",
+                "suggested_editorial_scene_id",
+            ],
+            "additionalProperties": False,
+        },
+    }
+}
 
 
 def _validate_png(path: Path) -> None:
@@ -167,9 +205,25 @@ class OpenAIImageEditorialReviewer:
                 {"type": "input_text", "text": prompt},
                 {"type": "input_image", "image_url": "data:image/png;base64," + encoded, "detail": "low"},
             ]}],
+            text=_SCENE_REVIEW_RESPONSE_FORMAT,
         )
+        output_text = response.output_text
+        if not output_text or not output_text.strip():
+            response_status = getattr(response, "status", "unknown")
+            incomplete_reason = getattr(
+                getattr(response, "incomplete_details", None),
+                "reason",
+                None,
+            )
+            details = f"status={response_status}"
+            if incomplete_reason:
+                details += f", incomplete_reason={incomplete_reason}"
+            raise ValueError(
+                f"Semantic reviewer returned no structured output for "
+                f"{scene.scene_id} ({details})."
+            )
         try:
-            result = json.loads(response.output_text)
+            result = json.loads(output_text)
             statuses = [result[k] for k in ("narration_image", "narration_description", "editorial_context")]
             if any(status not in {"PASS", "REVIEW", "FAIL"} for status in statuses):
                 raise ValueError("invalid status")

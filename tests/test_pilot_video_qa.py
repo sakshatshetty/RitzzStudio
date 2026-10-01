@@ -1,14 +1,18 @@
-import base64
 import json
 import struct
 import zlib
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from modules.storyboard.models import Storyboard
 from modules.video.models import VideoAssemblyPlan, VideoClip
-from modules.video.pilot_qa import PilotVideoQA, _mp3_duration
+from modules.video.pilot_qa import (
+    OpenAIImageEditorialReviewer,
+    PilotVideoQA,
+    _mp3_duration,
+)
 from modules.video.qa_models import AudioImageMatchResult, SceneQAResult
 
 
@@ -87,6 +91,66 @@ def test_semantic_qa_preserves_scene_review_classification(tmp_path):
                 narration_description="PASS", editorial_context="REVIEW", rationale="Human review recommended.")
     results = PilotVideoQA().run_semantic(storyboard, plan, Reviewer())
     assert results[0].status == "REVIEW"
+
+
+def test_openai_rendered_scene_reviewer_requests_strict_json_schema(tmp_path):
+    storyboard, _, _, image = make_inputs(tmp_path)
+    captured = {}
+    payload = {
+        "narration_image": "PASS",
+        "narration_description": "PASS",
+        "editorial_context": "REVIEW",
+        "rationale": "The word is hard to read.",
+        "correction_prompt": None,
+        "suggested_editorial_scene_id": None,
+    }
+
+    reviewer = OpenAIImageEditorialReviewer(api_key="test-key", model="test-model")
+
+    def fake_create(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(
+            output_text=json.dumps(payload),
+            status="completed",
+            incomplete_details=None,
+        )
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(reviewer.client.responses, "create", fake_create)
+
+    try:
+        result = reviewer.review(image, storyboard.scenes[0])
+    finally:
+        monkeypatch.undo()
+
+    assert result.status == "REVIEW"
+    assert captured["text"]["format"]["type"] == "json_schema"
+    assert captured["text"]["format"]["strict"] is True
+    assert captured["text"]["format"]["schema"]["additionalProperties"] is False
+
+
+def test_openai_rendered_scene_reviewer_reports_empty_incomplete_output(tmp_path):
+    storyboard, _, _, image = make_inputs(tmp_path)
+    reviewer = OpenAIImageEditorialReviewer(api_key="test-key", model="test-model")
+
+    def fake_create(**_kwargs):
+        return SimpleNamespace(
+            output_text="",
+            status="incomplete",
+            incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+        )
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(reviewer.client.responses, "create", fake_create)
+
+    try:
+        with pytest.raises(
+            ValueError,
+            match=r"no structured output for scene_001 \(status=incomplete, incomplete_reason=max_output_tokens\)",
+        ):
+            reviewer.review(image, storyboard.scenes[0])
+    finally:
+        monkeypatch.undo()
 
 
 def test_audio_image_match_uses_synchronized_scene_range(tmp_path):
