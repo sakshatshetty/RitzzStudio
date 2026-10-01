@@ -326,6 +326,9 @@ def test_workflow_keeps_dynamic_selection_and_m2_behind_human_approval():
     assert "needs.restore-production.outputs.resume_from_index <= 1" in workflow
     assert "Download failed content checkpoint for retry" in workflow
     assert "Upload failed content checkpoint and validation findings" in workflow
+    assert 'expected_status == "failed"' in workflow
+    assert 'state.get("current_stage") == expected_stage' in workflow
+    assert 'bool(expected_stage_state.get("artifacts"))' in workflow
     assert 'tar -xzf "$checkpoint/content-project.tar.gz" -C projects' in workflow
     assert "RITZZ topic approval - production ${process.env.PRODUCTION_ID}" in workflow
     assert "Persist private upload intent before contacting YouTube" in workflow
