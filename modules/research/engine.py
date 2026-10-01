@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from openai import OpenAI
 
@@ -134,8 +135,9 @@ class ResearchEngine:
             "Tier 4 = Wikipedia, forums, social media, "
             "or other low-authority sources.\n\n"
 
-            "Use source IDs for internal references. "
-            "The application will normalize these IDs later.\n\n"
+            "In every claim's sources field, cite only source IDs exactly as "
+            "they appear in the sources list; never put URLs in a claim's "
+            "sources field. The application will normalize these IDs later.\n\n"
 
             "Prioritize accuracy over quantity.\n\n"
 
@@ -155,6 +157,7 @@ class ResearchEngine:
         """
 
         id_mapping: dict[str, str] = {}
+        url_mapping: dict[str, str] = {}
 
         for index, source in enumerate(
             research.sources,
@@ -164,38 +167,61 @@ class ResearchEngine:
             new_id = f"source_{index:03d}"
 
             id_mapping[old_id] = new_id
+            url_key = ResearchEngine._source_url_key(source.url)
+            if url_key:
+                url_mapping.setdefault(url_key, new_id)
 
             source.id = new_id
 
+        def normalize_reference(source_id: str) -> str:
+            mapped_id = id_mapping.get(source_id)
+            if mapped_id is not None:
+                return mapped_id
+            url_key = ResearchEngine._source_url_key(source_id)
+            return url_mapping.get(url_key, source_id) if url_key else source_id
+
         # Update references in key facts
         for fact in research.key_facts:
-            fact.sources = [
-                id_mapping.get(source_id, source_id)
-                for source_id in fact.sources
-            ]
+            fact.sources = [normalize_reference(source_id) for source_id in fact.sources]
 
         # Update historical context
         for context in research.historical_context:
-            context.sources = [
-                id_mapping.get(source_id, source_id)
-                for source_id in context.sources
-            ]
+            context.sources = [normalize_reference(source_id) for source_id in context.sources]
 
         # Update myths
         for myth in research.common_myths:
-            myth.sources = [
-                id_mapping.get(source_id, source_id)
-                for source_id in myth.sources
-            ]
+            myth.sources = [normalize_reference(source_id) for source_id in myth.sources]
 
         # Update surprising facts
         for fact in research.surprising_facts:
-            fact.sources = [
-                id_mapping.get(source_id, source_id)
-                for source_id in fact.sources
-            ]
+            fact.sources = [normalize_reference(source_id) for source_id in fact.sources]
 
         return research
+
+    @staticmethod
+    def _source_url_key(value: str) -> str | None:
+        """Canonicalize source URLs while ignoring common tracking parameters."""
+        parsed = urlsplit(value.strip())
+        if parsed.scheme.casefold() not in {"http", "https"} or not parsed.netloc:
+            return None
+        query = urlencode(
+            [
+                (key, item)
+                for key, item in parse_qsl(parsed.query, keep_blank_values=True)
+                if not key.casefold().startswith("utm_")
+                and key.casefold() not in {"gclid", "fbclid"}
+            ]
+        )
+        path = parsed.path.rstrip("/") or "/"
+        return urlunsplit(
+            (
+                parsed.scheme.casefold(),
+                parsed.netloc.casefold(),
+                path,
+                query,
+                "",
+            )
+        )
 
     @staticmethod
     def _save_research(
