@@ -564,7 +564,7 @@ jobs:
   topic-approval:
     name: Approve selected topic
     needs: [select-topic, restore-production]
-    if: ${{ always() && needs.restore-production.result == 'success' && (needs.restore-production.outputs.effective_mode == 'NEW' || needs.restore-production.outputs.resume_from_index <= 2) && (needs.select-topic.result == 'success' || (needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == 2)) }}
+    if: ${{ always() && needs.restore-production.result == 'success' && (needs.restore-production.outputs.effective_mode == 'NEW' || needs.restore-production.outputs.resume_from_index <= 1) && needs.select-topic.result == 'success' }}
     runs-on: ubuntu-latest
     outputs:
       selection: ${{ needs.select-topic.outputs.selection }}
@@ -579,7 +579,7 @@ jobs:
   test-approval:
     name: Human approval for test pipeline
     needs: [topic-approval, restore-production]
-    if: ${{ always() && needs.restore-production.result == 'success' && (needs.restore-production.outputs.effective_mode == 'NEW' || needs.restore-production.outputs.resume_from_index <= 2) && (needs.topic-approval.result == 'success') }}
+    if: ${{ always() && needs.restore-production.result == 'success' && (needs.restore-production.outputs.effective_mode == 'NEW' || needs.restore-production.outputs.resume_from_index <= 2) && (needs.topic-approval.result == 'success' || (needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index > 1)) }}
     runs-on: ubuntu-latest
     environment:
       name: ritzz-test-approval
@@ -616,6 +616,15 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
+      - name: Download failed content checkpoint for retry
+        if: ${{ needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '2' && endsWith(needs.restore-production.outputs.source_artifact, '-content_preparation') }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-content_preparation
+          run-id: ${{ needs.restore-production.outputs.source_run_id }}
+          github-token: ${{ github.token }}
+          path: .pipeline-artifacts/resume-checkpoint
+
       - name: Download approved topic
         uses: actions/download-artifact@v4
         with:
@@ -624,7 +633,20 @@ jobs:
           github-token: ${{ github.token }}
           path: .pipeline-artifacts
 
+      - name: Restore failed content project and diagnostics
+        if: ${{ needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '2' && endsWith(needs.restore-production.outputs.source_artifact, '-content_preparation') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          checkpoint=.pipeline-artifacts/resume-checkpoint
+          cp -a "$checkpoint/." .pipeline-artifacts/
+          if [[ -f "$checkpoint/content-project.tar.gz" ]]; then
+            mkdir -p projects
+            tar -xzf "$checkpoint/content-project.tar.gz" -C projects
+          fi
+
       - name: Run approved content workflow
+        id: run-content
         shell: bash
         run: |
           set -euo pipefail
@@ -647,6 +669,17 @@ jobs:
           python scripts/manage_pipeline_production.py complete --stage content_preparation --project-id "$project_id" --artifacts content_workflow_result.json content-project.tar.gz
 
       - name: Upload content artifacts
+        if: ${{ success() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-content_preparation
+          path: .pipeline-artifacts/
+          if-no-files-found: error
+          include-hidden-files: true
+          overwrite: true
+
+      - name: Upload failed content checkpoint and validation findings
+        if: ${{ failure() && hashFiles('.pipeline-artifacts/content_workflow_error.json') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-content_preparation

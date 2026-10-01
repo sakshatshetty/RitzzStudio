@@ -88,6 +88,8 @@ def main() -> int:
             state = store.fail_stage(
                 arguments.stage,
                 arguments.error or "Stage failed without an error message.",
+                arguments.artifacts,
+                project_id=arguments.project_id,
             )
     print(json.dumps(state, indent=2))
     return 0

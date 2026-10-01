@@ -3,7 +3,9 @@
 import json
 import os
 import sys
+import tarfile
 from pathlib import Path
+from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -11,6 +13,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from config import PROJECTS_DIR
 from modules.content_workflow import ContentWorkflow
+from modules.production_state import ProductionStateStore
+from modules.project.manager import ProjectManager
 from modules.topic_intelligence.models import (
     OpportunityReport,
     TopicDiscoveryRequest,
@@ -47,26 +51,116 @@ def main() -> int:
         "candidates": candidates_payload["candidates"],
     }
     report = OpportunityReport.model_validate(report_payload)
-    result = ContentWorkflow(Path(PROJECTS_DIR)).run(
-        topic=selection["topic"],
-        report=report,
-        candidate_id=selection["candidate_id"],
-        target_duration_seconds=selection["target_duration_seconds"],
-        minimum_duration_seconds=selection["minimum_duration_seconds"],
-        constraints=selection["constraints"],
-    )
+    production_id = os.environ.get("RITZZ_PRODUCTION_ID")
+    if production_id:
+        state_store = ProductionStateStore(
+            artifacts_directory / "production_state.json",
+            artifacts_directory,
+        )
+        production_state = state_store.resume(production_id)
+    else:
+        state_store = None
+        production_state = None
+    project_id = production_state.get("project_id") if production_state else None
+    projects_directory = Path(PROJECTS_DIR)
+    project_manager = ProjectManager(projects_directory)
+    force_refresh_research = False
+    if state_store and project_id is None:
+        project = project_manager.create_project(selection["topic"])
+        project_id = project.project_id
+        state_store.set_project_id(project_id)
+    if project_id:
+        project_path = project_manager.get_project_path(
+            project_manager.load_project(project_id)
+        )
+        validation_path = project_path / "research" / "research_validation.json"
+        if validation_path.is_file():
+            prior_validation = json.loads(validation_path.read_text(encoding="utf-8"))
+            force_refresh_research = prior_validation.get("status") == "FAIL"
+            if force_refresh_research:
+                print(
+                    "Prior research validation failed; refreshing research before "
+                    "retrying content preparation."
+                )
+
+    try:
+        result = ContentWorkflow(projects_directory).run(
+            topic=selection["topic"],
+            report=report,
+            candidate_id=selection["candidate_id"],
+            project_id=project_id,
+            target_duration_seconds=selection["target_duration_seconds"],
+            minimum_duration_seconds=selection["minimum_duration_seconds"],
+            constraints=selection["constraints"],
+            force_refresh_research=force_refresh_research,
+        )
+    except Exception as exc:
+        if state_store and production_id:
+            state = state_store.resume(production_id)
+            project_id = state.get("project_id") or project_id
+            failure_payload: dict[str, Any] = {
+                "stage": "content_preparation",
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "project_id": project_id,
+            }
+            if project_id:
+                project_path = project_manager.get_project_path(
+                    project_manager.load_project(project_id)
+                )
+                for artifact_name, artifact_path in (
+                    (
+                        "research_validation",
+                        project_path / "research" / "research_validation.json",
+                    ),
+                    ("qa_report", project_path / "qa" / "qa_report.json"),
+                ):
+                    if artifact_path.is_file():
+                        failure_payload[artifact_name] = json.loads(
+                            artifact_path.read_text(encoding="utf-8")
+                        )
+                archive_path = artifacts_directory / "content-project.tar.gz"
+                with tarfile.open(archive_path, "w:gz") as archive:
+                    archive.add(project_path, arcname=project_path.name)
+            failure_path = artifacts_directory / "content_workflow_error.json"
+            failure_path.write_text(
+                json.dumps(failure_payload, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            artifacts = [failure_path]
+            if project_id:
+                artifacts.append(artifacts_directory / "content-project.tar.gz")
+            state_store.fail_stage(
+                "content_preparation",
+                str(exc),
+                artifacts,
+                project_id=project_id,
+            )
+            print(
+                json.dumps(failure_payload, indent=2, ensure_ascii=False),
+                file=sys.stderr,
+            )
+        raise
 
     output = {
         "project_id": result.project.project_id,
         "project_path": str(result.project_path),
         "topic": selection["topic"],
         "status": result.project.status,
-        "completed_stages": ["research", "research_validation", "outline", "script", "packaging"],
+        "completed_stages": [
+            "research",
+            "research_validation",
+            "outline",
+            "script",
+            "packaging",
+        ],
         "test_run": True,
         "public_publish_allowed": False,
     }
     output_path = artifacts_directory / "content_workflow_result.json"
     output_path.write_text(json.dumps(output, indent=2) + "\n", encoding="utf-8")
+    failure_path = artifacts_directory / "content_workflow_error.json"
+    failure_path.unlink(missing_ok=True)
     print(json.dumps(output, indent=2))
     return 0
 

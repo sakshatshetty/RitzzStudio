@@ -109,6 +109,25 @@ class ProductionStateStore:
         self._save(state)
         return state
 
+    def set_project_id(self, project_id: str) -> dict[str, Any]:
+        if not project_id:
+            raise ValueError("Project ID cannot be empty.")
+        state = self._read_state()
+        if state.get("current_stage") != "content_preparation":
+            raise ProductionStateError(
+                "STATE_ARTIFACT_MISMATCH",
+                "A project ID can only be set during content preparation.",
+            )
+        existing_project_id = state.get("project_id")
+        if existing_project_id not in (None, project_id):
+            raise ProductionStateError(
+                "STATE_ARTIFACT_MISMATCH",
+                "Project ID does not match the existing production project.",
+            )
+        state["project_id"] = project_id
+        self._save(state)
+        return state
+
     def complete_stage(
         self,
         stage: str,
@@ -144,17 +163,33 @@ class ProductionStateStore:
         self._save(state)
         return state
 
-    def fail_stage(self, stage: str, error: str) -> dict[str, Any]:
+    def fail_stage(
+        self,
+        stage: str,
+        error: str,
+        artifact_paths: Iterable[str | Path] = (),
+        project_id: str | None = None,
+    ) -> dict[str, Any]:
         state = self._read_state()
         stage_state = self._stage(state, stage)
+        if state.get("current_stage") == stage and stage_state["status"] == "failed":
+            return state
         if state.get("current_stage") != stage or stage_state["status"] != "running":
             raise ProductionStateError(
                 "STATE_ARTIFACT_MISMATCH",
                 f"Cannot fail stage {stage} because it is not the active stage.",
             )
-        stage_state.update(status="failed", error=error, completed_at=None)
+        artifacts = [self._artifact_record(path) for path in artifact_paths]
+        stage_state.update(
+            status="failed",
+            error=error,
+            completed_at=None,
+            artifacts=artifacts,
+        )
         state["current_stage"] = stage
         state["status"] = "failed"
+        if project_id is not None:
+            state["project_id"] = project_id
         self._save(state)
         return state
 
@@ -268,13 +303,18 @@ class ProductionStateStore:
                     "STATE_ARTIFACT_MISMATCH",
                     f"Invalid stage record for {stage}.",
                 )
-            if stage_state.get("status") != "completed":
-                continue
             artifacts = stage_state.get("artifacts")
-            if not isinstance(artifacts, list) or not artifacts:
+            if stage_state.get("status") == "completed" and not artifacts:
                 raise ProductionStateError(
                     "STATE_ARTIFACT_MISMATCH",
                     f"Completed stage {stage} has no artifact manifest.",
+                )
+            if not artifacts:
+                continue
+            if not isinstance(artifacts, list):
+                raise ProductionStateError(
+                    "STATE_ARTIFACT_MISMATCH",
+                    f"Invalid artifact manifest for stage {stage}.",
                 )
             for artifact in artifacts:
                 if not isinstance(artifact, dict):
