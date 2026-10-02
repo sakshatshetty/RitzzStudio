@@ -13,6 +13,8 @@ class QAStageResult(BaseModel):
     checks: dict[str, QAStatus] = Field(default_factory=dict)
     findings: list[str] = Field(default_factory=list)
     recommendations: list[str] = Field(default_factory=list)
+    metrics: dict[str, int | float | None] = Field(default_factory=dict)
+    details: dict[str, str] = Field(default_factory=dict)
     attempt: int = Field(default=1, ge=1)
     reviewer: str = "deterministic"
     reviewed_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())

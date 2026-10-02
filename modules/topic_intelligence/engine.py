@@ -1,49 +1,23 @@
 import hashlib
 import json
-import os
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Protocol, runtime_checkable
 
 from openai import OpenAIError
 
-from config.settings import (
-    RITZZ_CANDIDATE_POOL_TARGET,
-    RITZZ_COMPETITOR_LOOKBACK_DAYS,
-    RITZZ_COMPETITOR_VIDEO_LIMIT,
-    RITZZ_DISCOVERY_FALLBACK_STAGES,
-    RITZZ_FIT_PASS_THRESHOLD,
-    RITZZ_OUTLIER_MIN_SCORE,
-)
-from modules.topic_intelligence.competitor_opportunities import (
-    CompetitorOpportunityGenerator,
-    candidate_specificity_issue,
-)
+from modules.topic_intelligence.competitor_opportunities import CompetitorOpportunityGenerator
 from modules.topic_intelligence.editorial import (
+    EditorialAssessmentProvider,
     EditorialEvaluator,
     apply_editorial_assessments,
 )
 from modules.topic_intelligence.evaluator import rank_candidates
-from modules.topic_intelligence.inventory import (
-    ContentInventoryManager,
-    inventory_path,
-    normalize_topic,
-)
-from modules.topic_intelligence.learning import (
-    load_m7_learning_signals,
-    signals_for_topic,
-)
-from modules.topic_intelligence.market_intelligence import (
-    MarketIntelligenceReport,
-    build_market_intelligence_report,
-    relevant_competitor_evidence,
-    relevant_competitor_patterns,
-)
+from modules.topic_intelligence.inventory import ContentInventoryManager, inventory_path
+from modules.topic_intelligence.market_intelligence import MarketIntelligenceReport
 from modules.topic_intelligence.models import (
     EvidenceMetric,
     OpportunityCandidate,
     OpportunityReport,
-    RitzzFitResult,
     TopicDiscoveryRequest,
 )
 from modules.topic_intelligence.providers.base import (
@@ -52,153 +26,55 @@ from modules.topic_intelligence.providers.base import (
     TopicProvider,
 )
 from modules.topic_intelligence.providers.vidiq_mcp import VidiqMcpProvider
-from modules.topic_intelligence.ritzz_fit import (
-    build_ritzz_fit_result,
-    prefilter_reason,
-)
+from modules.topic_intelligence.ritzz_fit import build_ritzz_fit_result
 from modules.topic_intelligence.validation import (
     apply_niche_filter,
     validate_candidates,
 )
 
-SCORING_VERSION = "ritzz-opportunity-v5"
-VALIDATION_VERSION = "ritzz-topic-validation-v4"
-COMPETITOR_RESEARCH_VERSION = "competitor-topic-performance-v3"
-PipelineDiscovery = Callable[
-    ...,
-    tuple[
+SCORING_VERSION = "ritzz-opportunity-v3"
+VALIDATION_VERSION = "ritzz-topic-validation-v2"
+
+
+@runtime_checkable
+class OutlierResearchProvider(Protocol):
+    def discover_outliers(
+        self,
+        query: str,
+        limit: int = 10,
+    ) -> MarketIntelligenceReport:
+        ...
+
+
+@runtime_checkable
+class PipelineCandidateProvider(Protocol):
+    def discover_pipeline_candidates(
+        self,
+        request: TopicDiscoveryRequest,
+        *,
+        include_competitor_research: bool = True,
+    ) -> tuple[
         list[OpportunityCandidate],
         dict[str, Any],
         MarketIntelligenceReport | None,
-    ],
-]
+    ]:
+        ...
 
 
-def _file_cache_signature(path: Path | None) -> tuple[int, int] | None:
-    if path is None:
-        return None
-    try:
-        stat = path.stat()
-    except OSError:
-        return None
-    return stat.st_mtime_ns, stat.st_size
+@runtime_checkable
+class CompetitorResearchProvider(Protocol):
+    def discover_competitor_research(
+        self,
+        query: str,
+        limit: int = 10,
+    ) -> MarketIntelligenceReport:
+        ...
 
 
-def _competition_saturation_assessment(candidate: OpportunityCandidate) -> str:
-    metric = candidate.competition_saturation_signal
-    if metric is None or not metric.available or metric.value is None:
-        assessment = "Current vidIQ competition signal unavailable."
-    elif isinstance(metric.value, (int, float)):
-        assessment = (
-            f"Current vidIQ competition signal: {metric.value} {metric.unit or ''}; "
-            "higher raw competition values reduce attractiveness."
-        ).strip()
-    else:
-        level = str(metric.value).casefold()
-        if "high" in level:
-            assessment = "vidIQ labels competition high; this reduces topic attractiveness."
-        elif "medium" in level or "moderate" in level:
-            assessment = "vidIQ labels competition moderate; consider this competition pressure."
-        elif "low" in level:
-            assessment = "vidIQ labels competition low."
-        else:
-            assessment = f"Raw vidIQ competition signal: {metric.value}."
-    if candidate.competitor_topic_patterns:
-        channel_count = max(
-            pattern.channel_count
-            for pattern in candidate.competitor_topic_patterns
-        )
-        assessment += (
-            f" A repeated matching topic pattern appeared across {channel_count} "
-            "competitor channels; this may indicate saturation, not certain demand."
-        )
-    return assessment
-
-
-def _candidate_rejection_codes(candidate: OpportunityCandidate) -> list[str]:
-    codes = {
-        reason.split(":", 1)[0]
-        for reason in candidate.filter_reasons
-        if reason.split(":", 1)[0] in {
-            "DUPLICATE",
-            "EDITORIAL_FAIL",
-            "LOW_QUALITY",
-            "LOW_VISUAL_FIT",
-            "NEAR_DUPLICATE",
-            "NOT_RITZZ_FIT",
-            "OTHER_HARD_FILTER",
-            "TOO_ABSTRACT",
-        }
-    }
-    if candidate.inventory_status == "DUPLICATE":
-        codes.add("DUPLICATE")
-    if candidate.editorial_status == "FAIL":
-        codes.add("EDITORIAL_FAIL")
-    if candidate.editorial_status == "REVIEW":
-        codes.add("LOW_QUALITY")
-    if candidate.editorial_scores.get("format_fit", 100) < 55:
-        codes.add("LOW_VISUAL_FIT")
-    if candidate.ritzz_fit is not None and candidate.ritzz_fit.fit_status != "PASS":
-        codes.add("NOT_RITZZ_FIT")
-    if any("near-duplicate" in reason.casefold() for reason in candidate.validation_reasons):
-        codes.add("NEAR_DUPLICATE")
-    if candidate.validation_status == "REJECTED":
-        codes.add("LOW_QUALITY")
-    if (
-        candidate.filter_reasons
-        or candidate.validation_status != "RECOMMENDED"
-    ) and not codes:
-        codes.add("OTHER_HARD_FILTER")
-    return sorted(codes)
-
-
-def _candidate_family(candidate: OpportunityCandidate) -> str:
-    if candidate.curiosity_family:
-        return candidate.curiosity_family.casefold()
-    if candidate.ritzz_fit and candidate.ritzz_fit.story_type != "OTHER":
-        return candidate.ritzz_fit.story_type.casefold()
-    text = " ".join((candidate.topic, candidate.angle or "")).casefold()
-    families = {
-        "history_mystery": ("ancient", "lost", "expedition", "archaeology", "historical"),
-        "geography": ("map", "island", "border", "mountain", "ocean", "place"),
-        "science": ("scientist", "physics", "chemical", "species", "signal", "phenomenon"),
-        "technology": ("invention", "machine", "device", "technology", "engineering"),
-        "space": ("space", "planet", "astronaut", "star", "moon"),
-        "human_behavior": ("people", "human", "behavior", "sleep", "memory"),
-    }
-    return next(
-        (family for family, terms in families.items() if any(term in text for term in terms)),
-        "other",
-    )
-
-
-def _candidate_signal_weight(candidate: OpportunityCandidate) -> float:
-    weight = candidate.raw_evidence.get("competitor_signal_weight", 0)
-    return float(weight) if isinstance(weight, (int, float)) else 0.0
-
-
-def _select_diverse_candidates(
-    candidates: list[OpportunityCandidate],
-    limit: int = 4,
-) -> list[OpportunityCandidate]:
-    selected: list[OpportunityCandidate] = []
-    selected_ids: set[str] = set()
-    families: set[str] = set()
-    for candidate in candidates:
-        family = _candidate_family(candidate)
-        if family in families:
-            continue
-        selected.append(candidate)
-        families.add(family)
-        selected_ids.add(candidate.candidate_id)
-        if len(selected) == limit:
-            return selected
-    selected.extend(
-        candidate
-        for candidate in candidates
-        if candidate.candidate_id not in selected_ids
-    )
-    return selected[:limit]
+@runtime_checkable
+class DemandEnrichmentProvider(Protocol):
+    def enrich_topic_demand(self, topic: str) -> TopicDemandEnrichment:
+        ...
 
 
 class TopicIntelligenceEngine:
@@ -206,352 +82,24 @@ class TopicIntelligenceEngine:
         self,
         provider: TopicProvider | None = None,
         cache_dir: Path | None = None,
-        editorial_evaluator: EditorialEvaluator | None = None,
+        editorial_evaluator: EditorialAssessmentProvider | None = None,
         inventory_manager: ContentInventoryManager | None = None,
-        learning_inventory_path: Path | None = None,
         competitor_opportunity_generator: CompetitorOpportunityGenerator | None = None,
     ) -> None:
         self.provider = provider or VidiqMcpProvider()
         self.cache_dir = Path(cache_dir or Path("cache") / "topic_intelligence")
         self.editorial_evaluator = editorial_evaluator or EditorialEvaluator()
-        self.competitor_opportunity_generator = competitor_opportunity_generator
         self.inventory_manager = inventory_manager or ContentInventoryManager(inventory_path(self.cache_dir))
-        self.learning_inventory_path = Path(
-            learning_inventory_path or os.getenv("RITZZ_M7_INVENTORY_FILE", "projects/inventory.json")
-        )
-
-    def _discover_from_competitors(
-        self,
-        request: TopicDiscoveryRequest,
-        primary_research: Callable[..., MarketIntelligenceReport],
-        secondary_discovery: PipelineDiscovery | None,
-    ) -> tuple[list[OpportunityCandidate], dict, MarketIntelligenceReport | None]:
-        query = f"{request.niche} educational curiosity explainers"
-        diagnostics: dict = {
-            "pool_target": request.limit,
-            "sources_attempted": ["configured_competitor_outliers"],
-            "sources_unavailable": [],
-            "source_counts": {},
-            "operations": [],
-            "stage_counts": [],
-        }
-        try:
-            competitor_report = primary_research(
-                query,
-                limit=RITZZ_COMPETITOR_VIDEO_LIMIT,
-            )
-        except ProviderUnavailableError as exc:
-            competitor_report = build_market_intelligence_report(
-                query,
-                [],
-                source=self.provider.name,
-                performance_tool_available=False,
-                warnings=[f"Configured competitor-video research failed: {exc}"],
-            )
-            competitor_report.operations.append({
-                "source": "configured_competitor_outliers",
-                "tool": exc.tool or "vidIQ MCP",
-                "status": "failed",
-                "error_type": "PROVIDER_ERROR",
-                "provider_error_type": exc.error_type,
-                "message": str(exc),
-                "fallback_behavior": "Stop discovery and expose the primary provider failure.",
-            })
-        primary_provider_failures = [
-            operation
-            for operation in competitor_report.operations
-            if operation.get("status") == "failed"
-            and operation.get("source") in {
-                "competitor_outliers",
-                "competitor_tools",
-                "configured_competitor_outliers",
-            }
-        ]
-        diagnostics["primary_competitor_research_status"] = (
-            "PROVIDER_ERROR"
-            if primary_provider_failures
-            else "SUCCESS" if competitor_report.outliers
-            else "NO_RESULTS"
-        )
-        if primary_provider_failures:
-            diagnostics["sources_unavailable"].extend(
-                "competitor_video_research: PROVIDER_ERROR: "
-                f"{operation.get('message', 'Provider call failed.')}"
-                for operation in primary_provider_failures
-            )
-
-        candidates: list[OpportunityCandidate] = []
-        pattern_count = 0
-        generation_diagnostics = {
-            "videos_inspected": competitor_report.videos_inspected or len(competitor_report.outliers),
-            "successful_outlier_videos": 0,
-            "topic_patterns_extracted": 0,
-            "generated_candidates": 0,
-            "rejected_copied_angles": 0,
-            "candidate_rejections": [],
-        }
-        generator = self.competitor_opportunity_generator
-        if competitor_report.outliers and not primary_provider_failures:
-            if generator is None:
-                generator = CompetitorOpportunityGenerator()
-                self.competitor_opportunity_generator = generator
-            try:
-                candidates, patterns, generation_diagnostics = (
-                    generator.generate(
-                        competitor_report,
-                        candidate_limit=min(max(request.limit, 4), 30),
-                    )
-                )
-                pattern_count = len(patterns)
-            except (OpenAIError, ValueError, RuntimeError) as exc:
-                diagnostics["sources_unavailable"].append(
-                    f"competitor_topic_generation: {type(exc).__name__}: {exc}"
-                )
-                diagnostics["operations"].append({
-                    "source": "competitor_topic_generation",
-                    "tool": getattr(
-                        generator,
-                        "model_name",
-                        "structured topic generator",
-                    ),
-                    "status": "failed",
-                    "error_type": "TOPIC_GENERATION_ERROR",
-                    "message": str(exc),
-                    "fallback_behavior": "Continue through secondary sources without attributing them to competitor evidence.",
-                })
-
-        diagnostics.update({
-            "competitor_channels_configured": competitor_report.configured_competitor_count,
-            "competitors_queried": competitor_report.competitors_queried,
-            "competitor_group_diagnostics": competitor_report.competitor_group_diagnostics,
-            "competitor_channels": competitor_report.channels,
-            "videos_inspected": generation_diagnostics["videos_inspected"],
-            "successful_outlier_videos": generation_diagnostics["successful_outlier_videos"],
-            "topic_patterns_extracted": pattern_count,
-            "ritzz_candidates_generated": len(candidates),
-            "rejected_copied_angles": generation_diagnostics["rejected_copied_angles"],
-            "competitor_candidate_generation": generation_diagnostics,
-            "source_counts": {
-                "competitor_outliers": {
-                    "raw": generation_diagnostics["videos_inspected"],
-                    "unique": generation_diagnostics["successful_outlier_videos"],
-                },
-                "competitor_topic_patterns": {
-                    "raw": generation_diagnostics["successful_outlier_videos"],
-                    "unique": pattern_count,
-                },
-                "competitor_generated_topics": {
-                    "raw": len(candidates) + len(
-                        generation_diagnostics.get("candidate_rejections", [])
-                    ),
-                    "unique": len(candidates),
-                },
-            },
-            "operations": list(competitor_report.operations),
-        })
-        diagnostics["sources_unavailable"].extend(
-            f"competitor_report: {warning}"
-            for warning in competitor_report.warnings
-        )
-        diagnostics["operations"].append({
-            "source": "competitor_topic_patterns",
-            "tool": getattr(
-                generator,
-                "model_name",
-                "structured topic generator",
-            ),
-            "status": "success" if pattern_count else "insufficient_evidence",
-            "error_type": "NONE" if pattern_count else "INSUFFICIENT_CROSS_CHANNEL_EVIDENCE",
-            "message": (
-                f"Extracted {pattern_count} repeated pattern(s) from "
-                f"{generation_diagnostics['successful_outlier_videos']} successful video(s)."
-            ),
-            "fallback_behavior": (
-                "Generate original RITZZ ideas from validated patterns."
-                if pattern_count
-                else "Do not generate ideas from isolated or unverified competitor videos."
-            ),
-        })
-
-        demand_enriched = 0
-        demand_enricher = getattr(self.provider, "enrich_topic_demand", None)
-        if callable(demand_enricher):
-            diagnostics["sources_attempted"].append("keyword_research_enrichment")
-            for candidate in candidates:
-                try:
-                    enrichment = cast(
-                        TopicDemandEnrichment,
-                        demand_enricher(candidate.topic),
-                    )
-                except ProviderUnavailableError as exc:
-                    operation = {
-                        "source": "keyword_research_enrichment",
-                        "tool": exc.tool or "keyword research",
-                        "status": "failed",
-                        "error_type": "PROVIDER_ERROR",
-                        "provider_error_type": exc.error_type,
-                        "message": str(exc),
-                        "fallback_behavior": "Retain competitor evidence; demand and competition remain unavailable.",
-                    }
-                    diagnostics["operations"].append(operation)
-                    diagnostics["sources_unavailable"].append(
-                        "keyword_research_enrichment: PROVIDER_ERROR: "
-                        f"{exc}"
-                    )
-                    candidate.raw_evidence["demand_enrichment"] = operation
-                    continue
-                operation = enrichment.get("operation", {})
-                diagnostics["operations"].append(operation)
-                if operation.get("status") in {"failed", "unavailable"}:
-                    if operation.get("status") == "failed":
-                        operation["provider_error_type"] = (
-                            operation.get("error_type") or "UNKNOWN_PROVIDER_ERROR"
-                        )
-                        operation["error_type"] = "PROVIDER_ERROR"
-                    diagnostics["sources_unavailable"].append(
-                        "keyword_research_enrichment: "
-                        f"{operation.get('error_type', 'PROVIDER_ERROR')}: "
-                        f"{operation.get('message', 'No additional details.')}"
-                    )
-                for name, metric in enrichment.get("metrics", {}).items():
-                    candidate.evidence[name] = EvidenceMetric.model_validate(metric)
-                    if name in {
-                        "search_volume",
-                        "growth",
-                        "growth_percent",
-                        "search_volume_score",
-                        "growth_score",
-                        "trend_score",
-                    }:
-                        candidate.current_vidiq_demand_signals[name] = candidate.evidence[name]
-                    if name in {
-                        "competition",
-                        "competition_score",
-                        "competition_opportunity_score",
-                        "saturation",
-                        "saturation_score",
-                    }:
-                        candidate.competition_saturation_signal = candidate.evidence[name]
-                candidate.current_vidiq_demand_available = any(
-                    metric.available and metric.value is not None
-                    for metric in candidate.current_vidiq_demand_signals.values()
-                )
-                if enrichment.get("metrics"):
-                    demand_enriched += 1
-                candidate.competition_saturation_assessment = (
-                    _competition_saturation_assessment(candidate)
-                )
-                for keyword in enrichment.get("related_keywords", []):
-                    if keyword.casefold() != candidate.topic.casefold():
-                        candidate.related_keywords.append(keyword)
-                candidate.raw_evidence["demand_enrichment"] = dict(operation)
-            diagnostics["demand_enriched_candidates"] = demand_enriched
-        else:
-            diagnostics["demand_enriched_candidates"] = 0
-            diagnostics["sources_unavailable"].append(
-                "keyword_research_enrichment: provider does not support optional enrichment."
-            )
-
-        if primary_provider_failures:
-            diagnostics["secondary_fallback_attempted"] = False
-            diagnostics["operations"].append({
-                "source": "secondary_topic_discovery",
-                "tool": "secondary discovery",
-                "status": "blocked",
-                "error_type": "PROVIDER_ERROR",
-                "message": "Skipped secondary discovery because primary competitor-video research failed.",
-                "fallback_behavior": "Retry after the primary competitor provider is available.",
-            })
-        elif len(candidates) < min(request.limit, 30):
-            diagnostics["secondary_fallback_attempted"] = True
-            diagnostics["sources_attempted"].append("secondary_topic_discovery")
-            try:
-                if callable(secondary_discovery):
-                    if isinstance(self.provider, VidiqMcpProvider):
-                        secondary_candidates, secondary_diagnostics, _ = (
-                            secondary_discovery(
-                                request,
-                                include_competitor_research=False,
-                            )
-                        )
-                    else:
-                        secondary_candidates, secondary_diagnostics, _ = (
-                            secondary_discovery(request)
-                        )
-                else:
-                    secondary_candidates = self.provider.discover(request)
-                    secondary_diagnostics = {
-                        "source_counts": {
-                            "provider.discover": {
-                                "raw": len(secondary_candidates),
-                                "unique": len(secondary_candidates),
-                            }
-                        },
-                        "sources_unavailable": [],
-                        "operations": [],
-                        "stage_counts": [],
-                    }
-                seen = {normalize_topic(item.topic) for item in candidates}
-                for item in secondary_candidates:
-                    key = normalize_topic(item.topic)
-                    if key and key not in seen:
-                        candidates.append(item)
-                        seen.add(key)
-                diagnostics["source_counts"].update(
-                    secondary_diagnostics.get("source_counts", {})
-                )
-                diagnostics["sources_unavailable"].extend(
-                    f"secondary_topic_discovery: {item}"
-                    for item in secondary_diagnostics.get("sources_unavailable", [])
-                )
-                diagnostics["operations"].extend(
-                    secondary_diagnostics.get("operations", [])
-                )
-                diagnostics["stage_counts"].extend(
-                    secondary_diagnostics.get("stage_counts", [])
-                )
-                diagnostics["secondary_candidate_count"] = len(secondary_candidates)
-            except ProviderUnavailableError as exc:
-                diagnostics["sources_unavailable"].append(
-                    f"secondary_topic_discovery: {exc.error_type}: {exc}"
-                )
-                diagnostics["operations"].append({
-                    "source": "secondary_topic_discovery",
-                    "tool": exc.tool or "secondary discovery",
-                    "status": "failed",
-                    "error_type": exc.error_type,
-                    "message": str(exc),
-                    "fallback_behavior": "Keep only validated competitor-derived ideas.",
-                })
-        else:
-            diagnostics["secondary_fallback_attempted"] = False
-        diagnostics["pool_unique_total"] = len(candidates)
-        diagnostics["stage_counts"].insert(0, {
-            "stage": "configured_competitor_outliers",
-            "raw_total": generation_diagnostics["videos_inspected"],
-            "pool_unique_total": len(candidates),
-        })
-        return candidates[: request.limit], diagnostics, competitor_report
+        self.competitor_opportunity_generator = competitor_opportunity_generator
 
     def discover(self, request: TopicDiscoveryRequest | None = None) -> OpportunityReport:
         request = request or TopicDiscoveryRequest()
-        registry_path = getattr(self.provider, "competitor_registry_path", None)
-        registry_path = Path(registry_path) if registry_path is not None else None
         cache_key = hashlib.sha256(
             json.dumps({
                 "request": request.model_dump(exclude={"force_refresh"}),
                 "provider": self.provider.name,
                 "scoring_version": SCORING_VERSION,
                 "validation_version": VALIDATION_VERSION,
-                "competitor_research_version": COMPETITOR_RESEARCH_VERSION,
-                "candidate_pool_target": RITZZ_CANDIDATE_POOL_TARGET,
-                "fallback_stages": RITZZ_DISCOVERY_FALLBACK_STAGES,
-                "ritzz_fit_pass_threshold": RITZZ_FIT_PASS_THRESHOLD,
-                "competitor_video_limit": RITZZ_COMPETITOR_VIDEO_LIMIT,
-                "competitor_lookback_days": RITZZ_COMPETITOR_LOOKBACK_DAYS,
-                "outlier_min_score": RITZZ_OUTLIER_MIN_SCORE,
-                "learning_inventory": _file_cache_signature(self.learning_inventory_path),
-                "competitor_registry": _file_cache_signature(registry_path),
             }, sort_keys=True).encode("utf-8")
         ).hexdigest()
         report_path = self.cache_dir / f"{cache_key}.json"
@@ -559,324 +107,105 @@ class TopicIntelligenceEngine:
             report = OpportunityReport.model_validate_json(report_path.read_text(encoding="utf-8"))
             report.cached = True
             return report
-        provider_request = request.model_copy(
-            update={
-                "limit": min(max(RITZZ_CANDIDATE_POOL_TARGET, 15), 30)
-                if request.pipeline_topic_gate
-                else max(request.limit, 8)
-            }
-        )
-        warnings: list[str] = []
-        diagnostics: dict = {}
-        diagnostics["request"] = request.model_dump(mode="json")
+        provider_request = request.model_copy(update={"limit": max(request.limit, 8)})
+        discovery_diagnostics: dict[str, Any] = {}
         competitor_report: MarketIntelligenceReport | None = None
-        pipeline_discovery = getattr(self.provider, "discover_pipeline_candidates", None)
-        primary_competitor_research = getattr(
-            self.provider,
-            "discover_competitor_research",
-            None,
-        )
-        if request.pipeline_topic_gate and callable(primary_competitor_research):
-            candidates, diagnostics, competitor_report = self._discover_from_competitors(
-                provider_request,
-                cast(
-                    Callable[..., MarketIntelligenceReport],
-                    primary_competitor_research,
-                ),
-                cast(PipelineDiscovery | None, pipeline_discovery),
-            )
+        if self.competitor_opportunity_generator is not None:
+            if isinstance(self.provider, PipelineCandidateProvider):
+                candidates, discovery_diagnostics, competitor_report = (
+                    self.provider.discover_pipeline_candidates(
+                    provider_request,
+                    include_competitor_research=True,
+                    )
+                )
+            else:
+                candidates = self.provider.discover(provider_request)
         else:
-            try:
-                if request.pipeline_topic_gate and callable(pipeline_discovery):
-                    candidates, diagnostics, competitor_report = cast(
-                        PipelineDiscovery,
-                        pipeline_discovery,
-                    )(provider_request)
-                else:
-                    candidates = self.provider.discover(provider_request)
-                    diagnostics = {
-                        "pool_target": provider_request.limit,
-                        "sources_attempted": ["provider.discover"],
-                        "sources_unavailable": [],
-                        "source_counts": {
-                            "provider.discover": {
-                                "raw": len(candidates),
-                                "unique": len(candidates),
-                            }
-                        },
-                        "stage_counts": [],
-                    }
-            except ProviderUnavailableError as exc:
-                candidates = []
-                diagnostics = {
-                    "pool_target": provider_request.limit,
-                    "sources_attempted": ["provider.discover_pipeline_candidates"],
-                    "sources_unavailable": [str(exc)],
-                    "source_counts": {},
-                    "stage_counts": [],
-                    "operations": [{
-                        "source": "secondary_discovery",
-                        "tool": exc.tool or "provider.discover_pipeline_candidates",
-                        "status": "failed",
-                        "error_type": exc.error_type,
-                        "message": str(exc),
-                        "fallback_behavior": "No topic metrics are fabricated.",
-                    }],
-                }
-        warnings.extend(
-            f"Discovery source unavailable: {source}"
-            for source in diagnostics.get("sources_unavailable", [])
-        )
-        raw_count = len(candidates)
-        normalized_candidates: list[OpportunityCandidate] = []
-        seen_topics: set[str] = set()
-        duplicate_exclusions: list[dict[str, str]] = []
-        for candidate in candidates:
-            normalized = normalize_topic(candidate.topic)
-            if not normalized:
-                duplicate_exclusions.append({
-                    "topic": candidate.topic,
-                    "code": "DUPLICATE",
-                    "reason": "Topic was empty after normalization.",
-                })
-                continue
-            if normalized in seen_topics:
-                duplicate_exclusions.append({
-                    "topic": candidate.topic,
-                    "code": "DUPLICATE",
-                    "reason": "Exact normalized duplicate of an earlier candidate.",
-                })
-                continue
-            seen_topics.add(normalized)
-            normalized_candidates.append(candidate)
-        candidates = normalized_candidates
-        diagnostics["after_normalization"] = len(candidates)
-        diagnostics["duplicates_removed"] = duplicate_exclusions
-        specificity_exclusions: list[dict[str, str]] = []
-        for candidate in candidates:
-            specificity_issue = candidate_specificity_issue(candidate)
-            if specificity_issue is None:
-                continue
-            rejection_code, reason = specificity_issue
-            filter_reason = f"{rejection_code}: {reason}"
-            if filter_reason not in candidate.filter_reasons:
-                candidate.filter_reasons.append(filter_reason)
-            specificity_exclusions.append({
-                "topic": candidate.topic,
-                "code": rejection_code,
-                "reason": reason,
-                "sources": ", ".join(candidate.discovery_sources),
-            })
-        diagnostics["candidate_specificity_exclusions"] = specificity_exclusions
-        diagnostics["after_specificity_filter"] = len(candidates) - len(specificity_exclusions)
-        learning_signals, learning_videos = load_m7_learning_signals(
-            self.learning_inventory_path
-        )
-        diagnostics["m7_learning"] = {
-            "status": learning_signals.status,
-            "historical_video_count": learning_signals.historical_video_count,
-            "sample_size": learning_signals.sample_size,
-            "data_quality": learning_signals.data_quality,
-            "inventory_path": str(self.learning_inventory_path),
-        }
-        if learning_signals.status != "AVAILABLE":
-            warnings.extend(learning_signals.warnings)
-        for candidate in candidates:
-            candidate.ritzz_learning_signals = signals_for_topic(
-                candidate.topic,
-                learning_signals,
-                learning_videos,
-            )
+            candidates = self.provider.discover(provider_request)
+        if self.competitor_opportunity_generator is not None:
+            if competitor_report is None and isinstance(
+                self.provider,
+                CompetitorResearchProvider,
+            ):
+                competitor_report = self.provider.discover_competitor_research(
+                    f"{request.trend_topic or request.niche} curiosity explainers",
+                    limit=10,
+                )
+            if competitor_report is None and isinstance(self.provider, OutlierResearchProvider):
+                try:
+                    competitor_report = self.provider.discover_outliers(
+                        f"{request.trend_topic or request.niche} curiosity explainers",
+                        limit=10,
+                    )
+                except ProviderUnavailableError as exc:
+                    discovery_diagnostics.setdefault("sources_unavailable", []).append(
+                        f"competitor-outliers: {exc}"
+                    )
+            if competitor_report is not None:
+                generated, patterns, generator_diagnostics = (
+                    self.competitor_opportunity_generator.generate(
+                        competitor_report,
+                        candidate_limit=8,
+                    )
+                )
+                candidates.extend(generated)
+                discovery_diagnostics["competitor_opportunity_generation"] = (
+                    generator_diagnostics
+                )
+                discovery_diagnostics["competitor_topic_patterns"] = [
+                    pattern.model_dump(mode="json") for pattern in patterns
+                ]
+                if isinstance(self.provider, DemandEnrichmentProvider):
+                    for candidate in generated:
+                        self._enrich_competitor_candidate(
+                            candidate,
+                            self.provider.enrich_topic_demand,
+                            discovery_diagnostics,
+                        )
+        if not candidates:
+            raise ProviderUnavailableError("Topic provider returned no candidates.")
+        warnings = []
         eligible = []
-        inventory_excluded: list[dict[str, str]] = []
+        excluded = 0
         for candidate in candidates:
             overlaps = self.inventory_manager.find_overlap(candidate.topic)
             if overlaps:
-                candidate.inventory_status = "DUPLICATE"
-                inventory_excluded.append({
-                    "topic": candidate.topic,
-                    "code": "DUPLICATE",
-                    "reason": "Overlaps existing RITZZ inventory: "
-                    + ", ".join(item.topic for item in overlaps),
-                })
+                excluded += 1
                 continue
-            candidate.inventory_status = "ELIGIBLE"
             eligible.append(candidate)
-        candidates = eligible
-        diagnostics["raw_candidates"] = raw_count
-        diagnostics["after_inventory_filter"] = len(candidates)
-        diagnostics["inventory_exclusions"] = inventory_excluded
-        if inventory_excluded:
-            warnings.append(
-                f"Excluded {len(inventory_excluded)} candidate(s) overlapping the RITZZ content inventory."
-            )
+        if excluded:
+            warnings.append(f"Excluded {excluded} candidate(s) overlapping the RITZZ content inventory.")
+        candidates = eligible[:max(request.limit, 4)]
+        if len(candidates) < 4:
+            warnings.append(f"Only {len(candidates)} distinct inventory-safe candidate(s) were available; four were requested.")
         apply_niche_filter(candidates)
-        diagnostics["after_niche_filter"] = sum(not item.filter_reasons for item in candidates)
-        diagnostics["niche_filter_exclusions"] = [
-            {"topic": item.topic, "reasons": item.filter_reasons}
-            for item in candidates if item.filter_reasons
-        ]
-        fit_prefilter_exclusions: list[dict[str, str]] = []
-        editorial_candidates = []
-        for candidate in candidates:
-            prefilter = prefilter_reason(
-                candidate,
-                allow_ambiguous_seed=True,
-            )
-            if prefilter is None and not candidate.filter_reasons:
-                editorial_candidates.append(candidate)
-                candidate.ritzz_fit = RitzzFitResult(
-                    fit_status="REVIEW",
-                    reason="Editorial fit assessment pending.",
-                )
-                continue
-            if prefilter is None:
-                fit_status = "REVIEW"
-                reason = "Niche/format filter must be resolved before editorial assessment."
-            else:
-                fit_status, reason = prefilter
-            candidate.ritzz_fit = RitzzFitResult(
-                fit_status=fit_status,
-                reason=reason,
-            )
-            fit_prefilter_exclusions.append({
-                "topic": candidate.topic,
-                "code": "NOT_RITZZ_FIT",
-                "reason": reason,
-            })
-        diagnostics["after_ritzz_fit_prefilter"] = len(editorial_candidates)
-        diagnostics["ritzz_fit_exclusions"] = fit_prefilter_exclusions
-        competitor_report_payload: dict | None = None
-        discover_competitor_research = (
-            getattr(self.provider, "discover_competitor_research", None)
-            if competitor_report is None else None
-        )
-        discover_outliers = (
-            getattr(self.provider, "discover_outliers", None)
-            if competitor_report is None else None
-        )
-        if callable(discover_competitor_research):
+        if competitor_report is None and isinstance(self.provider, OutlierResearchProvider):
             try:
-                result = discover_competitor_research(
+                competitor_report = self.provider.discover_outliers(
                     f"{request.trend_topic or request.niche} curiosity explainers",
                     limit=10,
                 )
-                if isinstance(result, MarketIntelligenceReport):
-                    competitor_report = result
-                elif competitor_report is None:
-                    dump_method = getattr(result, "model_dump", None)
-                    if callable(dump_method):
-                        payload = dump_method()
-                        if isinstance(payload, dict):
-                            competitor_report_payload = payload
             except ProviderUnavailableError as exc:
-                competitor_report = build_market_intelligence_report(
-                    f"{request.trend_topic or request.niche} curiosity explainers",
-                    [],
-                    source=self.provider.name,
-                    performance_tool_available=False,
-                    warnings=[f"Competitor evidence was unavailable: {exc}"],
-                )
-        elif callable(discover_outliers):
-            try:
-                result = discover_outliers(
-                    f"{request.trend_topic or request.niche} curiosity explainers",
-                    limit=10,
-                )
-                if isinstance(result, MarketIntelligenceReport):
-                    competitor_report = result
-                else:
-                    dump_method = getattr(result, "model_dump", None)
-                    if callable(dump_method):
-                        payload = dump_method()
-                        if isinstance(payload, dict):
-                            competitor_report_payload = payload
-            except ProviderUnavailableError as exc:
-                competitor_report = build_market_intelligence_report(
-                    f"{request.trend_topic or request.niche} curiosity explainers",
-                    [],
-                    source=self.provider.name,
-                    performance_tool_available=False,
-                    warnings=[f"Competitor evidence was unavailable: {exc}"],
-                )
-        else:
-            competitor_report = build_market_intelligence_report(
-                f"{request.trend_topic or request.niche} curiosity explainers",
-                [],
-                source=self.provider.name,
-                performance_tool_available=False,
-                warnings=[f"Provider '{self.provider.name}' does not support competitor-video research."],
-            )
-        if isinstance(competitor_report, MarketIntelligenceReport):
-            for candidate in candidates:
-                candidate.competitor_topic_performance_available = (
-                    competitor_report.competitor_topic_performance_available
-                )
-                matched_evidence = relevant_competitor_evidence(
-                    candidate.topic,
-                    competitor_report,
-                )
-                existing_evidence_ids = {
-                    str(item.video.get("id"))
-                    for item in candidate.competitor_evidence
-                    if item.video.get("id") is not None
-                }
-                candidate.competitor_evidence.extend(
-                    item for item in matched_evidence
-                    if str(item.video.get("id")) not in existing_evidence_ids
-                )
-                matched_patterns = relevant_competitor_patterns(
-                    candidate.topic,
-                    competitor_report,
-                )
-                existing_patterns = {
-                    (item.observed_pattern or item.topic).casefold()
-                    for item in candidate.competitor_topic_patterns
-                }
-                candidate.competitor_topic_patterns.extend(
-                    item for item in matched_patterns
-                    if (item.observed_pattern or item.topic).casefold() not in existing_patterns
-                )
-                candidate.current_vidiq_demand_signals = {
-                    key: candidate.evidence[key]
-                    for key in (
-                        "search_volume",
-                        "search_volume_score",
-                        "growth",
-                        "growth_percent",
-                        "growth_score",
-                        "trend_growth",
-                        "trend_score",
-                    )
-                    if key in candidate.evidence
-                }
-                candidate.current_vidiq_demand_available = any(
-                    metric.available and metric.value is not None
-                    for metric in candidate.current_vidiq_demand_signals.values()
-                )
-                candidate.competition_saturation_signal = next(
-                    (
-                        candidate.evidence[key]
-                        for key in (
-                            "competition",
-                            "competition_score",
-                            "competition_opportunity_score",
-                            "saturation",
-                            "saturation_score",
-                        )
-                        if key in candidate.evidence
-                    ),
-                    None,
-                )
-                candidate.competition_saturation_assessment = (
-                    _competition_saturation_assessment(candidate)
-                )
+                warnings.append(f"Competitor evidence was unavailable: {exc}")
         editorial_scored = False
         try:
-            if editorial_candidates:
-                assessments = self.editorial_evaluator.assess(editorial_candidates)
-                apply_editorial_assessments(editorial_candidates, assessments)
-                editorial_scored = True
+            assessments = self.editorial_evaluator.assess(candidates)
+            apply_editorial_assessments(candidates, assessments)
+            assessment_by_id = {
+                assessment.candidate_id: assessment
+                for assessment in assessments
+            }
+            for candidate in candidates:
+                assessment = assessment_by_id.get(candidate.candidate_id)
+                if assessment is None or not candidate.discovery_sources:
+                    continue
+                candidate.ritzz_fit = build_ritzz_fit_result(
+                    candidate,
+                    story_type=assessment.story_type or "OTHER",
+                    editorial_status=assessment.status,
+                    editorial_scores=candidate.editorial_scores,
+                )
+            editorial_scored = True
         except (OpenAIError, ValueError, RuntimeError):
             # Preserve actual provider data and keep discovery usable if editorial
             # scoring is temporarily unavailable. Never replace it with guessed scores.
@@ -884,135 +213,16 @@ class TopicIntelligenceEngine:
                 "OpenAI editorial scoring was unavailable; candidates retain provider "
                 "signals only and the user should assess fit manually."
             )
-        final_specificity_exclusions: list[dict[str, str]] = []
-        for candidate in editorial_candidates:
-            specificity_issue = candidate_specificity_issue(
-                candidate,
-                final_title=True,
-            )
-            if specificity_issue is not None:
-                rejection_code, reason = specificity_issue
-                filter_reason = f"{rejection_code}: {reason}"
-                if filter_reason not in candidate.filter_reasons:
-                    candidate.filter_reasons.append(filter_reason)
-                final_specificity_exclusions.append({
-                    "topic": candidate.topic,
-                    "title": candidate.proposed_title or candidate.topic,
-                    "code": rejection_code,
-                    "reason": reason,
-                })
-            story_type = candidate.ritzz_fit.story_type if candidate.ritzz_fit else "OTHER"
-            fit = build_ritzz_fit_result(
-                candidate,
-                story_type=story_type,
-                editorial_status=candidate.editorial_status,
-                editorial_scores=candidate.editorial_scores,
-                pass_threshold=RITZZ_FIT_PASS_THRESHOLD,
-            )
-            candidate.ritzz_fit = fit
-        diagnostics["final_title_specificity_exclusions"] = (
-            final_specificity_exclusions
-        )
-        if isinstance(competitor_report, MarketIntelligenceReport):
-            for candidate in candidates:
-                if candidate.ritzz_differentiation_angle is None:
-                    candidate.ritzz_differentiation_angle = candidate.angle
         ranked_all = rank_candidates(candidates)
         all_recommended_ids = validate_candidates(ranked_all)
-        diagnostics["after_editorial_filter"] = sum(
-            item.editorial_status == "PASS"
-            and not item.filter_reasons
-            for item in ranked_all
-        )
-        diagnostics["after_visual_fit"] = sum(
-            item.editorial_scores.get("format_fit", -1) >= 55
-            for item in ranked_all
-        )
-        diagnostics["after_near_duplicate_filter"] = sum(
-            item.editorial_status == "PASS"
-            and item.ritzz_fit is not None
-            and item.ritzz_fit.fit_status == "PASS"
-            and not item.filter_reasons
-            and not any("near-duplicate" in reason.casefold() for reason in item.validation_reasons)
-            for item in ranked_all
-        )
-        diagnostics["after_final_validation"] = sum(
-            item.editorial_status == "PASS"
-            and item.ritzz_fit is not None
-            and item.ritzz_fit.fit_status == "PASS"
-            and not item.filter_reasons
-            and item.validation_status == "RECOMMENDED"
-            for item in ranked_all
-        )
-        diagnostics["candidate_exclusions"] = [
-            {
-                "topic": item.topic,
-                "sources": item.discovery_sources,
-                "rejection_codes": _candidate_rejection_codes(item),
-                "editorial_status": item.editorial_status,
-                "validation_status": item.validation_status,
-                "ritzz_fit": item.ritzz_fit.model_dump(mode="json") if item.ritzz_fit else None,
-                "filter_reasons": item.filter_reasons,
-                "validation_reasons": item.validation_reasons,
-            }
-            for item in ranked_all
-            if (
-                item.editorial_status != "PASS"
-                or item.ritzz_fit is None
-                or item.ritzz_fit.fit_status != "PASS"
-                or item.filter_reasons
-                or any("near-duplicate" in reason.casefold() for reason in item.validation_reasons)
-                or item.validation_status != "RECOMMENDED"
-            )
-        ]
-        diagnostics["missing_signals"] = [
-            {
-                "topic": item.topic,
-                "signals": [
-                    name
-                    for name in (
-                        "search_volume",
-                        "search_volume_score",
-                        "growth",
-                        "growth_score",
-                        "competition",
-                    )
-                    if (
-                        name not in item.evidence
-                        or not item.evidence[name].available
-                        or item.evidence[name].value is None
-                    )
-                ],
-            }
-            for item in ranked_all
-        ]
         if request.pipeline_topic_gate:
-            eligible_ranked = [
+            ranked = [
                 candidate
                 for candidate in ranked_all
                 if candidate.editorial_status == "PASS"
-                and candidate.ritzz_fit is not None
-                and candidate.ritzz_fit.fit_status == "PASS"
                 and not candidate.filter_reasons
                 and not any("near-duplicate" in reason.casefold() for reason in candidate.validation_reasons)
-                and candidate.validation_status == "RECOMMENDED"
-            ]
-            eligible_ranked.sort(
-                key=_candidate_signal_weight,
-                reverse=True,
-            )
-            diagnostics["format_competitor_candidates_eligible"] = sum(
-                _candidate_signal_weight(candidate) >= 1.0
-                for candidate in eligible_ranked
-            )
-            ranked = _select_diverse_candidates(eligible_ranked, 4)
-            diagnostics["format_competitor_candidate_selected"] = any(
-                _candidate_signal_weight(candidate) >= 1.0
-                for candidate in ranked
-            )
-            diagnostics["final_candidate_families"] = [
-                _candidate_family(candidate) for candidate in ranked
-            ]
+            ][:4]
             shortlist_candidate_ids = [candidate.candidate_id for candidate in ranked]
             excluded_count = len(ranked_all) - len(ranked)
             if excluded_count:
@@ -1025,12 +235,6 @@ class TopicIntelligenceEngine:
                     if candidate.candidate_id in selected_ids:
                         continue
                     reasons = candidate.filter_reasons or candidate.validation_reasons
-                    if candidate.ritzz_fit is None or candidate.ritzz_fit.fit_status != "PASS":
-                        reasons = [
-                            candidate.ritzz_fit.reason
-                            if candidate.ritzz_fit
-                            else "RITZZ fit did not pass"
-                        ]
                     reason_text = "; ".join(reasons[:2]) or "editorial status was not PASS"
                     excluded_details.append(
                         f"{candidate.topic[:80]} [editorial={candidate.editorial_status or 'unavailable'}; {reason_text}]"
@@ -1040,13 +244,7 @@ class TopicIntelligenceEngine:
                 if excluded_details:
                     warnings.append("Topic gate exclusions: " + " | ".join(excluded_details))
         else:
-            ranked = [
-                candidate for candidate in ranked_all
-                if not any(
-                    reason.startswith("TOO_ABSTRACT:")
-                    for reason in candidate.filter_reasons
-                )
-            ][:4]
+            ranked = ranked_all[:4]
             shortlist_candidate_ids = [
                 candidate_id
                 for candidate_id in all_recommended_ids
@@ -1071,10 +269,6 @@ class TopicIntelligenceEngine:
             warnings.append("No candidate passed the recommendation gate; review the visible candidates or revise discovery criteria.")
         elif len(shortlist_candidate_ids) < 3:
             warnings.append(f"Only {len(shortlist_candidate_ids)} candidate(s) passed the recommendation gate.")
-        diagnostics["final_count"] = len(ranked)
-        diagnostics["sources_attempted"] = diagnostics.get("sources_attempted", [])
-        diagnostics["sources_unavailable"] = diagnostics.get("sources_unavailable", [])
-        diagnostics["source_counts"] = diagnostics.get("source_counts", {})
         report = OpportunityReport(
             report_id=cache_key,
             request=request,
@@ -1089,13 +283,54 @@ class TopicIntelligenceEngine:
             else None,
             scoring_version=SCORING_VERSION,
             shortlist_candidate_ids=shortlist_candidate_ids,
-            competitor_report=(
-                competitor_report.model_dump()
-                if competitor_report
-                else competitor_report_payload
-            ),
-            discovery_diagnostics=diagnostics,
+            competitor_report=competitor_report.model_dump() if competitor_report else None,
+            discovery_diagnostics=discovery_diagnostics,
         )
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         report_path.write_text(report.model_dump_json(indent=2), encoding="utf-8")
         return report
+
+    @staticmethod
+    def _enrich_competitor_candidate(
+        candidate: OpportunityCandidate,
+        enrich,
+        diagnostics: dict[str, Any],
+    ) -> None:
+        try:
+            enrichment = enrich(candidate.topic)
+        except ProviderUnavailableError as exc:
+            operation = {
+                "source": "keyword_research_enrichment",
+                "tool": exc.tool or "vidIQ MCP",
+                "status": "failed",
+                "error_type": "PROVIDER_ERROR",
+                "message": str(exc),
+            }
+            diagnostics.setdefault("operations", []).append(operation)
+            diagnostics.setdefault("sources_unavailable", []).append(
+                f"keyword_research_enrichment: PROVIDER_ERROR: {exc}"
+            )
+            candidate.competition_saturation_assessment = (
+                "Current vidIQ competition signal unavailable."
+            )
+            return
+        candidate.current_vidiq_demand_available = enrichment["available"]
+        candidate.current_vidiq_demand_signals = {
+            key: EvidenceMetric.model_validate(value)
+            for key, value in enrichment["metrics"].items()
+        }
+        candidate.vidiq_status = (
+            "SCORED" if candidate.current_vidiq_demand_available else "UNAVAILABLE"
+        )
+        if not candidate.current_vidiq_demand_available:
+            candidate.competition_saturation_assessment = (
+                "Current vidIQ competition signal unavailable."
+            )
+        operation = enrichment["operation"]
+        diagnostics.setdefault("operations", []).append(operation)
+        if operation.get("status") in {"failed", "unavailable"}:
+            diagnostics.setdefault("sources_unavailable", []).append(
+                "keyword_research_enrichment: "
+                f"{operation.get('error_type', 'PROVIDER_ERROR')}: "
+                f"{operation.get('message', '')}"
+            )

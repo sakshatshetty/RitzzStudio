@@ -41,13 +41,22 @@ class EditorialContext:
     previous: str
     current: str
     next: str
+    visual_description: str = ""
+    props: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class EditorialDecision:
+    text: str = ""
+    callout_not_warranted: bool = False
+    reason: str | None = None
 
 
 class EditorialTextPlanner(Protocol):
     def plan(
         self,
         contexts: Sequence[EditorialContext],
-    ) -> dict[int, str]:
+    ) -> dict[int, EditorialDecision]:
         ...
 
 
@@ -134,29 +143,38 @@ NOT HISTORICAL
 BELIEVABLE ISN T PROOF
 THE PIRATE SYMBOL
 
-Use exactly one meaningful word.
+Review every grouped scene. Choose a callout only when it emphasizes an
+important idea, object, action, discovery, contrast, or reveal in that scene.
+Target approximately one meaningful callout every 3–4 scenes across the video;
+this is a pacing target, not a timer. Do not force weak or repetitive text.
+For every scene, return either one callout or callout_not_warranted=true with
+a concrete reason. Keep callouts at least 3 scenes apart when context supports
+it. Longer gaps are acceptable when no scene warrants a word.
 
 Return JSON only:
 
 {
-  "callouts": [
+  "decisions": [
     {
-      "slot_id": 1,
-      "text": "MYSTERY"
+      "scene_index": 1,
+      "text": "",
+      "callout_not_warranted": true,
+      "reason": "The scene is transitional and has no distinct editorial idea."
     }
   ]
 }
 """.strip()
 
     USER_PROMPT = """
-Choose exactly ONE WORD for each supplied editorial position.
+Review every audio-timed scene and return exactly one decision for each.
 
 Look at:
 - previous beat
 - current beat
 - next beat
 
-Select the strongest memorable concept.
+Choose a callout only when it is an important editorial emphasis for the
+current visual segment. Otherwise mark the scene not warranted and explain why.
 
 The result must be:
 - exactly one word
@@ -168,6 +186,7 @@ The result must be:
 - not a subtitle
 - not narration transcription
 - not a multi-word phrase
+- or explicitly mark the scene not warranted, with a concrete reason
 
 Contexts:
 
@@ -207,7 +226,7 @@ Contexts:
     def plan(
         self,
         contexts: Sequence[EditorialContext],
-    ) -> dict[int, str]:
+    ) -> dict[int, EditorialDecision]:
         if not contexts:
             return {}
 
@@ -218,6 +237,8 @@ Contexts:
                 "previous": context.previous,
                 "current": context.current,
                 "next": context.next,
+                "visual_description": context.visual_description,
+                "props": context.props,
             }
             for context in contexts
         ]
@@ -261,56 +282,69 @@ Contexts:
         except json.JSONDecodeError:
             return {}
 
-        raw_callouts = payload.get(
-            "callouts",
+        raw_decisions = payload.get(
+            "decisions",
             [],
         )
 
         if not isinstance(
-            raw_callouts,
+            raw_decisions,
             list,
         ):
             return {}
 
-        result: dict[int, str] = {}
+        result: dict[int, EditorialDecision] = {}
 
-        for item in raw_callouts:
+        for item in raw_decisions:
             if not isinstance(
                 item,
                 dict,
             ):
                 continue
 
-            slot_id = item.get(
-                "slot_id"
+            scene_index = item.get(
+                "scene_index"
             )
 
             text = item.get(
                 "text"
             )
 
-            if not isinstance(
-                slot_id,
-                int,
-            ):
+            if not isinstance(scene_index, int) or isinstance(scene_index, bool):
                 continue
 
-            if not isinstance(
-                text,
-                str,
-            ):
+            if not isinstance(text, str):
                 continue
 
-            cleaned = self._clean_text(
-                text
-            )
+            not_warranted = item.get("callout_not_warranted")
+            reason = item.get("reason")
+            if not isinstance(not_warranted, bool):
+                continue
+            if reason is not None and not isinstance(reason, str):
+                continue
 
-            if self._is_valid_callout(
-                cleaned
+            cleaned = text.strip()
+            if cleaned:
+                result[scene_index] = EditorialDecision(
+                    text=cleaned,
+                    callout_not_warranted=not_warranted,
+                    reason=(
+                        reason.strip()
+                        if not_warranted and isinstance(reason, str)
+                        else None
+                    ),
+                )
+                continue
+
+            if (
+                not_warranted
+                and isinstance(reason, str)
+                and reason.strip()
             ):
-                result[
-                    slot_id
-                ] = cleaned
+                result[scene_index] = EditorialDecision(
+                    callout_not_warranted=True,
+                    reason=reason.strip(),
+                )
 
         return result
 
@@ -339,7 +373,7 @@ Contexts:
         cls,
         text: str,
     ) -> bool:
-        if not text:
+        if not text or len(text) > 20:
             return False
 
         cleaned = cls._clean_text(
@@ -348,7 +382,12 @@ Contexts:
 
         words = cleaned.split()
 
-        if len(words) != 1:
+        if (
+            len(words) != 1
+            or cleaned != text
+            or not re.fullmatch(r"[A-Z0-9]+", cleaned)
+            or not any(character.isalpha() for character in cleaned)
+        ):
             return False
 
         if len(cleaned) > 20:

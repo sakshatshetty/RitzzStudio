@@ -9,8 +9,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from modules.topic_intelligence.inventory import normalize_topic
 from modules.topic_intelligence.models import TopicSelection
+from modules.topic_intelligence.inventory import normalize_topic
 
 
 def main() -> int:
@@ -32,6 +32,9 @@ def main() -> int:
         raise ValueError(f"Topic selection must be between 1 and {len(candidates)}.")
 
     candidate = candidates[selection_number - 1]
+    demand_signals = candidate.get("current_vidiq_demand_signals")
+    if not isinstance(demand_signals, dict):
+        demand_signals = candidate.get("evidence", {})
     selection = TopicSelection(
         report_id=payload.get("report_id"),
         candidate_id=candidate["candidate_id"],
@@ -42,24 +45,16 @@ def main() -> int:
         normalized_topic=normalize_topic(candidate["topic"]),
         angle=candidate.get("angle"),
         source_evidence={
-            "provider": candidate.get("provider"),
             "discovery_sources": candidate.get("discovery_sources", []),
             "raw_evidence": candidate.get("raw_evidence", {}),
+            "provider": candidate.get("provider"),
             "vidiq_status": candidate.get("vidiq_status", "UNAVAILABLE"),
         },
-        trend_evidence=(
-            candidate.get("current_vidiq_demand_signals")
-            or candidate.get("evidence", {})
-        ),
-        competition_evidence=candidate.get("competition_saturation_signal"),
+        trend_evidence=demand_signals,
         competitor_evidence=candidate.get("competitor_evidence", []),
-        ritzz_fit=candidate.get("ritzz_fit", {}),
-        ritzz_learning_signals=candidate.get("ritzz_learning_signals", {}),
-        discovered_at=candidate.get("discovered_at"),
-        approval_metadata={
-            "method": "trusted GitHub collaborator numbered issue reply",
-            "selection_number": selection_number,
-        },
+        ritzz_fit=candidate.get("ritzz_fit"),
+        ritzz_learning_signals=candidate.get("ritzz_learning_signals"),
+        approval_metadata={"selection_number": selection_number},
     )
     output_directory.mkdir(parents=True, exist_ok=True)
     selection_path = output_directory / "topic_selection.json"

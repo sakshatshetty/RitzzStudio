@@ -1,30 +1,19 @@
 import math
 import shutil
 import subprocess
-import wave
 from pathlib import Path
 
 import pytest
 
-from modules.video.models import (
-    VideoAssemblyPlan,
-    VideoClip,
-)
-
+from modules.video.models import VideoAssemblyPlan, VideoClip
 from modules.video.motion_models import (
     MotionInstruction,
     VideoMotionPlan,
 )
-
 from modules.video.render_engine import (
     FFmpegVideoRenderer,
 )
-
-from modules.video.render_models import (
-    VideoRenderRequest,
-    VideoRenderResult,
-)
-
+from modules.video.render_models import VideoRenderRequest
 
 FFMPEG_AVAILABLE = (
     shutil.which("ffmpeg") is not None
@@ -99,36 +88,35 @@ def create_test_images(
 def create_test_audio(
     tmp_path: Path,
     duration_seconds: float = 3.0,
+    channels: int = 1,
 ) -> Path:
-    """
-    Create a valid silent WAV file for rendering tests.
-    """
+    """Create a valid mono sine-wave WAV file for rendering tests."""
 
     output_file = (
         tmp_path
         / "narration.wav"
     )
-
-    sample_rate = 48_000
-
-    frame_count = int(
-        sample_rate
-        * duration_seconds
+    ffmpeg = shutil.which("ffmpeg")
+    assert ffmpeg is not None
+    completed = subprocess.run(
+        [
+            ffmpeg,
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"sine=frequency=440:sample_rate=48000:duration={duration_seconds}",
+            "-ac",
+            str(channels),
+            "-c:a",
+            "pcm_s16le",
+            str(output_file),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
     )
-
-    with wave.open(
-        str(output_file),
-        "wb",
-    ) as audio:
-        audio.setnchannels(1)
-        audio.setsampwidth(2)
-        audio.setframerate(
-            sample_rate
-        )
-        audio.writeframes(
-            b"\x00\x00"
-            * frame_count
-        )
+    assert completed.returncode == 0, completed.stderr
 
     return output_file
 
@@ -255,6 +243,52 @@ def test_create_request(
     assert request.audio_file == str(
         tmp_path / "narration.wav"
     )
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [("10M", 10_000_000), ("8M", 8_000_000), ("900k", 900_000), ("10000000", 10_000_000)],
+)
+def test_video_bitrate_is_configurable(configured, expected, monkeypatch):
+    monkeypatch.setenv("RITZZ_VIDEO_BITRATE", configured)
+
+    renderer = FFmpegVideoRenderer()
+
+    assert renderer.video_bitrate == configured
+    assert renderer.video_bitrate_bps == expected
+
+
+def test_video_bitrate_configuration_rejects_invalid_values(monkeypatch):
+    monkeypatch.setenv("RITZZ_VIDEO_BITRATE", "fast")
+
+    with pytest.raises(ValueError, match="RITZZ_VIDEO_BITRATE"):
+        FFmpegVideoRenderer()
+
+
+def test_audio_loudness_settings_are_configurable(monkeypatch):
+    monkeypatch.setenv("RITZZ_AUDIO_TARGET_LUFS", "-16.5")
+    monkeypatch.setenv("RITZZ_AUDIO_TRUE_PEAK_CEILING_DBTP", "-1.5")
+
+    renderer = FFmpegVideoRenderer()
+
+    assert renderer.audio_target_lufs == -16.5
+    assert renderer.audio_true_peak_ceiling_dbtp == -1.5
+    assert renderer.build_audio_filter() == "loudnorm=I=-16.5:TP=-1.5:LRA=11"
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("RITZZ_AUDIO_TARGET_LUFS", "loud"),
+        ("RITZZ_AUDIO_TARGET_LUFS", "-80"),
+        ("RITZZ_AUDIO_TRUE_PEAK_CEILING_DBTP", "2"),
+    ],
+)
+def test_invalid_audio_loudness_settings_are_rejected(monkeypatch, name, value):
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ValueError, match=name):
+        FFmpegVideoRenderer()
 
 
 def test_filter_script_contains_concat() -> None:
@@ -443,8 +477,10 @@ def test_plan_mismatch_fails() -> None:
         )
 
 
+@pytest.mark.parametrize("audio_channels", [1, 2])
 def test_render_three_scene_video(
     tmp_path: Path,
+    audio_channels: int,
 ) -> None:
     images = create_test_images(
         tmp_path
@@ -453,7 +489,9 @@ def test_render_three_scene_video(
     audio = create_test_audio(
         tmp_path,
         duration_seconds=3.0,
+        channels=audio_channels,
     )
+    source_audio_bytes = audio.read_bytes()
 
     assembly_plan = (
         create_assembly_plan(
@@ -496,6 +534,11 @@ def test_render_three_scene_video(
 
     assert probe["has_video"]
     assert probe["has_audio"]
+    assert probe["audio_channels"] == audio_channels
+    assert probe["video_codec_name"] == "h264"
+    assert audio.read_bytes() == source_audio_bytes
+    assert 8_000_000 <= probe["video_bit_rate_bps"] <= 12_000_000
+    assert probe["audio_duration_seconds"] == pytest.approx(3.0, abs=0.25)
 
     assert probe["width"] == 320
     assert probe["height"] == 180
@@ -512,6 +555,9 @@ def test_render_three_scene_video(
         3.0,
         abs=0.25,
     )
+    loudness = renderer.measure_audio_loudness(rendered)
+    assert abs(loudness.integrated_lufs - renderer.audio_target_lufs) <= 1.5
+    assert loudness.true_peak_dbtp <= renderer.audio_true_peak_ceiling_dbtp + 0.1
 
 
 def test_default_production_render_is_exactly_1080p_30fps_16_9(
@@ -563,6 +609,8 @@ def test_default_production_render_is_exactly_1080p_30fps_16_9(
     assert probe["height"] == 1080
     assert probe["width"] * 9 == probe["height"] * 16
     assert probe["fps"] == 30.0
+    assert probe["video_codec_name"] == "h264"
+    assert 8_000_000 <= probe["video_bit_rate_bps"] <= 12_000_000
 
 
 def test_missing_image_fails(

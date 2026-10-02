@@ -42,6 +42,7 @@ def test_generates_and_saves_png(tmp_path: Path) -> None:
 
     assert result.status == "completed"
     assert result.provider == "replicate"
+    assert result.file_path is not None
     output = Path(result.file_path)
     assert output.name == "scene_004.png"
     assert output.read_bytes() == PNG_DATA
@@ -85,4 +86,5 @@ def test_rejects_non_png_output(tmp_path: Path) -> None:
         result = provider.generate(create_request(tmp_path))
 
     assert result.status == "failed"
+    assert result.error_message is not None
     assert "not a valid PNG" in result.error_message

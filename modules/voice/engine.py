@@ -155,12 +155,18 @@ class VoiceEngine:
         from modules.qa.models import QAStageResult
 
         alignment = result.alignment
+        alignment_starts = (
+            alignment.character_start_times_seconds if alignment is not None else []
+        )
+        alignment_ends = (
+            alignment.character_end_times_seconds if alignment is not None else []
+        )
         alignment_complete = bool(
             alignment
             and alignment.characters
             and len(alignment.characters)
-            == len(alignment.character_start_times_seconds)
-            == len(alignment.character_end_times_seconds)
+            == len(alignment_starts)
+            == len(alignment_ends)
         )
         timestamps_valid = bool(
             alignment_complete
@@ -168,16 +174,13 @@ class VoiceEngine:
                 math.isfinite(start)
                 and math.isfinite(end)
                 and 0 <= start <= end
-                for start, end in zip(
-                    alignment.character_start_times_seconds,
-                    alignment.character_end_times_seconds,
-                )
+                for start, end in zip(alignment_starts, alignment_ends)
             )
             and all(
                 current >= previous
                 for previous, current in zip(
-                    alignment.character_start_times_seconds,
-                    alignment.character_start_times_seconds[1:],
+                    alignment_starts,
+                    alignment_starts[1:],
                 )
             )
         )

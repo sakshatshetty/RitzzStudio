@@ -58,6 +58,7 @@ with the selected number.
 - Aim for approximately three seconds per image where the narrative supports it.
 - Editorial callouts are embedded in images, not subtitles.
 - Editorial callouts are exactly one uppercase word and maximum 20 characters.
+- Plan callouts after audio-timed scene grouping; target one contextual emphasis every 3–4 scenes without forcing weak callouts. Every no-callout scene must include `callout_not_warranted: true` and a reason. QA reports valid, intentionally skipped, unexpectedly missing, and malformed decisions plus spacing metrics. Prompts prohibit generating callout lettering; FFmpeg composites the approved word.
 - Video target duration and minimum allowed duration are configurable. During topic approval, the user selects both values; the current default target remains approximately eight minutes.
 - The eight-minute value is the current backward-compatible baseline inherited from the existing Outline and Script engines, not a permanent product restriction. Full user-selected duration propagation is completed in M3.
 - Publishing cadence is configurable; the current target is Tuesday and Saturday.
@@ -78,11 +79,6 @@ with the selected number.
 | M8 | Approval-aware pipeline orchestration and retryability | Active; focuses on stage orchestration, retry/resume coverage, approval-aware automation, and monitoring |
 | M9 | First repeatable production / Video #2 readiness | Planned next validation milestone; validates the existing production flow with a new second project and the first real M7 learning signal |
 | M10 | M7 learning feedback into M0 topic selection | Deferred; connects inventory/analytics insights back into the topic and opportunity decision layer |
-
-M1 now supports an optional, read-only view of existing M7 analytics snapshots
-for candidate context. This does not mark M10 complete: it does not adapt
-scoring weights, train a prediction model, or let historical performance
-bypass topic/editorial gates.
 
 A milestone is complete only when its acceptance criteria, focused tests, artifacts, and human approval requirements are satisfied.
 
@@ -178,9 +174,7 @@ Project: `20260820_001_why_do_pirates_wear_eye_patches`
 - Candidate title/angle fields are supported.
 - Topic selection persists target duration, minimum duration, constraints, and lock time.
 - Manual duplicate topics are blocked before project creation.
-- Live discovery uses enabled competitor channels first, evaluates provider outlier scores or supported channel baselines, and generates original ideas from repeated cross-channel patterns.
-- Optional current vidIQ demand/competition enrichment runs on competitor-derived ideas; provider failures are reported without erasing those ideas.
-- Live competitor validation remains pending because the editable competitor registry intentionally has no configured channels.
+- Live discovery now attaches competitor/outlier evidence and applies niche-fit flags before recommendation gating.
 - Remaining M1 work: human selects one of the four reviewed candidates and confirms duration/constraints in a real project artifact.
 
 ### Existing implementation to reuse

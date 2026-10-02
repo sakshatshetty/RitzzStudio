@@ -8,10 +8,6 @@ from modules.storyboard.models import (
     StoryboardScene,
 )
 
-from modules.video.engine import (
-    VideoAssemblyEngine,
-)
-
 from modules.video.models import (
     VideoAssemblyPlan,
     VideoClip,

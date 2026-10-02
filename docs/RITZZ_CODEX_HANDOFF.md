@@ -24,7 +24,7 @@ Build one automated faceless YouTube channel called **RITZZ**.
 - NO pan, zoom, camera motion, or transitions
 - Visual pacing: aim for about 3 seconds per image. Keep it while narration stays on the same idea; cut when the narrative changes. Merge short phrase fragments instead of creating 1-second images.
 - Editorial callouts embedded inside selected images
-- Editorial callouts every 3–4 scenes
+- Contextual editorial callouts target every 3–4 scenes; no-callout scenes require an explicit reason
 - Production editorial callouts: exactly ONE WORD, uppercase, contextual and memorable
 - Actual narration timestamps are the source of truth for final synchronization
 - Keep the architecture single-channel only
@@ -142,7 +142,7 @@ Current desired production behavior:
 - Set scene timestamps from actual narration alignment after audio generation.
 - Static images
 - Hard cuts only
-- Editorial text every 3–4 scenes
+- Contextual editorial callouts target roughly every 3–4 scenes; the interval is not a rigid timer
 
 ## 7. Legacy Phrase-Split Storyboard
 
@@ -191,6 +191,10 @@ Contextual
 Memorable
 Not a subtitle
 Not narration transcription
+Assigned after audio-timed scene grouping
+Target one meaningful callout every 3–4 scenes; never force a weak word
+No-callout scenes require callout_not_warranted=true and a reason
+Image generation must not draw the word; FFmpeg composites the approved text
 ```
 
 The LLM receives previous/current/next narration beats and chooses one memorable concept.

@@ -26,12 +26,23 @@ from modules.video.qa_models import (
     SceneQAResult,
     TechnicalQAResult,
 )
+from modules.storyboard.editorial_qa import review_editorial_callouts
 
 load_dotenv()
 
 
 class SemanticReviewer(Protocol):
     def review(self, image_path: Path, scene: Any) -> SceneQAResult: ...
+
+
+class AudioImageReviewer(Protocol):
+    def match_audio_image(
+        self,
+        image_path: Path,
+        scene: Any,
+        start_seconds: float,
+        end_seconds: float,
+    ) -> AudioImageMatchResult: ...
 
 
 _SCENE_REVIEW_RESPONSE_FORMAT: ResponseTextConfigParam = {
@@ -273,8 +284,11 @@ OpenAISemanticReviewer = OpenAIImageEditorialReviewer
 
 
 class PilotVideoQA:
+    LOUDNESS_TOLERANCE_LU = 1.5
+    TRUE_PEAK_MEASUREMENT_TOLERANCE_DB = 0.1
+
     def run_audio_image_match(self, storyboard: Storyboard, plan: VideoAssemblyPlan,
-                              reviewer: OpenAISemanticReviewer) -> list[AudioImageMatchResult]:
+                              reviewer: AudioImageReviewer) -> list[AudioImageMatchResult]:
         """Assess only whether each rendered scene image matches its narration beat."""
         scene_by_id = {scene.scene_id: scene for scene in storyboard.scenes}
         results = []
@@ -420,20 +434,95 @@ class PilotVideoQA:
             elif video_path.is_file() and video_duration is not None:
                 video_ok = video_path.stat().st_size > 0
             video_ok &= video_duration is not None and audio_duration is not None and abs(video_duration - audio_duration) <= 0.25
-        checks.update(images="PASS" if image_ok else "FAIL", audio="PASS" if audio_ok else "FAIL",
-                      scene_order="PASS" if order_ok else "FAIL", timestamps_monotonic="PASS" if monotonic else "FAIL",
-                      no_gaps_or_overlaps="PASS" if no_gap else "FAIL", scene_durations="PASS" if durations_ok else "FAIL",
-                      duration_consistency="PASS" if duration_ok else "FAIL", video="PASS" if video_ok else ("REVIEW" if video_file is None else "FAIL"),
-                      timestamp_coverage="PASS" if order_ok and durations_ok and no_gap else "FAIL",
-                      timeline_drift="PASS" if drift <= 0.5 else "REVIEW")
-        if not audio_ok: issues.append("Audio file missing, empty, or duration unavailable.")
-        if not duration_ok: issues.append("Assembly duration does not match audio duration.")
-        if not video_ok: issues.append("Rendered video missing or its duration/streams do not match audio.")
+        loudness_check: QAStatus = "REVIEW"
+        integrated_lufs: float | None = None
+        true_peak_dbtp: float | None = None
+        target_lufs = -14.0
+        true_peak_ceiling_dbtp = -1.0
+        if video_file is None:
+            issues.append(
+                "Integrated loudness and true peak are unavailable until the video is rendered."
+            )
+        else:
+            from modules.video.render_engine import FFmpegVideoRenderer
+
+            try:
+                renderer = FFmpegVideoRenderer()
+                target_lufs = renderer.audio_target_lufs
+                true_peak_ceiling_dbtp = renderer.audio_true_peak_ceiling_dbtp
+                measurement = renderer.measure_audio_loudness(video_file)
+                integrated_lufs = measurement.integrated_lufs
+                true_peak_dbtp = measurement.true_peak_dbtp
+                loudness_check = (
+                    "PASS"
+                    if abs(integrated_lufs - target_lufs)
+                    <= self.LOUDNESS_TOLERANCE_LU
+                    and true_peak_dbtp
+                    <= true_peak_ceiling_dbtp
+                    + self.TRUE_PEAK_MEASUREMENT_TOLERANCE_DB
+                    else "REVIEW"
+                )
+                issues.append(
+                    "Rendered audio loudness: "
+                    f"{integrated_lufs:.1f} LUFS integrated "
+                    f"(target {target_lufs:.1f} ±"
+                    f"{self.LOUDNESS_TOLERANCE_LU:.1f} LU); "
+                    f"true peak {true_peak_dbtp:.1f} dBTP "
+                    f"(ceiling {true_peak_ceiling_dbtp:.1f} dBTP)."
+                )
+                if loudness_check != "PASS":
+                    issues.append(
+                        "Rendered audio loudness or true peak is outside the "
+                        "configured target range; human review is required."
+                    )
+            except (FileNotFoundError, RuntimeError, ValueError) as exc:
+                issues.append(
+                    "Integrated loudness and true peak could not be measured; "
+                    f"human review is required. {exc}"
+                )
+        editorial_qa = review_editorial_callouts(storyboard.scenes)
+        if editorial_qa.status == "REVIEW":
+            issues.extend(editorial_qa.findings)
+        checks.update(
+            images="PASS" if image_ok else "FAIL",
+            audio="PASS" if audio_ok else "FAIL",
+            scene_order="PASS" if order_ok else "FAIL",
+            timestamps_monotonic="PASS" if monotonic else "FAIL",
+            no_gaps_or_overlaps="PASS" if no_gap else "FAIL",
+            scene_durations="PASS" if durations_ok else "FAIL",
+            duration_consistency="PASS" if duration_ok else "FAIL",
+            video=(
+                "PASS"
+                if video_ok
+                else "REVIEW"
+                if video_file is None
+                else "FAIL"
+            ),
+            timestamp_coverage=(
+                "PASS" if order_ok and durations_ok and no_gap else "FAIL"
+            ),
+            timeline_drift="PASS" if drift <= 0.5 else "REVIEW",
+            audio_loudness=loudness_check,
+            editorial_callouts=editorial_qa.status,
+        )
+        if not audio_ok:
+            issues.append("Audio file missing, empty, or duration unavailable.")
+        if not duration_ok:
+            issues.append("Assembly duration does not match audio duration.")
+        if not video_ok:
+            issues.append(
+                "Rendered video missing or its duration/streams do not match audio."
+            )
         failed = any(v == "FAIL" for v in checks.values())
         status = "FAIL" if failed else "REVIEW" if any(v == "REVIEW" for v in checks.values()) else "PASS"
         return TechnicalQAResult(status=status, checks=checks, issues=issues, scene_count=len(plan.clips),
                                  audio_duration_seconds=float(audio_duration or 0), video_duration_seconds=video_duration,
-                                 maximum_timeline_drift_seconds=drift)
+                                 maximum_timeline_drift_seconds=drift,
+                                 integrated_lufs=integrated_lufs,
+                                 true_peak_dbtp=true_peak_dbtp,
+                                 target_lufs=target_lufs,
+                                 true_peak_ceiling_dbtp=true_peak_ceiling_dbtp,
+                                 editorial_callouts=editorial_qa)
 
     def run_semantic(self, storyboard: Storyboard, plan: VideoAssemblyPlan,
                      reviewer: SemanticReviewer) -> list[SceneQAResult]:

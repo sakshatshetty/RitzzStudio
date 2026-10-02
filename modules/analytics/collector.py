@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping, Protocol
 
 from modules.analytics.inventory import InventoryManager
 
@@ -80,7 +80,6 @@ def derive_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
     comments = float(values.get("comments") or 0)
     shares = float(values.get("shares") or 0)
     subscribers_gained = float(values.get("subscribers_gained") or 0)
-    subscribers_lost = float(values.get("subscribers_lost") or 0)
     estimated_minutes_watched = float(values.get("estimated_minutes_watched") or 0)
 
     derived = {
@@ -255,10 +254,14 @@ class YouTubeAnalyticsProvider:
         return build("youtubeAnalytics", "v2", credentials=credentials)
 
 
+class AnalyticsProvider(Protocol):
+    def fetch_video_metrics(self, video_id: str) -> Mapping[str, float]: ...
+
+
 class AnalyticsCollector:
     """Collect and persist published-video analytics for the project inventory and learning loop."""
 
-    def __init__(self, analytics_dir: str | Path, provider: YouTubeAnalyticsProvider | None = None):
+    def __init__(self, analytics_dir: str | Path, provider: AnalyticsProvider | None = None):
         self.analytics_dir = Path(analytics_dir)
         self.analytics_dir.mkdir(parents=True, exist_ok=True)
         self.provider = provider

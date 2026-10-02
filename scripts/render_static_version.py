@@ -186,7 +186,7 @@ def main() -> int:
         )
 
         print(
-            f"Status: COMPLETED"
+            "Status: COMPLETED"
         )
 
         print(

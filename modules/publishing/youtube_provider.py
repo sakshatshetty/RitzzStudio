@@ -47,7 +47,7 @@ class YouTubeProvider:
         if not video_path.is_file():
             raise FileNotFoundError(f"Video file does not exist: {video_path}")
 
-        snippet = {
+        snippet: dict[str, Any] = {
             "title": title,
             "description": description,
             "categoryId": str(metadata.get("category_id", "27")),

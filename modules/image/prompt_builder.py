@@ -58,6 +58,7 @@ class ImagePromptBuilder:
 
     RITZZ_STRICT_NO_TEXT = (
         "NO TEXT. "
+        "DO NOT DRAW EDITORIAL CALLOUT TEXT. "
         "NO TITLES. "
         "NO HEADLINES. "
         "NO LABELS. "

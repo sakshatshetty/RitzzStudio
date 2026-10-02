@@ -266,6 +266,43 @@ class ProductionStateStore:
                 "Check YouTube before authorizing another upload.",
             )
 
+    def authorize_deleted_video_replacement(
+        self,
+        run_id: str,
+        run_attempt: int,
+        deleted_video_id: str,
+    ) -> dict[str, Any]:
+        if not run_id or run_attempt < 1 or not deleted_video_id.strip():
+            raise ValueError(
+                "A run ID, positive run attempt, and deleted video ID are required."
+            )
+        state = self._read_state()
+        if (
+            state.get("current_stage") != "private_upload"
+            or state["stages"]["private_upload"]["status"] != "running"
+        ):
+            raise ProductionStateError(
+                "STATE_ARTIFACT_MISMATCH",
+                "Deleted-video replacement can only be authorized during the running private-upload stage.",
+            )
+        intent = state.get("private_upload_intent")
+        if not isinstance(intent, dict):
+            raise ProductionStateError(
+                "PUBLISH_ATTEMPT_RECONCILIATION_REQUIRED",
+                "A prior private-upload intent is required before replacing a deleted video.",
+            )
+        state["private_upload_intent"] = {
+            "run_id": run_id,
+            "run_attempt": run_attempt,
+            "created_at": self._now(),
+            "replacement": {
+                "deleted_video_id": deleted_video_id,
+                "confirmed_at": self._now(),
+            },
+        }
+        self._save(state)
+        return state
+
     def _read_state(self) -> dict[str, Any]:
         if not self.state_file.is_file():
             raise ProductionStateError(

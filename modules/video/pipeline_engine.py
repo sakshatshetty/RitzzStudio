@@ -305,6 +305,16 @@ class VideoProductionPipeline:
                     status=technical.status,
                     checks=technical.checks,
                     findings=technical.issues,
+                    metrics=(
+                        technical.editorial_callouts.metrics()
+                        if technical.editorial_callouts
+                        else {}
+                    ),
+                    details=(
+                        technical.editorial_callouts.scene_statuses
+                        if technical.editorial_callouts
+                        else {}
+                    ),
                     reviewer="deterministic",
                 ),
             )
@@ -348,6 +358,16 @@ class VideoProductionPipeline:
                         status="PASS" if technical.status == "PASS" else technical.status,
                         checks=technical.checks,
                         findings=technical.issues,
+                        metrics=(
+                            technical.editorial_callouts.metrics()
+                            if technical.editorial_callouts
+                            else {}
+                        ),
+                        details=(
+                            technical.editorial_callouts.scene_statuses
+                            if technical.editorial_callouts
+                            else {}
+                        ),
                         recommendations=[] if technical.status == "PASS" else [
                             "Automatic resynchronization retry did not resolve the issue; stop for diagnosis."
                         ],
@@ -360,6 +380,16 @@ class VideoProductionPipeline:
                         status=technical.status,
                         checks=technical.checks,
                         findings=technical.issues,
+                        metrics=(
+                            technical.editorial_callouts.metrics()
+                            if technical.editorial_callouts
+                            else {}
+                        ),
+                        details=(
+                            technical.editorial_callouts.scene_statuses
+                            if technical.editorial_callouts
+                            else {}
+                        ),
                         reviewer="deterministic",
                     ),
                 )
@@ -393,6 +423,8 @@ class VideoProductionPipeline:
                     else None
                 ),
                 technical_qa_status=technical.status,
+                integrated_lufs=technical.integrated_lufs,
+                true_peak_dbtp=technical.true_peak_dbtp,
                 image_ai_qa_status=image_ai_status,
                 approval_status="PENDING",
             )
@@ -507,7 +539,10 @@ class VideoProductionPipeline:
                 if scene.text_overlay
             ]
             trial_positions.sort()
-            if any(not 3 <= right - left <= 4 for left, right in zip(trial_positions, trial_positions[1:])):
+            if any(
+                right - left < 3
+                for left, right in zip(trial_positions, trial_positions[1:])
+            ):
                 unresolved_editorial.append(
                     f"{scenes[index].scene_id}: moving the callout would break the 3-4-scene cadence."
                 )
@@ -517,8 +552,22 @@ class VideoProductionPipeline:
         affected_indices: set[int] = set()
         for index, target_index in moves.items():
             word = scenes[index].text_overlay
-            scenes[index] = scenes[index].model_copy(update={"text_overlay": ""})
-            scenes[target_index] = scenes[target_index].model_copy(update={"text_overlay": word})
+            scenes[index] = scenes[index].model_copy(
+                update={
+                    "text_overlay": "",
+                    "callout_not_warranted": True,
+                    "callout_not_warranted_reason": (
+                        "The approved word fits the adjacent visual beat better."
+                    ),
+                }
+            )
+            scenes[target_index] = scenes[target_index].model_copy(
+                update={
+                    "text_overlay": word,
+                    "callout_not_warranted": False,
+                    "callout_not_warranted_reason": None,
+                }
+            )
             affected_indices.update({index, target_index})
 
         for index, review in first_reviews.items():

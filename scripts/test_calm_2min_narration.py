@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import argparse
+import re
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -42,9 +43,28 @@ def main() -> int:
         default="calm_delivery_2min",
         help="Name used for the separate output folder and MP3 file",
     )
+    parser.add_argument(
+        "--maximum-words",
+        type=int,
+        help="Use only complete opening sentences up to this word limit",
+    )
+    parser.add_argument(
+        "--speed",
+        type=float,
+        default=0.95,
+        help="Narration speed from 0.7 to 1.2 (default: 0.95)",
+    )
+    parser.add_argument(
+        "--stability",
+        type=float,
+        default=0.72,
+        help="Voice stability from 0 to 1 (default: 0.72)",
+    )
     args = parser.parse_args()
     if not args.take_name.replace("_", "").replace("-", "").isalnum():
         raise ValueError("take-name may contain only letters, numbers, underscores, and hyphens.")
+    if args.maximum_words is not None and args.maximum_words <= 0:
+        raise ValueError("maximum-words must be greater than zero.")
 
     load_dotenv(PROJECT_ROOT / ".env", override=True)
     voice_id = os.getenv("RITZZ_VOICE_ID")
@@ -55,6 +75,21 @@ def main() -> int:
         raise ValueError("ELEVENLABS_API_KEY is not configured.")
 
     text = SCRIPT_FILE.read_text(encoding="utf-8").strip()
+    if args.maximum_words is not None:
+        sentences = re.findall(r"[^.!?]+[.!?]+", text)
+        selected_sentences = []
+        word_count = 0
+        for sentence in sentences:
+            sentence_words = len(sentence.split())
+            if word_count + sentence_words > args.maximum_words:
+                break
+            selected_sentences.append(sentence.strip())
+            word_count += sentence_words
+        if not selected_sentences:
+            raise ValueError(
+                "The maximum word limit is too small to include the first sentence."
+            )
+        text = " ".join(selected_sentences)
     request = VoiceGenerationRequest(
         voice_id=voice_id,
         model_id="eleven_multilingual_v2",
@@ -62,11 +97,11 @@ def main() -> int:
         output_directory=str(OUTPUT_DIRECTORY.parent / args.take_name),
         output_filename=f"{args.take_name}.mp3",
         voice_settings=VoiceSettings(
-            stability=0.72,
+            stability=args.stability,
             similarity_boost=0.75,
             style=0.0,
             use_speaker_boost=True,
-            speed=0.95,
+            speed=args.speed,
         ),
     )
     result = ElevenLabsProvider(api_key=api_key).generate(request)
@@ -88,6 +123,8 @@ def main() -> int:
     print(f"Measured duration: {result.actual_duration_seconds:.3f}s")
     print(f"Script words: {len(text.split())}")
     print(f"Aligned characters: {len(result.alignment.characters)}")
+    print(f"Speed: {request.voice_settings.speed}")
+    print(f"Stability: {request.voice_settings.stability}")
     print(f"Metadata: {output_directory / f'{args.take_name}_result.json'}")
     return 0
 

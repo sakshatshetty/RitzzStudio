@@ -94,7 +94,8 @@ def rank_candidates(candidates: list[OpportunityCandidate]) -> list[OpportunityC
     demand_values = []
     growth_values = []
     for candidate in candidates:
-        demand = _numeric(candidate.evidence.get("search_volume").value) if candidate.evidence.get("search_volume") else None
+        demand_metric = candidate.evidence.get("search_volume")
+        demand = _numeric(demand_metric.value) if demand_metric is not None else None
         growth_metric = next((candidate.evidence[key] for key in ("growth", "growth_percent", "trend_growth") if key in candidate.evidence), None)
         growth = _numeric(growth_metric.value) if growth_metric and growth_metric.available else None
         demand_values.append(demand if demand is not None and demand >= 0 else None)

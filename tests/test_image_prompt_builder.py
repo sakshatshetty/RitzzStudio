@@ -154,6 +154,7 @@ def test_prompt_without_editorial_text_does_not_request_text() -> None:
     )
 
     assert "NO TEXT." in prompt
+    assert "DO NOT DRAW EDITORIAL CALLOUT TEXT." in prompt
     assert "NO TITLES." in prompt
     assert "NO HEADLINES." in prompt
     assert "NO LABELS." in prompt
@@ -266,6 +267,7 @@ def test_editorial_text_prompt_requires_no_generated_typography() -> None:
     prompt = builder.build(scene)
 
     assert "Do not render letters, words, captions, labels, or any other typography." in prompt
+    assert "DO NOT DRAW EDITORIAL CALLOUT TEXT." in prompt
 
 
 def test_editorial_text_prompt_preserves_negative_space_for_composite() -> None:

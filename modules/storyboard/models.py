@@ -58,21 +58,13 @@ class StoryboardScene(BaseModel):
         default_factory=list
     )
 
-    # Optional editorial text intended to appear
-    # inside the generated image.
-    #
-    # This is not required for every scene and does
-    # not need to match the narration.
-    #
-    # Examples:
-    #   "THE MYSTERY"
-    #   "WILD SIZE"
-    #   "10× LARGER"
-    #   "THE REAL REASON"
+    # Editorial words are composited after image generation by FFmpeg.
     text_overlay: str = Field(
         default="",
         max_length=80,
     )
+    callout_not_warranted: bool = False
+    callout_not_warranted_reason: str | None = None
 
     camera_motion: CameraMotion = "static"
 

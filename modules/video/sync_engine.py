@@ -8,7 +8,6 @@ from modules.storyboard.models import Storyboard
 from modules.video.engine import VideoAssemblyEngine
 from modules.video.models import (
     VideoAssemblyPlan,
-    VideoAssemblyRequest,
     VideoClip,
 )
 

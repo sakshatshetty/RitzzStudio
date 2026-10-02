@@ -30,21 +30,8 @@ def apply_niche_filter(candidates: list[OpportunityCandidate]) -> None:
 
 def _topic_key(candidate: OpportunityCandidate) -> str:
     value = candidate.primary_keyword or candidate.topic
-    value = re.sub(r"\b(?:pirates|sailors?)\b", "sailor", value, flags=re.IGNORECASE)
-    value = re.sub(r"\b(?:wear|wears|wearing|wore|use|uses|using|used)\b", "use", value, flags=re.IGNORECASE)
-    value = re.sub(r"\beye\s+patch(?:es)?\b", "eyepatch", value, flags=re.IGNORECASE)
     words = re.findall(r"[a-z0-9]+", value.casefold())
-    words = [
-        word for word in words
-        if word not in {"a", "an", "are", "did", "do", "does", "how", "is", "the", "why"}
-    ]
-    if "vs" in words or "versus" in words:
-        sides = re.split(r"\b(?:vs\.?|versus)\b", value.casefold())
-        if len(sides) == 2:
-            left = " ".join(re.findall(r"[a-z0-9]+", sides[0]))
-            right = " ".join(re.findall(r"[a-z0-9]+", sides[1]))
-            return " vs ".join(sorted((left, right)))
-    return " ".join(words)
+    return " ".join(word for word in words if word not in {"a", "an", "the"})
 
 
 def validate_candidates(candidates: list[OpportunityCandidate]) -> list[str]:
@@ -77,21 +64,6 @@ def validate_candidates(candidates: list[OpportunityCandidate]) -> list[str]:
         if candidate.filter_reasons:
             candidate.validation_status = "REVIEW"
             candidate.validation_reasons.append("Niche-fit concerns require human review.")
-        fit_status = candidate.ritzz_fit.fit_status if candidate.ritzz_fit else None
-        if fit_status == "FAIL":
-            candidate.validation_status = "REJECTED"
-            candidate.validation_reasons.append(
-                candidate.ritzz_fit.reason
-                if candidate.ritzz_fit
-                else "RITZZ-fit assessment marked this topic unsuitable."
-            )
-        elif fit_status == "REVIEW":
-            candidate.validation_status = "REVIEW"
-            candidate.validation_reasons.append(
-                candidate.ritzz_fit.reason
-                if candidate.ritzz_fit
-                else "RITZZ-fit assessment requires review."
-            )
         if candidate.score_completeness < MIN_EVIDENCE_COMPLETENESS:
             candidate.validation_status = "REVIEW"
             candidate.validation_reasons.append(

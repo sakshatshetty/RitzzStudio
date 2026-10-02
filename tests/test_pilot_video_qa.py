@@ -6,14 +6,18 @@ from types import SimpleNamespace
 
 import pytest
 
-from modules.storyboard.models import Storyboard
+from modules.storyboard.models import Storyboard, StoryboardScene
 from modules.video.models import VideoAssemblyPlan, VideoClip
 from modules.video.pilot_qa import (
     OpenAIImageEditorialReviewer,
     PilotVideoQA,
     _mp3_duration,
 )
-from modules.video.qa_models import AudioImageMatchResult, SceneQAResult
+from modules.video.qa_models import (
+    AudioImageMatchResult,
+    SceneQAResult,
+)
+from modules.video.render_models import AudioLoudnessMeasurement
 
 
 def make_png():
@@ -26,10 +30,23 @@ def make_png():
 def make_inputs(tmp_path):
     image = tmp_path / "scene_001.png"
     image.write_bytes(make_png())
-    storyboard = Storyboard(topic="Pirates", target_duration_seconds=2, total_scene_duration_seconds=2,
-        scenes=[{"scene_id": "scene_001", "section_id": "s1", "start_seconds": 0, "duration_seconds": 2,
-            "narration": "Pirate narration.", "visual_description": "A pirate with an eye patch.",
-            "image_prompt": "Pirate illustration.", "text_overlay": "ICONIC"}])
+    storyboard = Storyboard(
+        topic="Pirates",
+        target_duration_seconds=2,
+        total_scene_duration_seconds=2,
+        scenes=[
+            StoryboardScene(
+                scene_id="scene_001",
+                section_id="s1",
+                start_seconds=0,
+                duration_seconds=2,
+                narration="Pirate narration.",
+                visual_description="A pirate with an eye patch.",
+                image_prompt="Pirate illustration.",
+                text_overlay="ICONIC",
+            )
+        ],
+    )
     plan = VideoAssemblyPlan(topic="Pirates", width=16, height=16, fps=30,
         clips=[VideoClip(scene_id="scene_001", image_path=str(image), start_seconds=0, duration_seconds=2)],
         total_duration_seconds=2)
@@ -45,6 +62,7 @@ def test_technical_qa_checks_images_and_duration(tmp_path):
     assert result.checks["images"] == "PASS"
     assert result.checks["timestamp_coverage"] == "PASS"
     assert result.checks["duration_consistency"] == "PASS"
+    assert result.checks["audio_loudness"] == "REVIEW"
 
 
 def test_technical_qa_fails_when_rendered_video_duration_drifts_from_audio(tmp_path):
@@ -64,6 +82,96 @@ def test_technical_qa_fails_when_rendered_video_duration_drifts_from_audio(tmp_p
     assert result.status == "FAIL"
     assert result.checks["video"] == "FAIL"
     assert any("duration/streams do not match audio" in issue for issue in result.issues)
+
+
+def test_technical_qa_reports_in_range_audio_loudness(tmp_path, monkeypatch):
+    storyboard, plan, audio, _ = make_inputs(tmp_path)
+    video = tmp_path / "rendered.mp4"
+    video.write_bytes(b"video")
+    monkeypatch.setattr(
+        "modules.video.render_engine.FFmpegVideoRenderer.measure_audio_loudness",
+        lambda self, path: AudioLoudnessMeasurement(
+            integrated_lufs=-14.4,
+            true_peak_dbtp=-1.1,
+        ),
+    )
+
+    result = PilotVideoQA().run_technical(
+        storyboard,
+        plan,
+        audio,
+        video_file=video,
+        audio_duration=2,
+        video_duration=2,
+    )
+
+    assert result.checks["audio_loudness"] == "PASS"
+    assert result.integrated_lufs == pytest.approx(-14.4)
+    assert result.true_peak_dbtp == pytest.approx(-1.1)
+    assert any("-14.4 LUFS integrated" in issue for issue in result.issues)
+
+
+@pytest.mark.parametrize(
+    ("integrated_lufs", "true_peak_dbtp"),
+    [(-16.0, -1.0), (-14.0, -0.8)],
+)
+def test_technical_qa_reviews_audio_outside_loudness_limits(
+    tmp_path,
+    monkeypatch,
+    integrated_lufs,
+    true_peak_dbtp,
+):
+    storyboard, plan, audio, _ = make_inputs(tmp_path)
+    video = tmp_path / "rendered.mp4"
+    video.write_bytes(b"video")
+    monkeypatch.setattr(
+        "modules.video.render_engine.FFmpegVideoRenderer.measure_audio_loudness",
+        lambda self, path: AudioLoudnessMeasurement(
+            integrated_lufs=integrated_lufs,
+            true_peak_dbtp=true_peak_dbtp,
+        ),
+    )
+
+    result = PilotVideoQA().run_technical(
+        storyboard,
+        plan,
+        audio,
+        video_file=video,
+        audio_duration=2,
+        video_duration=2,
+    )
+
+    assert result.checks["audio_loudness"] == "REVIEW"
+    assert result.status == "REVIEW"
+    assert any("human review is required" in issue for issue in result.issues)
+
+
+def test_technical_qa_reviews_unmeasurable_audio(tmp_path, monkeypatch):
+    storyboard, plan, audio, _ = make_inputs(tmp_path)
+    video = tmp_path / "rendered.mp4"
+    video.write_bytes(b"video")
+
+    def unmeasurable(self, path):
+        raise ValueError("audio is silent")
+
+    monkeypatch.setattr(
+        "modules.video.render_engine.FFmpegVideoRenderer.measure_audio_loudness",
+        unmeasurable,
+    )
+
+    result = PilotVideoQA().run_technical(
+        storyboard,
+        plan,
+        audio,
+        video_file=video,
+        audio_duration=2,
+        video_duration=2,
+    )
+
+    assert result.checks["audio_loudness"] == "REVIEW"
+    assert result.integrated_lufs is None
+    assert result.true_peak_dbtp is None
+    assert any("audio is silent" in issue for issue in result.issues)
 
 
 def test_technical_qa_flags_corrupt_image(tmp_path):
@@ -219,24 +327,24 @@ def test_rendered_video_semantic_qa_receives_each_scene_narration_segment(tmp_pa
         target_duration_seconds=4,
         total_scene_duration_seconds=4,
         scenes=[
-            {
-                "scene_id": "scene_001",
-                "section_id": "s1",
-                "start_seconds": 0,
-                "duration_seconds": 2,
-                "narration": "The pirate enters the dark cabin.",
-                "visual_description": "A pirate entering a cabin.",
-                "image_prompt": "Pirate illustration.",
-            },
-            {
-                "scene_id": "scene_002",
-                "section_id": "s1",
-                "start_seconds": 2,
-                "duration_seconds": 2,
-                "narration": "One eye stays adapted to darkness.",
-                "visual_description": "A pirate's adapted eye.",
-                "image_prompt": "Eye illustration.",
-            },
+            StoryboardScene(
+                scene_id="scene_001",
+                section_id="s1",
+                start_seconds=0,
+                duration_seconds=2,
+                narration="The pirate enters the dark cabin.",
+                visual_description="A pirate entering a cabin.",
+                image_prompt="Pirate illustration.",
+            ),
+            StoryboardScene(
+                scene_id="scene_002",
+                section_id="s1",
+                start_seconds=2,
+                duration_seconds=2,
+                narration="One eye stays adapted to darkness.",
+                visual_description="A pirate's adapted eye.",
+                image_prompt="Eye illustration.",
+            ),
         ],
     )
     plan = VideoAssemblyPlan(

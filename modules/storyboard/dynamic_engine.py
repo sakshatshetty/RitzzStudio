@@ -7,6 +7,7 @@ from pathlib import Path
 from modules.image.prompt_builder import ImagePromptBuilder
 from modules.storyboard.editorial_planner import (
     EditorialContext,
+    EditorialDecision,
     EditorialTextPlanner,
 )
 from modules.storyboard.models import Storyboard, StoryboardScene
@@ -28,7 +29,8 @@ class DynamicStoryboardEngine:
     - Dynamic pacing.
     - Static camera.
     - Hard cuts.
-    - Editorial callout every 3–4 scenes.
+    - Contextual editorial callouts target roughly every 3–4 scenes, with
+      an explicit reason when a scene does not warrant one.
     - Exactly one word for production editorial text.
     - Exact target duration.
     """
@@ -133,6 +135,51 @@ class DynamicStoryboardEngine:
         "survival",
         "legend",
         "clue",
+    }
+    EDITORIAL_CALLOUT_WORDS = {
+        "adaptation",
+        "archaeology",
+        "artifact",
+        "archive",
+        "assumption",
+        "belief",
+        "battle",
+        "clue",
+        "collapse",
+        "compass",
+        "contrast",
+        "costume",
+        "culture",
+        "danger",
+        "discovery",
+        "escape",
+        "experiment",
+        "evidence",
+        "forgery",
+        "fiction",
+        "history",
+        "hollywood",
+        "impact",
+        "injury",
+        "invention",
+        "legend",
+        "machine",
+        "mystery",
+        "myth",
+        "paradox",
+        "relic",
+        "proof",
+        "rediscovery",
+        "ruins",
+        "secret",
+        "stereotype",
+        "surprise",
+        "survival",
+        "symbol",
+        "theory",
+        "trap",
+        "truth",
+        "vision",
     }
 
     STOP_WORDS = {
@@ -264,7 +311,7 @@ class DynamicStoryboardEngine:
         self,
         scenes: list[StoryboardScene],
     ) -> list[StoryboardScene]:
-        """Add final-scene one-word callouts at the production cadence."""
+        """Plan contextual editorial decisions on the final grouped scenes."""
         return self._apply_editorial_callouts(scenes)
 
     def create_pilot_storyboard(
@@ -769,48 +816,6 @@ class DynamicStoryboardEngine:
         )
 
     # ======================================================================
-    # EDITORIAL POSITION
-    # ======================================================================
-
-    def _build_editorial_slots(
-        self,
-        scene_count: int,
-    ) -> list[int]:
-        if scene_count < 4:
-            return []
-
-        positions: list[int] = []
-
-        current_position = 3
-
-        gap_pattern = [
-            3,
-            4,
-            4,
-            3,
-            3,
-            4,
-            3,
-            4,
-        ]
-
-        pattern_index = 0
-
-        while current_position < scene_count:
-            positions.append(
-                current_position
-            )
-
-            current_position += gap_pattern[
-                pattern_index
-                % len(gap_pattern)
-            ]
-
-            pattern_index += 1
-
-        return positions
-
-    # ======================================================================
     # EDITORIAL PLANNING
     # ======================================================================
 
@@ -821,84 +826,146 @@ class DynamicStoryboardEngine:
         if not scenes:
             return scenes
 
-        editorial_indices = (
-            self._build_editorial_slots(
-                len(scenes)
+        if self.editorial_planner is None:
+            decisions = self._plan_contextual_decisions(scenes)
+        else:
+            decisions = self._plan_editorial_callouts(scenes)
+        decisions = self._enforce_callout_spacing(decisions, scenes)
+        updated = [
+            scene.model_copy(
+                update={
+                    "text_overlay": decisions[index].text,
+                    "callout_not_warranted": decisions[index].callout_not_warranted,
+                    "callout_not_warranted_reason": decisions[index].reason,
+                }
             )
-        )
+            for index, scene in enumerate(scenes)
+        ]
+        return self._rebuild_prompts(updated)
 
-        planned = (
-            self._plan_editorial_callouts(
-                scenes,
-                editorial_indices,
-            )
-        )
+    def _plan_contextual_decisions(
+        self,
+        scenes: list[StoryboardScene],
+    ) -> dict[int, EditorialDecision]:
+        decisions: dict[int, EditorialDecision] = {}
+        next_candidate_start = 2
+        last_callout_index: int | None = None
 
-        updated: list[StoryboardScene] = []
-
-        editorial_index_set = set(
-            editorial_indices
-        )
-
-        for index, scene in enumerate(
-            scenes
-        ):
-            if index not in editorial_index_set:
-                updated.append(
-                    scene.model_copy(
-                        update={
-                            "text_overlay": ""
-                        }
-                    )
+        while next_candidate_start < len(scenes):
+            candidate_indices = [
+                index
+                for index in (next_candidate_start, next_candidate_start + 1)
+                if index < len(scenes)
+            ]
+            candidates = [
+                (self._scene_editorial_candidate(scenes[index]), index)
+                for index in candidate_indices
+            ]
+            candidates = [
+                (word, index)
+                for word, index in candidates
+                if word
+                and (
+                    last_callout_index is None
+                    or index - last_callout_index >= self.MIN_EDITORIAL_GAP_SCENES
                 )
-                continue
-
-            text = planned.get(
-                index,
-                "",
-            )
-
-            if not self._is_production_editorial_text(
-                text
-            ):
-                text = (
-                    self._build_production_editorial_text(
-                        scenes,
+            ]
+            if candidates:
+                word, selected_index = max(
+                    candidates,
+                    key=lambda candidate: self._editorial_score(
+                        self._scene_editorial_source(scenes[candidate[1]])
+                    ),
+                )
+                for index in range(next_candidate_start, selected_index):
+                    decisions.setdefault(
                         index,
+                        EditorialDecision(
+                            callout_not_warranted=True,
+                            reason=(
+                                "This scene is not the strongest editorial "
+                                "moment in the nearby 3–4-scene interval."
+                            ),
+                        ),
                     )
-                )
+                decisions[selected_index] = EditorialDecision(text=word)
+                last_callout_index = selected_index
+                next_candidate_start = selected_index + self.MIN_EDITORIAL_GAP_SCENES
+            else:
+                for index in candidate_indices:
+                    decisions[index] = EditorialDecision(
+                        callout_not_warranted=True,
+                        reason=(
+                            "No distinct, supported editorial idea is stronger "
+                            "than the narration in this visual segment."
+                        ),
+                    )
+                next_candidate_start += self.MAX_EDITORIAL_GAP_SCENES
 
-            updated.append(
-                scene.model_copy(
-                    update={
-                        "text_overlay": text
-                    }
-                )
+        for index in range(len(scenes)):
+            decisions.setdefault(
+                index,
+                EditorialDecision(
+                    callout_not_warranted=True,
+                    reason=(
+                        "No distinct, supported editorial idea warrants a "
+                        "callout in this visual segment."
+                    ),
+                ),
             )
+        return decisions
 
-        return self._rebuild_prompts(
-            updated
+    def _scene_editorial_candidate(
+        self,
+        scene: StoryboardScene,
+    ) -> str:
+        source = self._scene_editorial_source(scene)
+        lowered = source.lower()
+        for phrase, replacement in self.HIGH_VALUE_PHRASES:
+            if (
+                phrase in lowered
+                and replacement.lower() in self.EDITORIAL_CALLOUT_WORDS
+                and self._is_production_editorial_text(replacement)
+            ):
+                return replacement
+        words = re.findall(r"[a-z0-9]+", lowered)
+        for word in words:
+            if word in self.EDITORIAL_CALLOUT_WORDS:
+                candidate = word.upper()
+                if self._is_production_editorial_text(candidate):
+                    return candidate
+        return ""
+
+    @classmethod
+    def _scene_editorial_source(cls, scene: StoryboardScene) -> str:
+        description = scene.visual_description.split(
+            "Focus specifically on this visual beat:",
+            1,
+        )[0]
+        return " ".join(
+            (
+                scene.narration,
+                description,
+                scene.character_action,
+                " ".join(scene.props),
+            )
         )
 
     def _plan_editorial_callouts(
         self,
         scenes: list[StoryboardScene],
-        ordered_indices: list[int],
-    ) -> dict[int, str]:
-        if not ordered_indices:
-            return {}
+    ) -> dict[int, EditorialDecision]:
+        if self.editorial_planner is None:
+            return self._plan_contextual_decisions(scenes)
 
         contexts: list[
             EditorialContext
         ] = []
 
-        for slot_id, index in enumerate(
-            ordered_indices,
-            start=1,
-        ):
+        for index, scene in enumerate(scenes):
             contexts.append(
                 EditorialContext(
-                    slot_id=slot_id,
+                    slot_id=index + 1,
                     scene_index=index + 1,
                     previous=(
                         scenes[index - 1].narration
@@ -913,99 +980,45 @@ class DynamicStoryboardEngine:
                         if index + 1 < len(scenes)
                         else ""
                     ),
+                    visual_description=scene.visual_description,
+                    props=tuple(scene.props),
                 )
             )
 
-        if self.editorial_planner is None:
-            return {}
-
-        try:
-            planned = (
-                self.editorial_planner.plan(
-                    contexts
-                )
-            )
-        except Exception:
-            planned = {}
-
-        result: dict[int, str] = {}
-
-        for context in contexts:
-            candidate = planned.get(
-                context.slot_id,
-                "",
-            )
-
-            cleaned = (
-                self._clean_editorial_text(
-                    candidate
-                )
-            )
-
-            if self._is_production_editorial_text(
-                cleaned
-            ):
-                result[
-                    context.scene_index - 1
-                ] = cleaned
-
+        planned = self.editorial_planner.plan(contexts)
+        result = {
+            index: planned.get(index + 1, EditorialDecision())
+            for index in range(len(scenes))
+        }
+        for index, decision in result.items():
+            if decision.text and decision.callout_not_warranted:
+                result[index] = EditorialDecision(text=decision.text)
         return result
 
-    # ======================================================================
-    # PRODUCTION ONE-WORD EDITORIAL
-    # ======================================================================
-
-    def _build_production_editorial_text(
+    def _enforce_callout_spacing(
         self,
+        decisions: dict[int, EditorialDecision],
         scenes: list[StoryboardScene],
-        index: int,
-    ) -> str:
-        context_parts = [
-            (
-                scenes[index - 1].narration
-                if index > 0
-                else ""
-            ),
-            scenes[index].narration,
-            (
-                scenes[index + 1].narration
-                if index + 1 < len(scenes)
-                else ""
-            ),
-        ]
-
-        context = " ".join(
-            context_parts
-        ).lower()
-
-        # Strong contextual phrases first.
-        for phrase, replacement in (
-            self.HIGH_VALUE_PHRASES
-        ):
-            if phrase in context:
-                if self._is_production_editorial_text(
-                    replacement
-                ):
-                    return replacement
-
-        # High-value single words.
-        words = [
-            word.lower().strip(
-                ".,!?;:()[]{}"
-            )
-            for word in context.split()
-        ]
-
-        for word in words:
-            if word in self.HIGH_VALUE_WORDS:
-                candidate = word.upper()
-
-                if self._is_production_editorial_text(
-                    candidate
-                ):
-                    return candidate
-
-        return "CLUE"
+    ) -> dict[int, EditorialDecision]:
+        spaced = dict(decisions)
+        last_callout_index: int | None = None
+        for index in range(len(scenes)):
+            decision = spaced[index]
+            if not decision.text:
+                continue
+            if last_callout_index is not None and (
+                index - last_callout_index < self.MIN_EDITORIAL_GAP_SCENES
+            ):
+                spaced[index] = EditorialDecision(
+                    callout_not_warranted=True,
+                    reason=(
+                        "A nearby scene already carries a callout; this beat "
+                        "does not need a second one."
+                    ),
+                )
+                continue
+            last_callout_index = index
+        return spaced
 
     # ======================================================================
     # LEGACY EDITORIAL API
