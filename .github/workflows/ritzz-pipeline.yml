@@ -26,8 +26,25 @@ on:
         required: true
         type: number
         default: 8
+      project_id:
+        description: Existing project ID (required when rerunning from a stage)
+        required: false
+        type: string
+      rerun_from_stage:
+        description: Start a new production or rerun from a saved project stage
+        required: true
+        type: choice
+        options:
+          - new_run
+          - voice_generation
+          - storyboard_generation
+          - image_generation
+          - render_video
+          - private_upload
+        default: new_run
 
 permissions:
+  actions: read
   contents: read
   issues: write
 
@@ -81,6 +98,7 @@ jobs:
           tests/test_m7_analytics.py
           tests/test_youtube_provider.py
           tests/test_video_pipeline_engine.py
+          tests/test_restore_project_stage_input.py
           -q
 
       - name: Enforce test-only release boundary
@@ -125,6 +143,7 @@ jobs:
   discover-topics:
     name: Discover four trending topics
     needs: validate
+    if: ${{ inputs.rerun_from_stage == 'new_run' }}
     runs-on: ubuntu-latest
     outputs:
       issue_number: ${{ steps.create-approval-issue.outputs.issue_number }}
@@ -182,6 +201,7 @@ jobs:
   select-topic:
     name: Wait for topic selection
     needs: discover-topics
+    if: ${{ inputs.rerun_from_stage == 'new_run' }}
     runs-on: ubuntu-latest
     outputs:
       selection: ${{ steps.wait-for-selection.outputs.selection }}
@@ -248,6 +268,7 @@ jobs:
   topic-approval:
     name: Approve selected topic
     needs: select-topic
+    if: ${{ inputs.rerun_from_stage == 'new_run' }}
     runs-on: ubuntu-latest
     outputs:
       selection: ${{ needs.select-topic.outputs.selection }}
@@ -262,6 +283,7 @@ jobs:
   test-approval:
     name: Human approval for test pipeline
     needs: topic-approval
+    if: ${{ inputs.rerun_from_stage == 'new_run' }}
     runs-on: ubuntu-latest
     environment:
       name: ritzz-test-approval
@@ -278,6 +300,7 @@ jobs:
   content-preparation:
     name: Research, outline, and script
     needs: test-approval
+    if: ${{ inputs.rerun_from_stage == 'new_run' }}
     runs-on: ubuntu-latest
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -326,9 +349,50 @@ jobs:
           if-no-files-found: error
           include-hidden-files: true
 
+  restore-project:
+    name: Restore selected project stage input
+    needs: validate
+    if: ${{ inputs.rerun_from_stage != 'new_run' }}
+    runs-on: ubuntu-latest
+    outputs:
+      project_id: ${{ steps.restore.outputs.project_id }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Resolve and restore saved project input
+        id: restore
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RITZZ_PROJECT_ID: ${{ inputs.project_id }}
+          RITZZ_RERUN_FROM_STAGE: ${{ inputs.rerun_from_stage }}
+          RITZZ_PIPELINE_ARTIFACTS: .pipeline-artifacts
+        run: |
+          set -euo pipefail
+          if [[ -z "$RITZZ_PROJECT_ID" ]]; then
+            echo "PROJECT_ID_REQUIRED: enter a project ID when rerunning a stage." >&2
+            exit 1
+          fi
+          python scripts/restore_project_stage_input.py
+          echo "project_id=$RITZZ_PROJECT_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Upload restored project input for this run
+        uses: actions/upload-artifact@v4
+        with:
+          name: ritzz-project-rerun-${{ github.run_id }}
+          path: .pipeline-artifacts/
+          if-no-files-found: error
+          include-hidden-files: true
+
   voice-generation:
     name: Generate and validate narration
-    needs: content-preparation
+    needs: [content-preparation, restore-project]
+    if: >-
+      ${{ always() &&
+      ((inputs.rerun_from_stage == 'new_run' && needs.content-preparation.result == 'success') ||
+      (inputs.rerun_from_stage == 'voice_generation' && needs.restore-project.result == 'success')) }}
     runs-on: ubuntu-latest
     env:
       ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
@@ -347,9 +411,17 @@ jobs:
         run: python -m pip install -r requirements.txt
 
       - name: Download content project
+        if: ${{ inputs.rerun_from_stage == 'new_run' }}
         uses: actions/download-artifact@v4
         with:
           name: ritzz-content-project-${{ github.run_id }}
+          path: .pipeline-artifacts
+
+      - name: Download restored content project
+        if: ${{ inputs.rerun_from_stage == 'voice_generation' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ritzz-project-rerun-${{ github.run_id }}
           path: .pipeline-artifacts
 
       - name: Extract content project
@@ -395,7 +467,11 @@ jobs:
 
   image-generation:
     name: Generate timed-scene images
-    needs: storyboard-generation
+    needs: [storyboard-generation, restore-project]
+    if: >-
+      ${{ always() &&
+      (needs.storyboard-generation.result == 'success' ||
+      (inputs.rerun_from_stage == 'image_generation' && needs.restore-project.result == 'success')) }}
     runs-on: ubuntu-latest
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -413,9 +489,17 @@ jobs:
         run: python -m pip install -r requirements.txt
 
       - name: Download storyboard project
+        if: ${{ inputs.rerun_from_stage != 'image_generation' }}
         uses: actions/download-artifact@v4
         with:
           name: ritzz-storyboard-project-${{ github.run_id }}
+          path: .pipeline-artifacts
+
+      - name: Download restored storyboard project
+        if: ${{ inputs.rerun_from_stage == 'image_generation' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ritzz-project-rerun-${{ github.run_id }}
           path: .pipeline-artifacts
 
       - name: Extract storyboard project
@@ -450,7 +534,11 @@ jobs:
 
   render-video:
     name: Render and run technical QA
-    needs: image-generation
+    needs: [image-generation, restore-project]
+    if: >-
+      ${{ always() &&
+      (needs.image-generation.result == 'success' ||
+      (inputs.rerun_from_stage == 'render_video' && needs.restore-project.result == 'success')) }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -466,9 +554,17 @@ jobs:
         run: python -m pip install -r requirements.txt
 
       - name: Download image project
+        if: ${{ inputs.rerun_from_stage != 'render_video' }}
         uses: actions/download-artifact@v4
         with:
           name: ritzz-image-project-${{ github.run_id }}
+          path: .pipeline-artifacts
+
+      - name: Download restored image project
+        if: ${{ inputs.rerun_from_stage == 'render_video' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ritzz-project-rerun-${{ github.run_id }}
           path: .pipeline-artifacts
 
       - name: Extract image project
@@ -503,7 +599,8 @@ jobs:
 
   video-approval:
     name: Human approval for generated test video
-    needs: render-video
+    needs: [render-video, restore-project]
+    if: ${{ always() && needs.render-video.result == 'success' }}
     runs-on: ubuntu-latest
     environment:
       name: ritzz-video-approval
@@ -517,7 +614,11 @@ jobs:
 
   packaging-approval:
     name: Human approval for packaging
-    needs: video-approval
+    needs: [video-approval, restore-project]
+    if: >-
+      ${{ always() &&
+      (needs.video-approval.result == 'success' ||
+      (inputs.rerun_from_stage == 'private_upload' && needs.restore-project.result == 'success')) }}
     runs-on: ubuntu-latest
     environment:
       name: ritzz-packaging-approval
@@ -531,7 +632,8 @@ jobs:
 
   private-upload:
     name: Upload test video privately
-    needs: packaging-approval
+    needs: [packaging-approval, restore-project]
+    if: ${{ always() && needs.packaging-approval.result == 'success' }}
     runs-on: ubuntu-latest
     env:
       GOOGLE_CLIENT_SECRETS_B64: ${{ secrets.GOOGLE_CLIENT_SECRETS_B64 }}
@@ -550,9 +652,17 @@ jobs:
         run: python -m pip install -r requirements.txt
 
       - name: Download rendered project
+        if: ${{ inputs.rerun_from_stage != 'private_upload' }}
         uses: actions/download-artifact@v4
         with:
           name: ritzz-rendered-project-${{ github.run_id }}
+          path: .pipeline-artifacts
+
+      - name: Download restored rendered project
+        if: ${{ inputs.rerun_from_stage == 'private_upload' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ritzz-project-rerun-${{ github.run_id }}
           path: .pipeline-artifacts
 
       - name: Extract rendered project
@@ -581,7 +691,11 @@ jobs:
 
   storyboard-generation:
     name: Build audio-timed storyboard
-    needs: voice-generation
+    needs: [voice-generation, restore-project]
+    if: >-
+      ${{ always() &&
+      (needs.voice-generation.result == 'success' ||
+      (inputs.rerun_from_stage == 'storyboard_generation' && needs.restore-project.result == 'success')) }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -597,9 +711,17 @@ jobs:
         run: python -m pip install -r requirements.txt
 
       - name: Download voice project
+        if: ${{ inputs.rerun_from_stage != 'storyboard_generation' }}
         uses: actions/download-artifact@v4
         with:
           name: ritzz-voice-project-${{ github.run_id }}
+          path: .pipeline-artifacts
+
+      - name: Download restored voice project
+        if: ${{ inputs.rerun_from_stage == 'storyboard_generation' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ritzz-project-rerun-${{ github.run_id }}
           path: .pipeline-artifacts
 
       - name: Extract voice project
