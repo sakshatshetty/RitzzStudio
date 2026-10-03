@@ -46,7 +46,8 @@ def _artifact(stage: str, artifact_id: int, created_at: str) -> dict:
         ("storyboard_generation", ("voice", "voice-project.tar.gz")),
         ("image_generation", ("storyboard", "storyboard-project.tar.gz")),
         ("render_video", ("image", "image-project.tar.gz")),
-        ("private_upload", ("rendered", "rendered-project.tar.gz")),
+        ("metadata_packaging", ("rendered", "rendered-project.tar.gz")),
+        ("private_upload", ("metadata", "rendered-project.tar.gz")),
     ],
 )
 def test_stage_rerun_uses_previous_stage_project_archive(stage, expected):

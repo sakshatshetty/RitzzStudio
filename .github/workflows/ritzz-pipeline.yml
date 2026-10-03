@@ -29,6 +29,7 @@ on:
           - storyboard_generation
           - image_generation
           - render_video
+          - metadata_packaging
           - private_upload
         default: NONE
       confirm_deleted_video:
@@ -114,6 +115,7 @@ jobs:
           tests/test_image_overlays.py
           tests/test_image_prompt_builder.py
           tests/test_packaging_engine.py
+          tests/test_metadata_packaging.py
           tests/test_pilot_video_qa.py
           tests/test_run_render_stage.py
           tests/test_upload_thumbnail_recovery.py
@@ -304,6 +306,7 @@ jobs:
               'storyboard_generation',
               'image_generation',
               'render_video',
+              'metadata_packaging',
               'private_upload'
             ];
             let checkpoint;
@@ -420,6 +423,7 @@ jobs:
                   "storyboard_generation": "storyboard-project.tar.gz",
                   "image_generation": "image-project.tar.gz",
                   "render_video": "rendered-project.tar.gz",
+                  "metadata_packaging": "rendered-project.tar.gz",
                   "private_upload": "private-upload-project.tar.gz",
               }
               for source_stage in reversed(stages[2:checkpoint_index + 1]):
@@ -924,7 +928,7 @@ jobs:
   pipeline-placeholder:
     name: Production stages pending M8 implementation
     needs: [private-upload, restore-production]
-    if: ${{ always() && needs.restore-production.result == 'success' && (needs.private-upload.result == 'success' || (needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index > 7)) }}
+    if: ${{ always() && needs.restore-production.result == 'success' && (needs.private-upload.result == 'success' || (needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index > 8)) }}
     runs-on: ubuntu-latest
     steps:
       - name: Report current implementation boundary
@@ -1149,10 +1153,101 @@ jobs:
           echo "The rendered-video AI review is in rendered-project.tar.gz at qa/rendered_video_semantic_qa.json."
           echo "This is a test video and must remain private or unlisted."
 
+  metadata-packaging:
+    name: Package metadata from completed video
+    needs: [video-approval, render-video, restore-production]
+    if: ${{ always() && needs.restore-production.result == 'success' && ((needs.render-video.result == 'success' && needs.video-approval.result == 'success') || (needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index >= 7 && needs.restore-production.outputs.resume_from_index <= 8)) }}
+    runs-on: ubuntu-latest
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      RITZZ_PRODUCTION_ID: ${{ needs.restore-production.outputs.production_id }}
+      RITZZ_PIPELINE_ARTIFACTS: .pipeline-artifacts
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ffmpeg
+          ffprobe -version
+
+      - name: Download completed render or metadata checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.render-video.result == 'success' && format('ritzz-production-{0}-render_video', needs.restore-production.outputs.production_id) || needs.restore-production.outputs.source_artifact }}
+          run-id: ${{ needs.render-video.result == 'success' && github.run_id || needs.restore-production.outputs.source_run_id }}
+          github-token: ${{ github.token }}
+          path: .pipeline-artifacts
+
+      - name: Extract rendered project checkpoint
+        shell: bash
+        env:
+          RERUN_FROM_STAGE: ${{ needs.restore-production.outputs.rerun_from_stage }}
+          SOURCE_ARTIFACT: ${{ needs.restore-production.outputs.source_artifact }}
+        run: |
+          set -euo pipefail
+          if [[ "$RERUN_FROM_STAGE" == "metadata_packaging" ]]; then
+            archive=.pipeline-artifacts/rerun-project.tar.gz
+          elif [[ "$SOURCE_ARTIFACT" == *-private_upload ]]; then
+            archive=.pipeline-artifacts/private-upload-project.tar.gz
+          elif [[ -f .pipeline-artifacts/rendered-project.tar.gz ]]; then
+            archive=.pipeline-artifacts/rendered-project.tar.gz
+          else
+            echo "No rendered project archive was found for metadata packaging." >&2
+            exit 1
+          fi
+          test -s "$archive"
+          mkdir -p projects
+          tar -xzf "$archive" -C projects
+
+      - name: Read project ID
+        id: project
+        shell: bash
+        run: |
+          project_id=$(python -c "import json; print(json.load(open('.pipeline-artifacts/production_state.json'))['project_id'])")
+          echo "project_id=$project_id" >> "$GITHUB_OUTPUT"
+
+      - name: Package final video metadata
+        env:
+          RITZZ_PROJECT_ID: ${{ steps.project.outputs.project_id }}
+          RITZZ_RERUN_METADATA: ${{ needs.restore-production.outputs.rerun_from_stage == 'metadata_packaging' }}
+          RITZZ_REVIEW_RUN_ID: ${{ needs.render-video.result == 'success' && github.run_id || needs.restore-production.outputs.rerun_from_stage == 'metadata_packaging' && github.run_id || needs.restore-production.outputs.source_run_id }}
+        run: python scripts/run_metadata_packaging.py
+
+      - name: Upload metadata packaging checkpoint
+        if: ${{ success() && (!endsWith(needs.restore-production.outputs.source_artifact, '-private_upload') || needs.restore-production.outputs.rerun_from_stage == 'metadata_packaging') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-metadata_packaging
+          path: .pipeline-artifacts/
+          if-no-files-found: error
+          include-hidden-files: true
+          overwrite: true
+
+      - name: Upload failed metadata packaging checkpoint
+        if: ${{ failure() && hashFiles('.pipeline-artifacts/metadata_packaging.json') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-metadata_packaging
+          path: .pipeline-artifacts/
+          if-no-files-found: error
+          include-hidden-files: true
+          overwrite: true
+
   packaging-approval:
     name: Human approval for packaging
-    needs: [video-approval, restore-production]
-    if: ${{ always() && needs.restore-production.result == 'success' && (needs.video-approval.result == 'success' || (needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '7')) && (needs.restore-production.outputs.effective_mode == 'NEW' || needs.restore-production.outputs.resume_from_index <= 7) }}
+    needs: [metadata-packaging, restore-production]
+    if: ${{ always() && needs.restore-production.result == 'success' && (needs.metadata-packaging.result == 'success' || (needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '8')) && (needs.restore-production.outputs.effective_mode == 'NEW' || needs.restore-production.outputs.resume_from_index <= 8) }}
     runs-on: ubuntu-latest
     environment:
       name: ritzz-packaging-approval
@@ -1160,14 +1255,14 @@ jobs:
     steps:
       - name: Confirm packaging review boundary
         run: |
-          echo "Packaging metadata is ready for review."
+          echo "Review the final title, description, tags, QA status, and rendered video in the metadata-packaging job summary."
           echo "Approve this environment to permit the private test upload."
           echo "Public publication remains disabled."
 
   private-upload:
     name: Upload test video privately
-    needs: [packaging-approval, render-video, restore-production]
-    if: ${{ always() && needs.restore-production.result == 'success' && (needs.restore-production.outputs.effective_mode == 'NEW' || needs.restore-production.outputs.resume_from_index <= 7) && ((needs.packaging-approval.result == 'success') || (needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '7')) }}
+    needs: [packaging-approval, metadata-packaging, render-video, restore-production]
+    if: ${{ always() && needs.restore-production.result == 'success' && (needs.restore-production.outputs.effective_mode == 'NEW' || needs.restore-production.outputs.resume_from_index <= 8) && ((needs.packaging-approval.result == 'success') || (needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '8')) }}
     runs-on: ubuntu-latest
     env:
       GOOGLE_CLIENT_SECRETS_B64: ${{ secrets.GOOGLE_CLIENT_SECRETS_B64 }}
@@ -1201,18 +1296,18 @@ jobs:
       - name: Download rendered project
         uses: actions/download-artifact@v4
         with:
-          name: ${{ needs.render-video.result == 'success' && format('ritzz-production-{0}-render_video', needs.restore-production.outputs.production_id) || endsWith(needs.restore-production.outputs.source_artifact, '-private_upload') && needs.restore-production.outputs.source_artifact || steps.pending-upload.outputs.artifact_name || needs.restore-production.outputs.source_artifact || format('ritzz-production-{0}-render_video', needs.restore-production.outputs.production_id) }}
-          run-id: ${{ needs.render-video.result == 'success' && github.run_id || endsWith(needs.restore-production.outputs.source_artifact, '-private_upload') && needs.restore-production.outputs.source_run_id || steps.pending-upload.outputs.artifact_name != '' && github.run_id || needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '7' && needs.restore-production.outputs.source_run_id || github.run_id }}
+          name: ${{ needs.metadata-packaging.result == 'success' && needs.restore-production.outputs.rerun_from_stage == 'metadata_packaging' && format('ritzz-production-{0}-metadata_packaging', needs.restore-production.outputs.production_id) || endsWith(needs.restore-production.outputs.source_artifact, '-private_upload') && needs.restore-production.outputs.source_artifact || steps.pending-upload.outputs.artifact_name || needs.metadata-packaging.result == 'success' && format('ritzz-production-{0}-metadata_packaging', needs.restore-production.outputs.production_id) || needs.render-video.result == 'success' && format('ritzz-production-{0}-render_video', needs.restore-production.outputs.production_id) || needs.restore-production.outputs.source_artifact || format('ritzz-production-{0}-render_video', needs.restore-production.outputs.production_id) }}
+          run-id: ${{ needs.metadata-packaging.result == 'success' && needs.restore-production.outputs.rerun_from_stage == 'metadata_packaging' && github.run_id || endsWith(needs.restore-production.outputs.source_artifact, '-private_upload') && needs.restore-production.outputs.source_run_id || steps.pending-upload.outputs.artifact_name != '' && github.run_id || needs.metadata-packaging.result == 'success' && github.run_id || needs.render-video.result == 'success' && github.run_id || needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '8' && needs.restore-production.outputs.source_run_id || github.run_id }}
           github-token: ${{ github.token }}
           path: .pipeline-artifacts
 
       - name: Extract rendered project
-        if: ${{ needs.render-video.result == 'success' || (!endsWith(needs.restore-production.outputs.source_artifact, '-private_upload') && !endsWith(steps.pending-upload.outputs.artifact_name, '-private_upload')) }}
+        if: ${{ (needs.metadata-packaging.result == 'success' && needs.restore-production.outputs.rerun_from_stage == 'metadata_packaging') || (!endsWith(needs.restore-production.outputs.source_artifact, '-private_upload') && steps.pending-upload.outputs.artifact_name == '' && (needs.metadata-packaging.result == 'success' || needs.render-video.result == 'success' || needs.restore-production.outputs.source_artifact != '')) }}
         shell: bash
         run: mkdir -p projects && tar -xzf .pipeline-artifacts/rendered-project.tar.gz -C projects
 
       - name: Extract pending upload project
-        if: ${{ needs.render-video.result != 'success' && (endsWith(needs.restore-production.outputs.source_artifact, '-private_upload') || endsWith(steps.pending-upload.outputs.artifact_name, '-private_upload')) }}
+        if: ${{ needs.restore-production.outputs.rerun_from_stage != 'metadata_packaging' && (endsWith(needs.restore-production.outputs.source_artifact, '-private_upload') || endsWith(steps.pending-upload.outputs.artifact_name, '-private_upload')) }}
         shell: bash
         run: mkdir -p projects && tar -xzf .pipeline-artifacts/private-upload-project.tar.gz -C projects
 
@@ -1220,7 +1315,7 @@ jobs:
         id: project
         shell: bash
         run: |
-          project_id=$(python -c "import json; print(json.load(open('.pipeline-artifacts/content_workflow_result.json'))['project_id'])")
+          project_id=$(python -c "import json; print(json.load(open('.pipeline-artifacts/production_state.json'))['project_id'])")
           echo "project_id=$project_id" >> "$GITHUB_OUTPUT"
 
       - name: Write OAuth files from GitHub Secrets
@@ -1241,7 +1336,7 @@ jobs:
           tar -czf .pipeline-artifacts/private-upload-project.tar.gz -C projects "$project_name"
 
       - name: Start private-upload stage for rerun or saved-result retry
-        if: ${{ (needs.restore-production.outputs.rerun_from_stage != '' && endsWith(needs.restore-production.outputs.source_artifact, '-private_upload')) || (needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '7' && endsWith(needs.restore-production.outputs.source_artifact, '-private_upload')) }}
+        if: ${{ (needs.restore-production.outputs.rerun_from_stage != '' && endsWith(needs.restore-production.outputs.source_artifact, '-private_upload')) || (needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '8' && endsWith(needs.restore-production.outputs.source_artifact, '-private_upload')) }}
         run: python scripts/manage_pipeline_production.py start --stage private_upload
 
       - name: Authorize replacement after confirmed YouTube deletion

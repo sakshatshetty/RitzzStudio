@@ -110,7 +110,7 @@ def main() -> int:
         "project_path": str(result.project_path),
         "topic": selection["topic"],
         "status": result.project.status,
-        "completed_stages": ["research", "research_validation", "outline", "script", "packaging"],
+        "completed_stages": ["research", "research_validation", "outline", "script"],
         "test_run": True,
         "public_publish_allowed": False,
     }

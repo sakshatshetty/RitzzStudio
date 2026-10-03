@@ -224,16 +224,18 @@ def test_failed_research_validation_stops_before_outline(tmp_path):
     assert qa_report["stages"]["research"][0]["status"] == "FAIL"
 
 
-def test_content_workflow_writes_packaging_artifact_after_script(tmp_path):
+def test_content_workflow_persists_only_provisional_metadata_until_render(tmp_path):
     result = workflow(tmp_path, []).run("Why do pirates wear eye patches?")
-    assert result.project.steps["packaging"] is True
+    assert result.project.steps["packaging"] is False
     assert (result.project_path / "packaging.json").exists()
     payload = json.loads((result.project_path / "packaging.json").read_text())
     assert payload["selected_title"]
-    assert payload["metadata"]["description"]
-    assert payload["metadata"]["tags"]
-    qa_report = json.loads((result.project_path / "qa" / "qa_report.json").read_text())
-    assert qa_report["stages"]["packaging"][0]["status"] == "PASS"
+    assert payload["metadata"]["description"] == ""
+    assert payload["metadata"]["tags"] == []
+    qa_report_path = result.project_path / "qa" / "qa_report.json"
+    if qa_report_path.is_file():
+        qa_report = json.loads(qa_report_path.read_text())
+        assert "packaging" not in qa_report["stages"]
 
 
 def test_ai_qa_failure_gets_one_feedback_guided_retry(tmp_path):

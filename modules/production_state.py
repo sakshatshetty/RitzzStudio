@@ -20,6 +20,7 @@ PIPELINE_STAGES = (
     "storyboard_generation",
     "image_generation",
     "render_video",
+    "metadata_packaging",
     "private_upload",
 )
 _PRODUCTION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
@@ -89,7 +90,10 @@ class ProductionStateStore:
                 "STATE_ARTIFACT_MISMATCH",
                 f"Production state could not be read: {exc}",
             ) from exc
+        migrated = self._migrate_state(state)
         self._validate_state(state, production_id)
+        if migrated:
+            self._save(state)
         self._validate_artifacts(state)
         self._validate_artifact_contracts(state)
         return state
@@ -316,6 +320,7 @@ class ProductionStateStore:
                 "STATE_ARTIFACT_MISMATCH",
                 f"Production state could not be read: {exc}",
             ) from exc
+        self._migrate_state(state)
         if not isinstance(state, dict) or state.get("state_version") != STATE_VERSION:
             raise ProductionStateError(
                 "STATE_ARTIFACT_MISMATCH",
@@ -357,6 +362,32 @@ class ProductionStateStore:
                     "STATE_ARTIFACT_MISMATCH",
                     f"Invalid stage state for {stage}.",
                 )
+
+    @staticmethod
+    def _migrate_state(state: Any) -> bool:
+        if (
+            not isinstance(state, dict)
+            or state.get("state_version") != STATE_VERSION
+            or not isinstance(state.get("stages"), dict)
+            or "metadata_packaging" in state["stages"]
+        ):
+            return False
+        state["stages"]["metadata_packaging"] = {
+            "status": "pending",
+            "attempts": 0,
+            "started_at": None,
+            "completed_at": None,
+            "error": None,
+            "artifacts": [],
+        }
+        state["stages"] = {
+            stage: state["stages"][stage]
+            for stage in PIPELINE_STAGES
+            if stage in state["stages"]
+        }
+        if state.get("status") == "completed":
+            state["status"] = "in_progress"
+        return True
 
     def _validate_artifacts(self, state: dict[str, Any]) -> None:
         for stage in PIPELINE_STAGES:

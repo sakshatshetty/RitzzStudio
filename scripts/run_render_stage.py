@@ -1,11 +1,12 @@
 """Render and technically validate the approved test project."""
 
+import json
 import os
 import shutil
-import sys
 import subprocess
-from pathlib import Path
+import sys
 from collections.abc import Callable
+from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -13,6 +14,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from modules.image.image_overlays import create_thumbnail
 from modules.project.manager import ProjectManager
+from modules.project.packaging import PackagingArtifact
+from modules.storyboard.engine import StoryboardEngine
 from modules.video.pipeline_engine import VideoProductionPipeline
 
 
@@ -113,6 +116,23 @@ def main() -> int:
     print(f"Output: {result.output_video_file}")
     if result.status != "completed" or result.technical_qa_status != "PASS":
         raise RuntimeError(result.error_message or "Render or technical QA failed.")
+
+    storyboard = StoryboardEngine.load_storyboard(storyboard_file)
+    packaging_file = project_directory / "packaging.json"
+    artifact = PackagingArtifact.from_dict(
+        json.loads(packaging_file.read_text(encoding="utf-8"))
+    )
+    thumbnail_file = output_directory / "thumbnail.jpg"
+    _reuse_or_create_thumbnail(
+        thumbnail_file,
+        image_directory / f"{storyboard.scenes[0].scene_id}.png",
+        artifact.selected_title,
+        probe_media=pipeline.renderer._probe_media,
+    )
+    if not thumbnail_file.is_file() or thumbnail_file.stat().st_size == 0:
+        raise RuntimeError(
+            f"Thumbnail generation did not produce a valid file: {thumbnail_file}"
+        )
     return 0
 
 

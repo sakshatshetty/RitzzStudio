@@ -19,10 +19,11 @@ unexpired saved archive from the immediately preceding stage and skips topic
 discovery and content creation.
 
 Project reruns are supported from `voice_generation`, `storyboard_generation`,
-`image_generation`, `render_video`, and `private_upload`. For example, choosing
-`render_video` restores the project's latest saved image-stage archive, then
-runs rendering, video review, packaging review, and (after approval) private
-upload. Failed upstream stages are not silently repeated. The selected stage
+`image_generation`, `render_video`, `metadata_packaging`, and `private_upload`.
+For example, choosing `render_video` restores the project's latest saved
+image-stage archive, then runs rendering, video review, final metadata
+packaging, packaging review, and (after approval) private upload. Failed
+upstream stages are not silently repeated. The selected stage
 must have its required preceding-stage artifact available in an unexpired
 Actions artifact. Video and packaging approval environments remain in force
 for reruns that reach those steps.
@@ -41,16 +42,22 @@ stop their individual stage.
 6. Pause at the protected test-approval environment.
 7. Run the existing Research -> Outline -> Script content workflow.
 8. Upload the generated project artifacts to the GitHub Actions run.
-9. Use the selected vidIQ candidate to inform titles, tags, description framing,
-   and the thumbnail brief; persist the source report and candidate context.
+9. Persist approved topic and cached vidIQ keyword evidence with the project.
 10. Generate and validate ElevenLabs narration with character alignment.
 11. Build the narrative and audio-timed static storyboard.
-12. Render the test video and run deterministic technical QA.
+12. Render the test video and complete applicable technical and semantic QA.
 13. Pause for human video review and approval.
-14. Pause for packaging approval.
-15. Upload the test video privately through YouTube OAuth.
-16. Keep the current run marked as a test run; public publication remains
+14. Generate final title, description, and tags from the completed production;
+    reuse cached vidIQ evidence and save `metadata_packaging.json`.
+15. Show the final metadata and QA state before packaging approval.
+16. Upload the test video privately through YouTube OAuth after approval.
+17. Keep the current run marked as a test run; public publication remains
    disabled.
+
+Metadata packaging is resumable independently. A completed metadata artifact is
+reused without another GPT or vidIQ call; a failed metadata stage can be retried
+without rerunning discovery, topic selection, or media generation. Thumbnail
+generation remains outside this metadata stage.
 
 Topic duplicate prevention reads the durable repository inventory at
 `data/content_inventory.json`. Test runs do not write to this file and therefore

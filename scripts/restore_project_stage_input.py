@@ -25,7 +25,8 @@ STAGE_INPUTS: dict[str, tuple[str, str]] = {
     "storyboard_generation": ("voice", "voice-project.tar.gz"),
     "image_generation": ("storyboard", "storyboard-project.tar.gz"),
     "render_video": ("image", "image-project.tar.gz"),
-    "private_upload": ("rendered", "rendered-project.tar.gz"),
+    "metadata_packaging": ("rendered", "rendered-project.tar.gz"),
+    "private_upload": ("metadata", "rendered-project.tar.gz"),
 }
 API_ROOT = "https://api.github.com"
 

@@ -1,18 +1,23 @@
-from dataclasses import dataclass
 import inspect
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
+from modules.outline.models import Outline
 from modules.project import Project, ProjectManager
 from modules.project.config import ProductionConfig
 from modules.project.packaging import PackagingArtifact, PackagingEngine
-from modules.outline.models import Outline
+from modules.qa.engine import record_stage_qa
+from modules.qa.models import QAStageResult
 from modules.research.models import Research
 from modules.research.validation import validate_research
 from modules.script.models import Script
-from modules.qa.engine import record_stage_qa
-from modules.qa.models import QAStageResult
-from modules.topic_intelligence.inventory import ContentInventoryEntry, ContentInventoryManager, inventory_path, normalize_topic
+from modules.topic_intelligence.inventory import (
+    ContentInventoryEntry,
+    ContentInventoryManager,
+    inventory_path,
+    normalize_topic,
+)
 from modules.topic_intelligence.models import OpportunityReport, TopicSelection
 
 
@@ -239,44 +244,25 @@ class ContentWorkflow:
                 qa_recorded = True
             self._complete_if_needed(project.project_id, "script")
 
-            packaging_script = script_dir / "script.json"
-            script_excerpt = self._extract_script_excerpt(packaging_script)
-            current_stage = "packaging"
-            qa_recorded = False
-            packaging_result = self.packaging_engine.build_project_packaging(
-                project=self.manager.load_project(project.project_id),
-                topic=topic,
-                script_excerpt=script_excerpt,
-                opportunity_context=(
-                    {
-                        "report_id": report.report_id,
-                        "provider": report.provider,
-                        **candidate.model_dump(mode="json"),
-                    }
-                    if report and candidate
-                    else {}
-                ),
+            opportunity_context = (
+                {
+                    "report_id": report.report_id,
+                    "provider": report.provider,
+                    **candidate.model_dump(mode="json"),
+                }
+                if report and candidate
+                else {}
             )
-            if isinstance(packaging_result, PackagingArtifact):
-                packaging_ok = bool(
-                    packaging_result.selected_title.strip()
-                    and packaging_result.metadata.description.strip()
-                    and packaging_result.metadata.tags
-                )
-                record_stage_qa(
-                    project_path,
-                    QAStageResult(
-                        stage="packaging",
-                        status="PASS" if packaging_ok else "FAIL",
-                        checks={"title_description_tags": "PASS" if packaging_ok else "FAIL"},
-                        findings=[] if packaging_ok else ["Required packaging fields are missing."],
-                        recommendations=[] if packaging_ok else ["Regenerate packaging before proceeding."],
-                    ),
-                )
-                qa_recorded = True
-                if not packaging_ok:
-                    raise ValueError("Packaging QA failed; inspect qa/qa_report.json.")
-            self._complete_if_needed(project.project_id, "packaging")
+            provisional_package = PackagingArtifact(
+                selected_title=str(
+                    opportunity_context.get("proposed_title") or topic
+                ).strip(),
+                opportunity_context=opportunity_context,
+            )
+            (project_path / "packaging.json").write_text(
+                json.dumps(provisional_package.to_dict(), indent=2),
+                encoding="utf-8",
+            )
         except Exception as exc:
             if not qa_recorded:
                 record_stage_qa(
