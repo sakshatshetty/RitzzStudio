@@ -199,12 +199,7 @@ class StoryboardEngine:
                     )
                 )
 
-                transition = (
-                    "fade"
-                    if index == 0
-                    and scene_number > 1
-                    else "cut"
-                )
+                transition = "cut"
 
                 # Editorial text is intentionally optional.
                 #
@@ -380,20 +375,9 @@ class StoryboardEngine:
     def _select_camera_motion(
         scene_number: int,
     ) -> CameraMotion:
-        """Select restrained camera movement."""
-
-        motions: list[CameraMotion] = [
-            "static",
-            "slow_zoom_in",
-            "slow_zoom_out",
-            "pan_left",
-            "pan_right",
-        ]
-
-        return motions[
-            (scene_number - 1)
-            % len(motions)
-        ]
+        """Keep production scenes static regardless of their position."""
+        del scene_number
+        return "static"
 
     # ---------------------------------------------------------
     # Validation

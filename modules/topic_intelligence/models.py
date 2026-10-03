@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -12,38 +12,17 @@ OpportunityType = Literal["TRENDING", "EVERGREEN", "TREND_TO_EVERGREEN"]
 EditorialStatus = Literal["PASS", "REVIEW", "FAIL"]
 ValidationStatus = Literal["RECOMMENDED", "REVIEW", "REJECTED"]
 RitzzFitStatus = Literal["PASS", "REVIEW", "FAIL"]
-InventoryStatus = Literal["ELIGIBLE", "DUPLICATE", "NOT_CHECKED"]
-VidiqStatus = Literal["SCORED", "UNAVAILABLE", "VIDIQ_PROVIDER_ERROR"]
 StoryType = Literal[
-    "WHY",
-    "HOW",
-    "ORIGIN",
-    "MYSTERY",
     "HISTORY",
     "SCIENCE",
-    "MYTH_VS_FACT",
-    "EXPLAINER",
-    "HUMAN_BEHAVIOR",
+    "MYSTERY",
+    "BIOGRAPHY",
+    "ARCHAEOLOGY",
     "GEOGRAPHY",
-    "INVENTION",
+    "HUMAN_BEHAVIOR",
+    "TECHNOLOGY",
     "OTHER",
 ]
-
-
-class RitzzFitResult(BaseModel):
-    fit_status: RitzzFitStatus
-    fit_score: float | None = Field(default=None, ge=0, le=100)
-    story_type: StoryType = "OTHER"
-    curiosity_strength: float | None = Field(default=None, ge=0, le=100)
-    researchability: float | None = Field(default=None, ge=0, le=100)
-    story_depth: float | None = Field(default=None, ge=0, le=100)
-    originality: float | None = Field(default=None, ge=0, le=100)
-    visual_potential: float | None = Field(default=None, ge=0, le=100)
-    format_fit: float | None = Field(default=None, ge=0, le=100)
-    evergreen_potential: float | None = Field(default=None, ge=0, le=100)
-    audience_value: float | None = Field(default=None, ge=0, le=100)
-    temporary_trend_dependency: float | None = Field(default=None, ge=0, le=100)
-    reason: str
 
 
 class TopicDiscoveryRequest(BaseModel):
@@ -63,6 +42,22 @@ class EvidenceMetric(BaseModel):
     observed_at: str | None = None
     available: bool = False
     source: str
+
+
+class RitzzFitResult(BaseModel):
+    fit_status: RitzzFitStatus
+    fit_score: float | None = None
+    story_type: StoryType = "OTHER"
+    curiosity_strength: float | None = None
+    researchability: float | None = None
+    story_depth: float | None = None
+    originality: float | None = None
+    visual_potential: float | None = None
+    format_fit: float | None = None
+    evergreen_potential: float | None = None
+    audience_value: float | None = None
+    temporary_trend_dependency: float | None = None
+    reason: str
 
 
 class OpportunityCandidate(BaseModel):
@@ -86,29 +81,28 @@ class OpportunityCandidate(BaseModel):
     filter_reasons: list[str] = Field(default_factory=list)
     validation_status: ValidationStatus = "REVIEW"
     validation_reasons: list[str] = Field(default_factory=list)
-    inventory_status: InventoryStatus = "NOT_CHECKED"
-    provider: str
     discovery_sources: list[str] = Field(default_factory=list)
-    discovered_at: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
-    raw_evidence: dict = Field(default_factory=dict)
     competitor_topic_performance_available: bool = False
     competitor_evidence: list[CompetitorEvidence] = Field(default_factory=list)
     competitor_topic_patterns: list[CompetitorTopicPattern] = Field(default_factory=list)
-    current_vidiq_demand_signals: dict[str, EvidenceMetric] = Field(default_factory=dict)
-    current_vidiq_demand_available: bool = False
-    vidiq_status: VidiqStatus = "UNAVAILABLE"
-    competition_saturation_signal: EvidenceMetric | None = None
-    competition_saturation_assessment: str | None = None
     ritzz_differentiation_angle: str | None = None
     observed_pattern: str | None = None
     concrete_subject: str | None = None
     subject_evidence_refs: list[str] = Field(default_factory=list)
     originality_reason: str | None = None
     curiosity_family: str | None = None
+    current_vidiq_demand_signals: dict[str, EvidenceMetric] = Field(default_factory=dict)
+    current_vidiq_demand_available: bool = False
+    vidiq_status: Literal["SCORED", "UNAVAILABLE"] = "UNAVAILABLE"
+    competition_saturation_signal: EvidenceMetric | None = None
+    competition_saturation_assessment: str | None = None
+    inventory_status: str | None = None
     ritzz_fit: RitzzFitResult | None = None
-    ritzz_learning_signals: dict = Field(default_factory=dict)
+    provider: str
+    discovered_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+    raw_evidence: dict = Field(default_factory=dict)
 
 
 class OpportunityReport(BaseModel):
@@ -127,7 +121,7 @@ class OpportunityReport(BaseModel):
     validation_version: str = "ritzz-topic-validation-v2"
     shortlist_candidate_ids: list[str] = Field(default_factory=list)
     competitor_report: dict | None = None
-    discovery_diagnostics: dict = Field(default_factory=dict)
+    discovery_diagnostics: dict[str, Any] = Field(default_factory=dict)
 
 
 class TopicSelection(BaseModel):
@@ -145,14 +139,12 @@ class TopicSelection(BaseModel):
     project_id: str | None = None
     normalized_topic: str | None = None
     angle: str | None = None
-    source_evidence: dict = Field(default_factory=dict)
-    trend_evidence: dict[str, EvidenceMetric] = Field(default_factory=dict)
-    competition_evidence: EvidenceMetric | None = None
-    competitor_evidence: list[dict] = Field(default_factory=list)
-    ritzz_fit: dict = Field(default_factory=dict)
-    ritzz_learning_signals: dict = Field(default_factory=dict)
-    discovered_at: str | None = None
-    approval_metadata: dict = Field(default_factory=dict)
+    source_evidence: dict[str, Any] = Field(default_factory=dict)
+    trend_evidence: dict[str, Any] = Field(default_factory=dict)
+    competitor_evidence: list[dict[str, Any]] = Field(default_factory=list)
+    ritzz_fit: dict[str, Any] | None = None
+    ritzz_learning_signals: dict[str, Any] | None = None
+    approval_metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_duration(self):

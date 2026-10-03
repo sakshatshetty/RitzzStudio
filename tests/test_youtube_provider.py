@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 from modules.publishing.youtube_provider import YouTubeProvider
 
@@ -13,18 +14,18 @@ class FakeRequest:
 
 class FakeVideos:
     def __init__(self):
-        self.insert_args = None
+        self.insert_args: dict[str, Any] | None = None
 
-    def insert(self, **kwargs):
+    def insert(self, **kwargs: Any):
         self.insert_args = kwargs
         return FakeRequest({"id": "abc123"})
 
 
 class FakeThumbnails:
     def __init__(self):
-        self.set_args = None
+        self.set_args: dict[str, Any] | None = None
 
-    def set(self, **kwargs):
+    def set(self, **kwargs: Any):
         self.set_args = kwargs
         return FakeRequest({"kind": "youtube#thumbnailSetResponse"})
 
@@ -68,6 +69,7 @@ def test_youtube_provider_maps_metadata_and_schedule_without_network(tmp_path: P
     )
 
     request = service.video_resource.insert_args
+    assert request is not None
     assert result == {"video_id": "abc123", "url": "https://youtu.be/abc123"}
     assert request["part"] == "snippet,status"
     assert request["body"] == {
@@ -105,6 +107,7 @@ def test_youtube_provider_sets_thumbnail_without_network(tmp_path: Path):
     )
 
     assert response == {"kind": "youtube#thumbnailSetResponse"}
+    assert service.thumbnail_resource.set_args is not None
     assert service.thumbnail_resource.set_args == {
         "videoId": "abc123",
         "media_body": media_file,

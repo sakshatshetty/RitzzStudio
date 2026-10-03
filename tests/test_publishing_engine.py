@@ -304,9 +304,8 @@ def test_publish_packaged_video_uses_selected_packaging_metadata(tmp_path: Path)
     video_file.write_bytes(b"video")
 
     engine = PublishingEngine(projects_dir, provider=FakeYouTubeProvider())
-    packaging = engine.provider
-    artifact = None
     from modules.project.packaging import PackagingEngine
+
     packaging_engine = PackagingEngine(projects_dir)
     artifact = packaging_engine.build_project_packaging(
         project=project,

@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
-from modules.project.manager import ProjectManager
 from modules.project.models import Project
 from modules.project.packaging import PackagingArtifact
 

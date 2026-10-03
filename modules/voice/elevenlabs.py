@@ -51,7 +51,7 @@ class ElevenLabsProvider:
             "Content-Type": "application/json",
         }
 
-        payload = {
+        payload: dict[str, Any] = {
             "text": request.text,
             "model_id": request.model_id,
             "output_format": request.output_format,

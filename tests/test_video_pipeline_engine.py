@@ -1,7 +1,6 @@
 import json
 import shutil
 import subprocess
-import wave
 from pathlib import Path
 
 import pytest
@@ -14,7 +13,7 @@ from modules.video.pipeline_models import (
     VideoProductionRequest,
     VideoProductionResult,
 )
-from modules.video.qa_models import SceneQAResult, TechnicalQAResult
+from modules.video.qa_models import QAStatus, SceneQAResult, TechnicalQAResult
 from modules.qa.engine import load_project_qa
 from modules.image.models import ImageGenerationResult
 from modules.storyboard.engine import StoryboardEngine
@@ -101,26 +100,27 @@ def create_audio(
         tmp_path / "narration.wav"
     )
 
-    sample_rate = 48_000
-    duration_seconds = 3
-    frame_count = (
-        sample_rate
-        * duration_seconds
+    ffmpeg = shutil.which("ffmpeg")
+    assert ffmpeg is not None
+    completed = subprocess.run(
+        [
+            ffmpeg,
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=48000:duration=3",
+            "-ac",
+            "1",
+            "-c:a",
+            "pcm_s16le",
+            str(audio_file),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
     )
-
-    with wave.open(
-        str(audio_file),
-        "wb",
-    ) as audio:
-        audio.setnchannels(1)
-        audio.setsampwidth(2)
-        audio.setframerate(
-            sample_rate
-        )
-        audio.writeframes(
-            b"\x00\x00"
-            * frame_count
-        )
+    assert completed.returncode == 0, completed.stderr
 
     return audio_file
 
@@ -151,6 +151,8 @@ def create_storyboard(
             "background": "",
             "props": [],
             "text_overlay": "",
+            "callout_not_warranted": True,
+            "callout_not_warranted_reason": "This opening scene is context-setting.",
             "camera_motion": "slow_zoom_in",
             "transition": "cut",
             "research_sources": [],
@@ -174,6 +176,8 @@ def create_storyboard(
             "background": "",
             "props": [],
             "text_overlay": "",
+            "callout_not_warranted": True,
+            "callout_not_warranted_reason": "This is a transitional reaction beat.",
             "camera_motion": "pan_right",
             "transition": "cut",
             "research_sources": [],
@@ -197,6 +201,8 @@ def create_storyboard(
             "background": "",
             "props": [],
             "text_overlay": "",
+            "callout_not_warranted": True,
+            "callout_not_warranted_reason": "This visual is a brief story bridge.",
             "camera_motion": "static",
             "transition": "cut",
             "research_sources": [],
@@ -486,6 +492,10 @@ def test_image_ai_qa_moves_editorial_and_repairs_impacted_images(tmp_path: Path)
     report = load_project_qa(tmp_path)
     assert status == "PASS"
     assert [scene.text_overlay for scene in updated_storyboard.scenes] == ["", "ICONIC", ""]
+    assert updated_storyboard.scenes[0].callout_not_warranted is True
+    assert updated_storyboard.scenes[0].callout_not_warranted_reason
+    assert updated_storyboard.scenes[1].callout_not_warranted is False
+    assert updated_storyboard.scenes[1].callout_not_warranted_reason is None
     assert provider.generated_scenes == ["scene_001", "scene_002", "scene_003"]
     assert (tmp_path / "qa" / "image_repair" / "attempt_1" / "originals" / "scene_001.png").is_file()
     assert (tmp_path / "qa" / "image_repair" / "attempt_1" / "originals" / "scene_003.png").is_file()
@@ -516,7 +526,7 @@ def test_pipeline_resynchronizes_and_renders_again_on_timeline_drift_review(
         nonlocal technical_attempts
         technical_attempts += 1
         status = "REVIEW" if technical_attempts == 1 else "PASS"
-        checks = {
+        checks: dict[str, QAStatus] = {
             "images": "PASS",
             "audio": "PASS",
             "scene_order": "PASS",

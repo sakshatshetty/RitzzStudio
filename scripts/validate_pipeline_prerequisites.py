@@ -5,6 +5,7 @@ import json
 import os
 from typing import Any
 
+
 REQUIRED_ENVIRONMENT_VARIABLES = (
     "OPENAI_API_KEY",
     "VIDIQ_MCP_API_KEY",
@@ -25,7 +26,7 @@ def _decode_json_secret(name: str) -> dict[str, Any]:
     except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"{name} is not valid Base64-encoded JSON.") from exc
     if not isinstance(payload, dict):
-        raise TypeError(f"{name} must decode to a JSON object.")
+        raise ValueError(f"{name} must decode to a JSON object.")
     return payload
 
 
@@ -47,7 +48,6 @@ def validate_prerequisites() -> dict[str, str]:
         "required_secrets": str(len(REQUIRED_ENVIRONMENT_VARIABLES)),
         "oauth_client_json": "valid",
         "oauth_token_json": "valid",
-        "vidiq_discovery": "configured",
         "api_calls_made": "none",
     }
 

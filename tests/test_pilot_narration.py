@@ -3,7 +3,12 @@ from pathlib import Path
 
 import pytest
 
-from modules.voice.models import VoiceAlignment, VoiceGenerationResult
+from modules.voice.models import (
+    VoiceAlignment,
+    VoiceGenerationRequest,
+    VoiceGenerationResult,
+    VoiceStatus,
+)
 from modules.voice.pilot import PilotNarrationEngine
 
 
@@ -20,11 +25,11 @@ def storyboard_file(tmp_path: Path) -> Path:
 
 
 class MockProvider:
-    def __init__(self, status="completed"):
-        self.status = status
-        self.request = None
+    def __init__(self, status: VoiceStatus = "completed"):
+        self.status: VoiceStatus = status
+        self.request: VoiceGenerationRequest | None = None
 
-    def generate(self, request):
+    def generate(self, request: VoiceGenerationRequest) -> VoiceGenerationResult:
         self.request = request
         output = Path(request.output_directory) / request.output_filename
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -40,6 +45,8 @@ def test_generates_dedicated_pilot_audio_and_alignment(tmp_path):
     provider = MockProvider()
     result = PilotNarrationEngine(provider, duration_probe=lambda _: 2.4).generate(
         storyboard_file(tmp_path), tmp_path / "pilot", "voice-1", minimum_duration_seconds=0.5)
+    assert provider.request is not None
+    assert result.file_path is not None
     assert provider.request.text == "First beat.\n\nSecond beat."
     assert provider.request.voice_settings.stability == 0.72
     assert provider.request.voice_settings.speed == 0.95

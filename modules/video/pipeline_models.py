@@ -57,5 +57,7 @@ class VideoProductionResult(BaseModel):
 
     error_message: str | None = None
     technical_qa_status: Literal["PASS", "REVIEW", "FAIL"] | None = None
+    integrated_lufs: float | None = None
+    true_peak_dbtp: float | None = None
     image_ai_qa_status: Literal["PASS", "REVIEW", "FAIL"] | None = None
     approval_status: Literal["PENDING", "APPROVED", "REJECTED"] = "PENDING"

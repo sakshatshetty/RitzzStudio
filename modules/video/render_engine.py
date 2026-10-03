@@ -1,5 +1,7 @@
 import json
+import math
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -10,6 +12,7 @@ from modules.video.models import VideoAssemblyPlan
 from modules.video.motion_engine import VideoMotionEngine
 from modules.video.motion_models import VideoMotionPlan
 from modules.video.render_models import (
+    AudioLoudnessMeasurement,
     VideoRenderRequest,
     VideoRenderResult,
 )
@@ -30,11 +33,22 @@ class FFmpegVideoRenderer:
 
     DEFAULT_CODEC = "libx264"
     DEFAULT_PRESET = "medium"
-    DEFAULT_CRF = "18"
+    DEFAULT_VIDEO_BITRATE = "10M"
     DEFAULT_AUDIO_CODEC = "aac"
     DEFAULT_AUDIO_BITRATE = "192k"
+    DEFAULT_AUDIO_TARGET_LUFS = -14.0
+    DEFAULT_AUDIO_TRUE_PEAK_CEILING_DBTP = -1.0
+    AUDIO_LOUDNESS_RANGE_LU = 11.0
+    VIDEO_BITRATE_TOLERANCE = 0.20
 
     DURATION_TOLERANCE_SECONDS = 0.25
+    _EBU_R128_SUMMARY_PATTERN = re.compile(
+        r"Integrated loudness:\s*I:\s*"
+        r"(-?(?:\d+(?:\.\d*)?|\.\d+))\s*LUFS"
+        r".*?True peak:\s*Peak:\s*"
+        r"(-?(?:\d+(?:\.\d*)?|\.\d+))\s*dBFS",
+        re.DOTALL,
+    )
 
     def __init__(
         self,
@@ -52,6 +66,23 @@ class FFmpegVideoRenderer:
             or os.getenv("RITZZ_FFPROBE_PATH")
             or shutil.which("ffprobe")
         )
+        self.video_bitrate = os.getenv(
+            "RITZZ_VIDEO_BITRATE",
+            self.DEFAULT_VIDEO_BITRATE,
+        ).strip()
+        self.video_bitrate_bps = self._parse_bitrate(self.video_bitrate)
+        self.audio_target_lufs = self._parse_audio_setting(
+            "RITZZ_AUDIO_TARGET_LUFS",
+            self.DEFAULT_AUDIO_TARGET_LUFS,
+            minimum=-70.0,
+            maximum=-5.0,
+        )
+        self.audio_true_peak_ceiling_dbtp = self._parse_audio_setting(
+            "RITZZ_AUDIO_TRUE_PEAK_CEILING_DBTP",
+            self.DEFAULT_AUDIO_TRUE_PEAK_CEILING_DBTP,
+            minimum=-9.0,
+            maximum=0.0,
+        )
 
         if not self.ffmpeg_path:
             raise FileNotFoundError(
@@ -66,6 +97,44 @@ class FFmpegVideoRenderer:
                 "Install FFmpeg or configure "
                 "RITZZ_FFPROBE_PATH."
             )
+
+    @staticmethod
+    def _parse_bitrate(value: str) -> int:
+        match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*([kKmM]?)\s*", value)
+        if match is None:
+            raise ValueError(
+                "RITZZ_VIDEO_BITRATE must be a positive number optionally "
+                "followed by k or M, for example 10M."
+            )
+        magnitude = float(match.group(1))
+        multiplier = {"": 1, "k": 1_000, "m": 1_000_000}[
+            match.group(2).lower()
+        ]
+        bitrate = int(magnitude * multiplier)
+        if bitrate <= 0:
+            raise ValueError("RITZZ_VIDEO_BITRATE must be greater than zero.")
+        return bitrate
+
+    @staticmethod
+    def _parse_audio_setting(
+        name: str,
+        default: float,
+        *,
+        minimum: float,
+        maximum: float,
+    ) -> float:
+        value = os.getenv(name)
+        if value is None:
+            return default
+        try:
+            parsed = float(value)
+        except ValueError as exc:
+            raise ValueError(f"{name} must be a number.") from exc
+        if not math.isfinite(parsed) or not minimum <= parsed <= maximum:
+            raise ValueError(
+                f"{name} must be between {minimum:g} and {maximum:g}."
+            )
+        return parsed
 
     # -----------------------------------------------------------------
     # Public API
@@ -142,6 +211,7 @@ class FFmpegVideoRenderer:
             probe = self._probe_media(
                 output_path
             )
+            loudness = self.measure_audio_loudness(output_path)
 
             return VideoRenderResult(
                 status="completed",
@@ -163,6 +233,8 @@ class FFmpegVideoRenderer:
                 file_size_bytes=(
                     output_path.stat().st_size
                 ),
+                integrated_lufs=loudness.integrated_lufs,
+                true_peak_dbtp=loudness.true_peak_dbtp,
                 error_message=None,
             )
 
@@ -175,6 +247,8 @@ class FFmpegVideoRenderer:
                 height=0,
                 fps=0,
                 file_size_bytes=0,
+                integrated_lufs=None,
+                true_peak_dbtp=None,
                 error_message=str(exc),
             )
 
@@ -287,6 +361,9 @@ class FFmpegVideoRenderer:
                 "-map",
                 f"{audio_input_index}:a:0",
 
+                "-af",
+                self.build_audio_filter(),
+
                 "-t",
                 f"{assembly_plan.total_duration_seconds:.3f}",
 
@@ -296,8 +373,20 @@ class FFmpegVideoRenderer:
                 "-preset",
                 self.DEFAULT_PRESET,
 
-                "-crf",
-                self.DEFAULT_CRF,
+                "-b:v",
+                self.video_bitrate,
+
+                "-minrate",
+                self.video_bitrate,
+
+                "-maxrate",
+                self.video_bitrate,
+
+                "-bufsize",
+                str(self.video_bitrate_bps * 2),
+
+                "-x264-params",
+                "nal-hrd=cbr",
 
                 "-pix_fmt",
                 "yuv420p",
@@ -348,6 +437,58 @@ class FFmpegVideoRenderer:
         )
 
         return output_path
+
+    def build_audio_filter(self) -> str:
+        return (
+            f"loudnorm=I={self.audio_target_lufs:g}:"
+            f"TP={self.audio_true_peak_ceiling_dbtp:g}:"
+            f"LRA={self.AUDIO_LOUDNESS_RANGE_LU:g}"
+        )
+
+    def measure_audio_loudness(
+        self,
+        media_file: str | Path,
+    ) -> AudioLoudnessMeasurement:
+        command = [
+            self.ffmpeg_path,
+            "-hide_banner",
+            "-nostats",
+            "-i",
+            str(media_file),
+            "-map",
+            "0:a:0",
+            "-af",
+            "ebur128=peak=true",
+            "-f",
+            "null",
+            "-",
+        ]
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(
+                f"FFmpeg loudness measurement failed for {media_file}.\n"
+                f"{completed.stderr}"
+            )
+        match = self._EBU_R128_SUMMARY_PATTERN.search(completed.stderr)
+        if match is None:
+            raise ValueError(
+                "FFmpeg did not report finite integrated loudness and true peak; "
+                "the audio may be silent or too short to measure."
+            )
+        integrated_lufs, true_peak_dbtp = map(float, match.groups())
+        if not math.isfinite(integrated_lufs) or not math.isfinite(true_peak_dbtp):
+            raise ValueError(
+                "FFmpeg reported non-finite integrated loudness or true peak."
+            )
+        return AudioLoudnessMeasurement(
+            integrated_lufs=integrated_lufs,
+            true_peak_dbtp=true_peak_dbtp,
+        )
 
     # -----------------------------------------------------------------
     # Filter generation
@@ -792,6 +933,26 @@ class FFmpegVideoRenderer:
             "width": width,
             "height": height,
             "fps": fps,
+            "video_codec_name": (
+                video_stream.get("codec_name")
+                if video_stream
+                else None
+            ),
+            "video_bit_rate_bps": self._parse_probe_integer(
+                video_stream.get("bit_rate")
+                if video_stream
+                else None
+            ),
+            "audio_duration_seconds": self._parse_probe_float(
+                audio_stream.get("duration")
+                if audio_stream
+                else None
+            ),
+            "audio_channels": self._parse_probe_integer(
+                audio_stream.get("channels")
+                if audio_stream
+                else None
+            ),
             "has_video": (
                 video_stream is not None
             ),
@@ -823,6 +984,31 @@ class FFmpegVideoRenderer:
             raise ValueError(
                 "Rendered output does not contain "
                 "an audio stream."
+            )
+
+        if probe["video_codec_name"] != "h264":
+            raise ValueError(
+                "Rendered video codec must be H.264; "
+                f"received {probe['video_codec_name']}."
+            )
+
+        video_bit_rate = probe["video_bit_rate_bps"]
+        minimum_bit_rate = int(
+            self.video_bitrate_bps
+            * (1 - self.VIDEO_BITRATE_TOLERANCE)
+        )
+        maximum_bit_rate = int(
+            self.video_bitrate_bps
+            * (1 + self.VIDEO_BITRATE_TOLERANCE)
+        )
+        if (
+            video_bit_rate is None
+            or not minimum_bit_rate <= video_bit_rate <= maximum_bit_rate
+        ):
+            raise ValueError(
+                "Rendered video bitrate is outside the configured range "
+                f"({minimum_bit_rate}–{maximum_bit_rate} bps): "
+                f"{video_bit_rate}."
             )
 
         if probe["width"] != (
@@ -858,3 +1044,33 @@ class FFmpegVideoRenderer:
                 "Rendered video duration does not match "
                 "assembly plan."
             )
+
+        audio_duration = probe["audio_duration_seconds"]
+        if (
+            audio_duration is not None
+            and abs(audio_duration - probe["duration_seconds"])
+            > self.DURATION_TOLERANCE_SECONDS
+        ):
+            raise ValueError(
+                "Rendered audio and video stream durations do not match."
+            )
+
+    @staticmethod
+    def _parse_probe_integer(value: object) -> int | None:
+        if not isinstance(value, (str, int, float)) or isinstance(value, bool):
+            return None
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None
+
+    @staticmethod
+    def _parse_probe_float(value: object) -> float | None:
+        if not isinstance(value, (str, int, float)) or isinstance(value, bool):
+            return None
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            return None
+        return parsed if parsed > 0 else None

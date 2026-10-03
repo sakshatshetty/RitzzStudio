@@ -187,6 +187,13 @@ def test_every_scene_has_required_visual_data():
         assert scene.duration_seconds > 0
 
 
+def test_production_storyboard_uses_static_images_and_hard_cuts():
+    storyboard = StoryboardEngine().create_storyboard(SCRIPT_FILE)
+
+    assert all(scene.camera_motion == "static" for scene in storyboard.scenes)
+    assert all(scene.transition == "cut" for scene in storyboard.scenes)
+
+
 def test_research_sources_are_preserved():
     engine = StoryboardEngine(
         target_scene_duration_seconds=5.0

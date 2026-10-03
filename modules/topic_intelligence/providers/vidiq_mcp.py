@@ -6,8 +6,9 @@ vidIQ-specific HTTP API or hard-coding undocumented tool arguments.
 
 import json
 import re
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 from urllib.parse import urlparse
 
 import requests
@@ -42,6 +43,28 @@ def normalize_candidate_key(topic: str) -> str:
     return " ".join(re.findall(r"[a-z0-9]+", topic.casefold()))
 
 
+class McpResponse(Protocol):
+    @property
+    def status_code(self) -> int:
+        ...
+
+    @property
+    def headers(self) -> Mapping[str, str]:
+        ...
+
+    @property
+    def text(self) -> str:
+        ...
+
+    def json(self) -> Any:
+        ...
+
+
+class McpSession(Protocol):
+    def post(self, url: str, **kwargs: Any) -> McpResponse:
+        ...
+
+
 class VidiqMcpProvider:
     name = "vidiq_mcp"
 
@@ -50,7 +73,7 @@ class VidiqMcpProvider:
         endpoint: str = VIDIQ_MCP_URL,
         api_key: str | None = VIDIQ_MCP_API_KEY,
         timeout: float = 30,
-        session: requests.Session | None = None,
+        session: McpSession | None = None,
         competitor_registry_path: str | Path | None = None,
     ) -> None:
         self.endpoint = endpoint
@@ -1964,7 +1987,7 @@ class VidiqMcpProvider:
             raise ProviderUnavailableError("vidIQ MCP initialization acknowledgement failed.")
         self._initialized = True
 
-    def _decode_response(self, response: requests.Response) -> dict[str, Any]:
+    def _decode_response(self, response: McpResponse) -> dict[str, Any]:
         try:
             payload = response.json()
         except ValueError:

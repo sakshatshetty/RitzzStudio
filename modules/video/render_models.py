@@ -3,6 +3,11 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
+class AudioLoudnessMeasurement(BaseModel):
+    integrated_lufs: float
+    true_peak_dbtp: float
+
+
 class VideoRenderRequest(BaseModel):
     """
     Request for rendering a synchronized video.
@@ -50,5 +55,8 @@ class VideoRenderResult(BaseModel):
         default=0,
         ge=0,
     )
+
+    integrated_lufs: float | None = None
+    true_peak_dbtp: float | None = None
 
     error_message: str | None = None

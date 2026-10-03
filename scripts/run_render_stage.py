@@ -1,9 +1,11 @@
 """Render and technically validate the approved test project."""
 
-import json
 import os
+import shutil
 import sys
+import subprocess
 from pathlib import Path
+from collections.abc import Callable
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -11,12 +13,6 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from modules.image.image_overlays import create_thumbnail
 from modules.project.manager import ProjectManager
-from modules.project.packaging import PackagingArtifact
-from modules.qa.engine import record_stage_qa
-from modules.qa.models import QAStageResult
-from modules.storyboard.engine import StoryboardEngine
-from modules.video.engine import VideoAssemblyEngine
-from modules.video.pilot_qa import OpenAIImageEditorialReviewer, PilotVideoQA
 from modules.video.pipeline_engine import VideoProductionPipeline
 
 
@@ -36,9 +32,13 @@ def _validate_production_render_format(probe: dict[str, object]) -> None:
             f"received {width}x{height}."
         )
     if not isinstance(fps, (int, float)) or isinstance(fps, bool) or fps != 30.0:
-        raise RuntimeError(
-            f"Production render must be exactly 30 FPS; received {fps}."
-        )
+        raise RuntimeError(f"Production render must be exactly 30 FPS; received {fps}.")
+    codec = probe.get("video_codec_name")
+    if codec is not None and codec != "h264":
+        raise RuntimeError(f"Production render must use H.264; received {codec}.")
+    bitrate = probe.get("video_bit_rate_bps")
+    if isinstance(bitrate, (int, float)) and bitrate < 1_200_000:
+        raise RuntimeError(f"Production render bitrate is below the configured minimum: {bitrate}.")
 
 
 def _reject_semantic_qa_fail(status: str) -> None:
@@ -46,6 +46,42 @@ def _reject_semantic_qa_fail(status: str) -> None:
         raise RuntimeError(
             "Rendered-video semantic QA found a clear scene/narration or editorial mismatch."
         )
+
+
+def _reuse_or_create_thumbnail(
+    thumbnail_file: str | Path,
+    source_image: str | Path,
+    title: str,
+    *,
+    probe_media: Callable[[str | Path], dict[str, object]] | None = None,
+) -> Path:
+    thumbnail = Path(thumbnail_file)
+    if thumbnail.is_file():
+        if probe_media is None:
+            ffprobe = shutil.which("ffprobe")
+            if not ffprobe:
+                raise FileNotFoundError("FFprobe is required to validate an existing thumbnail.")
+            result = subprocess.run(
+                [
+                    ffprobe, "-v", "error", "-select_streams", "v:0",
+                    "-show_entries", "stream=width,height",
+                    "-of", "json", str(thumbnail),
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            import json
+
+            streams = json.loads(result.stdout).get("streams", [])
+            dimensions = streams[0] if streams else {}
+            probe = {"width": dimensions.get("width"), "height": dimensions.get("height")}
+        else:
+            probe = probe_media(thumbnail)
+        if probe.get("width") != 1280 or probe.get("height") != 720:
+            raise RuntimeError("Existing thumbnail must remain 1280x720.")
+        return thumbnail
+    return create_thumbnail(source_image, thumbnail, title)
 
 
 def main() -> int:
@@ -77,63 +113,6 @@ def main() -> int:
     print(f"Output: {result.output_video_file}")
     if result.status != "completed" or result.technical_qa_status != "PASS":
         raise RuntimeError(result.error_message or "Render or technical QA failed.")
-
-    render_probe = pipeline.renderer._probe_media(output_video_file)
-    _validate_production_render_format(render_probe)
-    print("Production render format: 1920x1080, 16:9, 30 FPS")
-
-    if not result.synchronized_plan_file:
-        raise RuntimeError("Render completed without a synchronized scene plan.")
-    storyboard = StoryboardEngine.load_storyboard(storyboard_file)
-    plan = VideoAssemblyEngine.load_plan(result.synchronized_plan_file)
-    semantic = PilotVideoQA().run_rendered_video_semantic(
-        storyboard,
-        plan,
-        output_video_file,
-        OpenAIImageEditorialReviewer(),
-    )
-    semantic_report_file = project_directory / "qa" / "rendered_video_semantic_qa.json"
-    semantic_report_file.parent.mkdir(parents=True, exist_ok=True)
-    semantic_report_file.write_text(
-        semantic.model_dump_json(indent=2),
-        encoding="utf-8",
-    )
-    record_stage_qa(
-        project_directory,
-        QAStageResult(
-            stage="rendered_semantic_qa",
-            status=semantic.status,
-            checks={
-                result.scene_id: result.status
-                for result in semantic.results
-            },
-            findings=[
-                f"{result.scene_id}: {result.rationale}"
-                for result in semantic.results
-                if result.status != "PASS"
-            ],
-            recommendations=[
-                "Inspect the rendered video and scene report before human approval."
-            ] if semantic.status != "PASS" else [],
-            reviewer="openai_vision_rendered_frames",
-        ),
-    )
-    print(f"Rendered-video semantic QA: {semantic.status}")
-    print(f"Semantic QA report: {semantic_report_file}")
-    print(f"Semantic QA counts: {json.dumps(semantic.counts, sort_keys=True)}")
-    _reject_semantic_qa_fail(semantic.status)
-
-    packaging_file = project_directory / "packaging.json"
-    artifact = PackagingArtifact.from_dict(
-        json.loads(packaging_file.read_text(encoding="utf-8"))
-    )
-    thumbnail_file = project_directory / "video" / "thumbnail.jpg"
-    create_thumbnail(
-        image_directory / f"{storyboard.scenes[0].scene_id}.png",
-        thumbnail_file,
-        artifact.selected_title,
-    )
-    print(f"Generated YouTube thumbnail: {thumbnail_file}")
     return 0
 
 

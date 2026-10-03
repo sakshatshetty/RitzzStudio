@@ -96,23 +96,25 @@ def main() -> int:
         f"{selected_title}. {artifact.metadata.description or 'A curious explainer about the selected topic.'}"
     )
 
+    if not os.getenv("GOOGLE_CLIENT_SECRETS_FILE") or not os.getenv("GOOGLE_TOKEN_FILE"):
+        raise RuntimeError(
+            "Google OAuth paths are not configured. Set GOOGLE_CLIENT_SECRETS_FILE and GOOGLE_TOKEN_FILE in .env."
+        )
+    credentials_file = os.environ["GOOGLE_CLIENT_SECRETS_FILE"]
+    token_file = os.environ["GOOGLE_TOKEN_FILE"]
+
     if args.create_approval:
         engine = PublishingEngine(projects_dir, provider=YouTubeProvider(
-            os.environ.get("GOOGLE_CLIENT_SECRETS_FILE"),
-            os.environ.get("GOOGLE_TOKEN_FILE"),
+            credentials_file,
+            token_file,
         ))
         engine.create_approval(project, approved=True, approved_by=args.approved_by)
     else:
         engine = PublishingEngine(projects_dir)
 
-    if not os.getenv("GOOGLE_CLIENT_SECRETS_FILE") or not os.getenv("GOOGLE_TOKEN_FILE"):
-        raise RuntimeError(
-            "Google OAuth paths are not configured. Set GOOGLE_CLIENT_SECRETS_FILE and GOOGLE_TOKEN_FILE in .env."
-        )
-
     live_provider = YouTubeProvider(
-        os.environ["GOOGLE_CLIENT_SECRETS_FILE"],
-        os.environ["GOOGLE_TOKEN_FILE"],
+        credentials_file,
+        token_file,
     )
     live_engine = PublishingEngine(projects_dir, provider=live_provider)
 

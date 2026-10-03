@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from modules.storyboard.editorial_qa import EditorialCalloutQAResult
+
 QAStatus = Literal["PASS", "REVIEW", "FAIL"]
 
 
@@ -55,6 +57,11 @@ class TechnicalQAResult(BaseModel):
     audio_duration_seconds: float
     video_duration_seconds: float | None = None
     maximum_timeline_drift_seconds: float
+    integrated_lufs: float | None = None
+    true_peak_dbtp: float | None = None
+    target_lufs: float = -14.0
+    true_peak_ceiling_dbtp: float = -1.0
+    editorial_callouts: EditorialCalloutQAResult | None = None
 
 
 class PilotQAReport(BaseModel):

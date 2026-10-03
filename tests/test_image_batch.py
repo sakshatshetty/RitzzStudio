@@ -455,6 +455,8 @@ def test_generate_all_images(
         ("scene_002.png", "SURPRISE"),
         ("scene_003.png", "INJURY"),
     ]
+    assert "CURIOSITY" not in provider.calls[0].prompt
+    assert "DO NOT DRAW EDITORIAL CALLOUT TEXT." in provider.calls[0].prompt
 
     for asset in assets:
         assert asset.status == "completed"
