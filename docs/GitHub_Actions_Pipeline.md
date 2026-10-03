@@ -11,8 +11,21 @@ The current M8 slice performs these steps:
 
 When starting a run, the GitHub form provides `Discovery mode`, `Test run`,
 `Target video duration in minutes`, and `Minimum allowed video duration in
-minutes`. Both duration fields default to 8 minutes, and the minimum cannot
-exceed the target.
+minutes`, `Project ID`, and `Rerun from stage`. Both duration fields default to
+8 minutes, and the minimum cannot exceed the target. Leave `Rerun from stage` at
+`new_run` for a new production. To resume an existing project, enter its exact
+project ID and select the stage to retry; the workflow restores the latest
+unexpired saved archive from the immediately preceding stage and skips topic
+discovery and content creation.
+
+Project reruns are supported from `voice_generation`, `storyboard_generation`,
+`image_generation`, `render_video`, and `private_upload`. For example, choosing
+`render_video` restores the project's latest saved image-stage archive, then
+runs rendering, video review, packaging review, and (after approval) private
+upload. Failed upstream stages are not silently repeated. The selected stage
+must have its required preceding-stage artifact available in an unexpired
+Actions artifact. Video and packaging approval environments remain in force
+for reruns that reach those steps.
 
 Before tests or external providers run, the workflow validates that all required
 secrets are present and that the Google client and token secrets decode to valid
