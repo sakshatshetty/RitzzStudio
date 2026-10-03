@@ -148,4 +148,4 @@ def test_workflow_dispatch_exposes_project_id_and_rerun_stage_inputs():
     assert "      rerun_from_stage:" in workflow_text
     for stage in STAGE_INPUTS:
         assert f"          - {stage}" in workflow_text
-    assert "  restore-project:" in workflow_text
+    assert "  restore-production:" in workflow_text
