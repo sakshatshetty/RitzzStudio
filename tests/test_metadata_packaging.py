@@ -472,6 +472,9 @@ def test_metadata_packaging_and_thumbnail_stage_precede_final_approval():
     assert '"render_video": "rendered-project.tar.gz"' in workflow
     assert '"metadata_packaging": "metadata-project.tar.gz"' in workflow
     assert "archive=.pipeline-artifacts/metadata-project.tar.gz" in workflow
+    assert 'printf \'  gh run download %s --repo %s' in workflow
+    assert '--dir "$HOME\\\\Downloads"\\n\'' in workflow
+    assert '`"$HOME' not in workflow
 
 
 def test_production_state_migrates_existing_state_with_metadata_stage(tmp_path):
