@@ -349,9 +349,12 @@ class TopicIntelligenceEngine:
             "strategy": "configured_competitor_outliers_to_gpt_to_vidiq_validation",
             "status": "IN_PROGRESS",
             "gpt_ideation_calls": 0,
+            "gpt_ideas_generated": 0,
+            "gpt_candidates_grounded": 0,
             "vidiq_validation_calls": 0,
             "vidiq_validated_ideas": 0,
             "ideas_rejected": [],
+            "candidate_validation": [],
             "fallback_discovery_calls": 0,
         }
         if not isinstance(self.provider, CompetitorResearchProvider):
@@ -407,9 +410,11 @@ class TopicIntelligenceEngine:
                 diagnostics,
             )
 
+        generator = self.competitor_opportunity_generator
+        assert generator is not None
         try:
             generated, patterns, generation_diagnostics = (
-                self.competitor_opportunity_generator.generate(
+                generator.generate(
                     competitor_report,
                     candidate_limit=IDEATION_CANDIDATE_LIMIT,
                 )
@@ -428,27 +433,85 @@ class TopicIntelligenceEngine:
             generation_diagnostics.get("successful_outlier_videos", 0) > 0
         )
         diagnostics["gpt_ideas_generated"] = int(
-            generation_diagnostics.get("generated_candidates", 0)
+            generation_diagnostics.get(
+                "gpt_topic_ideas_returned",
+                generation_diagnostics.get("generated_candidates", 0),
+            )
         )
+        diagnostics["gpt_candidates_grounded"] = len(generated)
         diagnostics["competitor_opportunity_generation"] = generation_diagnostics
         diagnostics["competitor_topic_patterns"] = [
             pattern.model_dump(mode="json") for pattern in patterns
         ]
+        for rejection in generation_diagnostics.get("candidate_rejections", []):
+            diagnostics["candidate_validation"].append({
+                **rejection,
+                "search_concepts": rejection.get("search_concepts", []),
+                "vidiq_query": None,
+                "raw_vidiq_response": None,
+                "normalized_vidiq_evidence": None,
+                "validation_result": "NOT_RUN",
+                "rejection_reason": rejection.get("reason"),
+            })
+
+        if not generated:
+            diagnostics.update(
+                status="NO_GROUNDED_GPT_CANDIDATES",
+                error=(
+                    f"GPT returned {diagnostics['gpt_ideas_generated']} proposal(s), "
+                    "but none passed concrete-subject competitor-evidence validation. "
+                    "vidIQ validation was not run."
+                ),
+            )
+            raise CompetitorPipelineDiscoveryError(
+                diagnostics["error"],
+                diagnostics,
+            )
 
         eligible: list[OpportunityCandidate] = []
         for candidate in generated:
+            search_concepts = self._vidiq_search_concepts(candidate)
             overlaps = self.inventory_manager.find_overlap(candidate.topic)
             if overlaps:
                 candidate.inventory_status = "OVERLAP"
-                diagnostics["ideas_rejected"].append({
+                rejection = {
                     "candidate_id": candidate.candidate_id,
                     "topic": candidate.topic,
+                    "search_concepts": search_concepts,
+                    "vidiq_query": None,
+                    "raw_vidiq_response": None,
+                    "normalized_vidiq_evidence": None,
+                    "validation_result": "NOT_RUN",
                     "reason": "Overlaps existing RITZZ content inventory.",
+                    "rejection_reason": "Overlaps existing RITZZ content inventory.",
                     "inventory_topics": [item.topic for item in overlaps],
-                })
+                }
+                diagnostics["ideas_rejected"].append(rejection)
+                diagnostics["candidate_validation"].append(rejection)
                 continue
             candidate.inventory_status = "NEW"
+            candidate.raw_evidence["vidiq_validation"] = {
+                "search_concepts": search_concepts,
+                "query": search_concepts[0],
+                "raw_response": None,
+                "normalized_evidence": None,
+                "result": "PENDING",
+                "rejection_reason": None,
+            }
             eligible.append(candidate)
+
+        if not eligible:
+            diagnostics.update(
+                status="NO_INVENTORY_SAFE_CANDIDATES",
+                error=(
+                    "All grounded GPT topics overlapped the RITZZ content inventory; "
+                    "vidIQ validation was not run."
+                ),
+            )
+            raise CompetitorPipelineDiscoveryError(
+                diagnostics["error"],
+                diagnostics,
+            )
 
         if not isinstance(self.provider, DemandEnrichmentProvider):
             diagnostics.update(
@@ -459,28 +522,73 @@ class TopicIntelligenceEngine:
                 diagnostics["error"],
                 diagnostics,
             )
+        demand_provider = self.provider
 
         validated: list[OpportunityCandidate] = []
         for candidate in eligible:
+            validation_context = candidate.raw_evidence["vidiq_validation"]
+            query = validation_context["query"]
             operation_count_before = len(diagnostics.get("operations", []))
-            self._enrich_competitor_candidate(
+            enrichment = self._enrich_competitor_candidate(
                 candidate,
-                self.provider.enrich_topic_demand,
+                demand_provider.enrich_topic_demand,
                 diagnostics,
+                query=query,
             )
             operations = diagnostics.get("operations", [])
             if len(operations) > operation_count_before:
                 operation = operations[-1]
                 if operation.get("call_made") == "true":
                     diagnostics["vidiq_validation_calls"] += 1
+            raw_response = enrichment.get("raw_response")
+            normalized_evidence: dict[str, Any] = {
+                key: metric.model_dump(mode="json")
+                for key, metric in candidate.current_vidiq_demand_signals.items()
+            }
+            normalized_evidence["related_keywords"] = enrichment.get(
+                "related_keywords",
+                [],
+            )
+            rejection_reason = None
             if candidate.current_vidiq_demand_available:
+                validation_result = "PASS"
                 validated.append(candidate)
             else:
+                validation_result = "FAIL"
+                operation = enrichment.get("operation", {})
+                rejection_reason = (
+                    operation.get("message")
+                    or "vidIQ returned no usable keyword, demand, competition, or trend evidence for the search concept."
+                )
                 diagnostics["ideas_rejected"].append({
                     "candidate_id": candidate.candidate_id,
                     "topic": candidate.topic,
-                    "reason": "vidIQ returned no usable demand or competition metrics.",
+                    "search_concepts": validation_context["search_concepts"],
+                    "vidiq_query": query,
+                    "raw_vidiq_response": raw_response,
+                    "normalized_vidiq_evidence": normalized_evidence,
+                    "validation_result": validation_result,
+                    "reason": rejection_reason,
+                    "rejection_reason": rejection_reason,
                 })
+            validation_context.update({
+                "raw_response": raw_response,
+                "normalized_evidence": normalized_evidence,
+                "result": validation_result,
+                "rejection_reason": rejection_reason,
+                "operation": enrichment.get("operation"),
+            })
+            diagnostics["candidate_validation"].append({
+                "candidate_id": candidate.candidate_id,
+                "topic": candidate.topic,
+                "search_concepts": validation_context["search_concepts"],
+                "vidiq_query": query,
+                "raw_vidiq_response": raw_response,
+                "normalized_vidiq_evidence": normalized_evidence,
+                "validation_result": validation_result,
+                "rejection_reason": rejection_reason,
+                "operation": enrichment.get("operation"),
+            })
 
         diagnostics["vidiq_validated_ideas"] = len(validated)
         diagnostics["qualified_candidate_count"] = len(validated)
@@ -509,9 +617,11 @@ class TopicIntelligenceEngine:
         candidate: OpportunityCandidate,
         enrich,
         diagnostics: dict[str, Any],
-    ) -> None:
+        *,
+        query: str | None = None,
+    ) -> dict[str, Any]:
         try:
-            enrichment = enrich(candidate.topic)
+            enrichment = enrich(query or candidate.topic)
         except ProviderUnavailableError as exc:
             operation = {
                 "source": "keyword_research_enrichment",
@@ -527,7 +637,14 @@ class TopicIntelligenceEngine:
             candidate.competition_saturation_assessment = (
                 "Current vidIQ competition signal unavailable."
             )
-            return
+            return {
+                "available": False,
+                "metrics": {},
+                "related_keywords": [],
+                "query": query or candidate.topic,
+                "raw_response": None,
+                "operation": operation,
+            }
         candidate.current_vidiq_demand_signals = {
             key: EvidenceMetric.model_validate(value)
             for key, value in enrichment["metrics"].items()
@@ -554,3 +671,23 @@ class TopicIntelligenceEngine:
                 f"{operation.get('error_type', 'PROVIDER_ERROR')}: "
                 f"{operation.get('message', '')}"
             )
+        return enrichment
+
+    @staticmethod
+    def _vidiq_search_concepts(candidate: OpportunityCandidate) -> list[str]:
+        evidence = candidate.raw_evidence
+        concepts = evidence.get("vidiq_search_concepts", [])
+        if isinstance(concepts, list):
+            normalized = list(dict.fromkeys(
+                item.strip()
+                for item in concepts
+                if isinstance(item, str) and item.strip()
+            ))
+            if normalized:
+                return normalized[:3]
+        fallback = (
+            candidate.concrete_subject
+            or candidate.primary_keyword
+            or candidate.topic
+        )
+        return [fallback.strip()]

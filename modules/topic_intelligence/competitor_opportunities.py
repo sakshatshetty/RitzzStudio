@@ -46,6 +46,7 @@ class OriginalTopicProposal(BaseModel):
     topic: str = Field(min_length=12)
     concrete_subject: str = Field(min_length=3)
     subject_evidence_ids: list[str] = Field(min_length=1)
+    search_concepts: list[str] = Field(default_factory=list, max_length=3)
     angle: str = Field(min_length=12)
     story_type: StoryType = "OTHER"
     curiosity_family: str = Field(min_length=2)
@@ -62,7 +63,7 @@ class CompetitorOpportunityBatch(BaseModel):
 class CompetitorOpportunityGenerator:
     """Use observed cross-channel patterns to propose, never select, RITZZ topics."""
 
-    prompt_version = "ritzz-competitor-opportunities-v3"
+    prompt_version = "ritzz-competitor-opportunities-v4"
 
     def __init__(self, client=None) -> None:
         self.client = client
@@ -111,6 +112,7 @@ class CompetitorOpportunityGenerator:
             "generated_candidates": 0,
             "rejected_copied_angles": 0,
             "candidate_rejections": [],
+            "candidate_validation": [],
         }
         distinct_channels = {
             video.channel_id or video.channel_title
@@ -138,6 +140,16 @@ class CompetitorOpportunityGenerator:
             raise RuntimeError("OpenAI returned no structured competitor-topic patterns.")
 
         diagnostics["gpt_topic_ideas_returned"] = len(parsed.opportunities)
+        diagnostics["gpt_proposals"] = [
+            {
+                "topic": proposal.topic,
+                "pattern_index": proposal.pattern_index,
+                "concrete_subject": proposal.concrete_subject,
+                "subject_evidence_ids": proposal.subject_evidence_ids,
+                "search_concepts": self._proposal_search_concepts(proposal),
+            }
+            for proposal in parsed.opportunities
+        ]
         patterns = self._validated_patterns(parsed.patterns, evidence_by_id)
         diagnostics["topic_patterns_extracted"] = len(patterns)
         candidates, rejected, rejection_details = self._validated_candidates(
@@ -197,7 +209,14 @@ class CompetitorOpportunityGenerator:
             "engineering, and history-curiosity niche. Prefer specific questions about how "
             "people in the past lived, survived, built, traveled, worked, ate, or solved "
             "problems. Do not propose current news, current disasters, sports, or unrelated "
-            "general curiosity. Favor subjects that can be explained with static "
+            "general curiosity. For every opportunity, choose a zero-based pattern_index; "
+            "set concrete_subject to a concrete name or phrase that appears in the final "
+            "topic and in at least one cited supplied video title, topic, tag, or topic label. "
+            "subject_evidence_ids must cite one or more supplied evidence_ids that explicitly "
+            "support that concrete subject; they may cite any supplied video, not only the "
+            "pattern's own evidence_ids. Include 1–3 concise underlying vidIQ search_concepts "
+            "for the same opportunity (for example, 'ancient humans winter survival'), not "
+            "a copy of the creative title. Favor subjects that can be explained with static "
             "illustrations, objects, maps, diagrams, or timelines. Never invent demand, "
             "competition, view counts, or competitor evidence."
         )
@@ -262,30 +281,70 @@ class CompetitorOpportunityGenerator:
         evidence_by_id: dict[str, OutlierVideo],
         candidate_limit: int,
         collected_at: str,
-    ) -> tuple[list[OpportunityCandidate], int, list[dict[str, str]]]:
+    ) -> tuple[list[OpportunityCandidate], int, list[dict[str, Any]]]:
         candidates = []
         rejected_copies = 0
         seen_topics: set[str] = set()
-        rejection_details: list[dict[str, str]] = []
+        rejection_details: list[dict[str, Any]] = []
+
+        def rejection_detail(
+            proposal: OriginalTopicProposal,
+            code: str,
+            reason: str,
+            *,
+            pattern: CompetitorTopicPattern | None = None,
+        ) -> dict[str, Any]:
+            return {
+                "topic": proposal.topic,
+                "code": code,
+                "reason": reason,
+                "pattern_index": proposal.pattern_index,
+                "concrete_subject": proposal.concrete_subject,
+                "subject_evidence_ids": list(proposal.subject_evidence_ids),
+                "search_concepts": CompetitorOpportunityGenerator._proposal_search_concepts(
+                    proposal
+                ),
+                "selected_pattern_evidence_ids": (
+                    list(pattern.evidence_refs) if pattern is not None else []
+                ),
+                "cited_subject_evidence": [
+                    {
+                        "evidence_id": evidence_id,
+                        "title": evidence_by_id[evidence_id].title,
+                        "topic": evidence_by_id[evidence_id].topic,
+                        "tags": evidence_by_id[evidence_id].tags,
+                        "topics": evidence_by_id[evidence_id].topics,
+                    }
+                    for evidence_id in proposal.subject_evidence_ids
+                    if evidence_id in evidence_by_id
+                ],
+                "validation_result": "NOT_RUN",
+                "rejection_reason": reason,
+                "vidiq_query": None,
+                "raw_vidiq_response": None,
+                "normalized_vidiq_evidence": None,
+            }
+
         for proposal_index, proposal in enumerate(proposals):
             if len(candidates) >= candidate_limit:
                 break
             if not 0 <= proposal.pattern_index < len(patterns):
-                rejection_details.append({
-                    "topic": proposal.topic,
-                    "code": "OTHER_HARD_FILTER",
-                    "reason": "Proposal referenced a pattern that did not pass evidence validation.",
-                })
+                rejection_details.append(rejection_detail(
+                    proposal,
+                    "OTHER_HARD_FILTER",
+                    "Proposal referenced a pattern that did not pass evidence validation.",
+                ))
                 continue
             pattern = patterns[proposal.pattern_index]
             topic = proposal.topic.strip()
             topic_key = _normalized_topic(topic)
             if not topic_key or topic_key in seen_topics:
-                rejection_details.append({
-                    "topic": topic,
-                    "code": "DUPLICATE",
-                    "reason": "Topic was empty or duplicated an earlier generated candidate.",
-                })
+                rejection_details.append(rejection_detail(
+                    proposal,
+                    "DUPLICATE",
+                    "Topic was empty or duplicated an earlier generated candidate.",
+                    pattern=pattern,
+                ))
                 continue
             supporting_videos = [
                 evidence_by_id[video_id]
@@ -294,15 +353,15 @@ class CompetitorOpportunityGenerator:
             ]
             subject_evidence_ids = list(dict.fromkeys(proposal.subject_evidence_ids))
             if not subject_evidence_ids or any(
-                evidence_id not in pattern.evidence_refs
-                or evidence_id not in evidence_by_id
+                evidence_id not in evidence_by_id
                 for evidence_id in subject_evidence_ids
             ):
-                rejection_details.append({
-                    "topic": topic,
-                    "code": "TOO_ABSTRACT",
-                    "reason": "Concrete subject citations were missing or outside the selected pattern evidence.",
-                })
+                rejection_details.append(rejection_detail(
+                    proposal,
+                    "TOO_ABSTRACT",
+                    "Concrete subject citations were missing or did not identify returned competitor evidence.",
+                    pattern=pattern,
+                ))
                 continue
             subject_sources = [
                 evidence_by_id[evidence_id]
@@ -314,20 +373,22 @@ class CompetitorOpportunityGenerator:
                 subject_sources,
             )
             if subject_reason:
-                rejection_details.append({
-                    "topic": topic,
-                    "code": "TOO_ABSTRACT",
-                    "reason": subject_reason,
-                })
+                rejection_details.append(rejection_detail(
+                    proposal,
+                    "TOO_ABSTRACT",
+                    subject_reason,
+                    pattern=pattern,
+                ))
                 continue
             titles = [video.title for video in supporting_videos if video.title]
             if any(_is_title_copy(topic, title) for title in titles):
                 rejected_copies += 1
-                rejection_details.append({
-                    "topic": topic,
-                    "code": "NEAR_DUPLICATE",
-                    "reason": "Candidate title is too similar to a cited competitor title.",
-                })
+                rejection_details.append(rejection_detail(
+                    proposal,
+                    "NEAR_DUPLICATE",
+                    "Candidate title is too similar to a cited competitor title.",
+                    pattern=pattern,
+                ))
                 continue
             seen_topics.add(topic_key)
             competitor_evidence = [
@@ -379,6 +440,11 @@ class CompetitorOpportunityGenerator:
                     ],
                     "competitor_signal_weight": pattern.signal_weight,
                     "originality_reason": proposal.originality_reason.strip(),
+                    "vidiq_search_concepts": (
+                        CompetitorOpportunityGenerator._proposal_search_concepts(
+                            proposal
+                        )
+                    ),
                 },
                 ritzz_fit=RitzzFitResult(
                     fit_status="REVIEW",
@@ -387,6 +453,19 @@ class CompetitorOpportunityGenerator:
                 ),
             ))
         return candidates, rejected_copies, rejection_details
+
+    @staticmethod
+    def _proposal_search_concepts(
+        proposal: OriginalTopicProposal,
+    ) -> list[str]:
+        concepts = list(dict.fromkeys(
+            concept.strip()
+            for concept in proposal.search_concepts
+            if concept.strip()
+        ))
+        if concepts:
+            return concepts[:3]
+        return [proposal.concrete_subject.strip()]
 
 
 _ABSTRACT_SUBJECTS = {

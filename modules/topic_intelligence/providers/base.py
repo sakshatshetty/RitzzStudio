@@ -18,6 +18,8 @@ class TopicDemandEnrichment(TypedDict):
     available: bool
     metrics: dict[str, dict[str, Any]]
     related_keywords: list[str]
+    query: str
+    raw_response: Any
     operation: dict[str, str]
 
 

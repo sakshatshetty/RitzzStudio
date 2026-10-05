@@ -95,6 +95,10 @@ def _generation_batch(
             topic=topic,
             concrete_subject=concrete_subject,
             subject_evidence_ids=subject_evidence_ids or ["video-a"],
+            search_concepts=[
+                "ancient humans two-shift sleep",
+                "prehistoric sleep patterns",
+            ],
             angle="Explain how artificial light, work schedules, and changing homes reshaped sleep routines.",
             story_type="HISTORY",
             curiosity_family="history_mystery",
@@ -179,6 +183,79 @@ def test_original_topics_require_repeated_success_across_multiple_channels():
     assert diagnostics["successful_outlier_videos"] == 2
     assert patterns[0].signal_weight == 1.0
     assert candidates[0].raw_evidence["competitor_signal_weight"] == 1.0
+
+
+def test_subject_may_be_supported_by_any_returned_outlier_not_only_pattern_evidence():
+    report = MarketIntelligenceReport(
+        query="ancient humans history",
+        retrieved_at="2026-09-30T00:00:00+00:00",
+        outliers=[
+            _video(
+                "video-a",
+                "channel-a",
+                "Why People Slept in Two Shifts",
+                score=4,
+            ),
+            _video(
+                "video-b",
+                "channel-b",
+                "The Strange Way Medieval People Slept",
+                score=5,
+            ),
+            _video(
+                "video-c",
+                "channel-c",
+                "Ancient People Slept in Two Shifts",
+                score=6,
+            ),
+        ],
+    )
+    batch = _generation_batch(subject_evidence_ids=["video-c"])
+    batch.patterns[0].evidence_ids = ["video-a", "video-b"]
+
+    candidates, _, diagnostics = CompetitorOpportunityGenerator(
+        client=FakeGeneratorClient(batch)
+    ).generate(report)
+
+    assert len(candidates) == 1
+    assert candidates[0].subject_evidence_refs == ["video-c"]
+    assert candidates[0].raw_evidence["vidiq_search_concepts"] == [
+        "ancient humans two-shift sleep",
+        "prehistoric sleep patterns",
+    ]
+    assert diagnostics["candidate_rejections"] == []
+
+
+def test_rejected_gpt_proposal_diagnostics_include_citations_concepts_and_reason():
+    report = MarketIntelligenceReport(
+        query="ancient humans history",
+        retrieved_at="2026-09-30T00:00:00+00:00",
+        outliers=[
+            _video("video-a", "channel-a", "Ancient people slept in two shifts", score=4),
+            _video("video-b", "channel-b", "Medieval sleep routines", score=5),
+        ],
+    )
+    batch = _generation_batch(
+        "How Ancient People Slept Safely?",
+        concrete_subject="ancient sleep routines",
+        subject_evidence_ids=["unknown-video"],
+    )
+
+    candidates, _, diagnostics = CompetitorOpportunityGenerator(
+        client=FakeGeneratorClient(batch)
+    ).generate(report)
+
+    assert candidates == []
+    rejection = diagnostics["candidate_rejections"][0]
+    assert rejection["topic"] == "How Ancient People Slept Safely?"
+    assert rejection["search_concepts"] == [
+        "ancient humans two-shift sleep",
+        "prehistoric sleep patterns",
+    ]
+    assert rejection["subject_evidence_ids"] == ["unknown-video"]
+    assert rejection["validation_result"] == "NOT_RUN"
+    assert rejection["vidiq_query"] is None
+    assert rejection["rejection_reason"] == rejection["reason"]
 
 
 def test_local_channel_baseline_requires_four_videos_and_uses_three_peers():
@@ -1079,17 +1156,23 @@ def test_pipeline_discovery_runs_competitors_ideation_and_vidiq_without_fallback
             topic=topic,
             provider="vidiq_mcp",
             discovery_sources=["configured_competitor_outliers"],
+            raw_evidence={"vidiq_search_concepts": concepts},
         )
-        for index, topic in enumerate(
+        for index, (topic, *concepts) in enumerate(
             (
-                "How Did Ancient Humans Stay Warm in Winter?",
-                "How Did Ancient Cities Get Clean Water?",
-                "What Did Ancient Families Eat Every Day?",
-                "How Did Ancient Engineers Move Water Uphill?",
-                "What Happened to the Ancient Army That Vanished?",
-                "Why Did a Nepal Flood Become Deadly So Fast?",
-                "What Happened in Yesterday's Championship Final?",
-                "Why Are Clouds Different Shapes?",
+                (
+                    "How Did Ancient Humans Stay Warm in Winter?",
+                    "ancient humans winter survival",
+                    "prehistoric humans winter",
+                    "ancient human cold survival",
+                ),
+                ("How Did Ancient Cities Get Clean Water?", "ancient city water supply"),
+                ("What Did Ancient Families Eat Every Day?", "ancient humans daily food"),
+                ("How Did Ancient Engineers Move Water Uphill?", "ancient engineering water lift"),
+                ("What Happened to the Ancient Army That Vanished?", "vanished roman legion"),
+                ("Why Did a Nepal Flood Become Deadly So Fast?", "recent Nepal flood"),
+                ("What Happened in Yesterday's Championship Final?", "championship result today"),
+                ("Why Are Clouds Different Shapes?", "cloud shapes"),
             ),
             start=1,
         )
@@ -1102,7 +1185,10 @@ def test_pipeline_discovery_runs_competitors_ideation_and_vidiq_without_fallback
             self.validation_topics = []
             self.competitor_queries = []
 
-        def discover(self, _request):
+        def discover(
+            self,
+            request: TopicDiscoveryRequest,
+        ) -> list[OpportunityCandidate]:
             raise AssertionError("General topic discovery must not be called.")
 
         def discover_competitor_research(self, query, limit=10):
@@ -1112,6 +1198,32 @@ def test_pipeline_discovery_runs_competitors_ideation_and_vidiq_without_fallback
 
         def enrich_topic_demand(self, topic):
             self.validation_topics.append(topic)
+            if topic == "cloud shapes":
+                return {
+                    "available": False,
+                    "metrics": {},
+                    "related_keywords": [],
+                    "query": topic,
+                    "raw_response": {"records": []},
+                    "operation": {
+                        "source": "keyword_research_enrichment",
+                        "tool": "fixture",
+                        "status": "valid_zero_results",
+                        "message": "No relevant keyword evidence was returned.",
+                        "query": topic,
+                        "call_made": "true",
+                    },
+                }
+            concept_record = {
+                "ancient humans winter survival": "prehistoric winter survival",
+                "ancient city water supply": "ancient city water",
+                "ancient humans daily food": "prehistoric human food",
+                "ancient engineering water lift": "ancient water engineering",
+                "vanished roman legion": "lost Roman legion",
+                "recent Nepal flood": "Nepal flood",
+                "championship result today": "championship",
+                "cloud shapes": "clouds",
+            }[topic]
             return {
                 "available": True,
                 "metrics": {
@@ -1123,16 +1235,35 @@ def test_pipeline_discovery_runs_competitors_ideation_and_vidiq_without_fallback
                     }
                 },
                 "related_keywords": [],
+                "query": topic,
+                "raw_response": {
+                    "records": [
+                        {
+                            "keyword": concept_record,
+                            "search_volume": 100,
+                        }
+                    ]
+                },
                 "operation": {
                     "source": "keyword_research_enrichment",
                     "tool": "fixture",
                     "status": "success",
+                    "query": topic,
                     "call_made": "true",
                 },
             }
 
-    class Generator:
-        def generate(self, _report, *, candidate_limit):
+    class Generator(CompetitorOpportunityGenerator):
+        def generate(
+            self,
+            report: MarketIntelligenceReport,
+            *,
+            candidate_limit: int = 8,
+        ) -> tuple[
+            list[OpportunityCandidate],
+            list[CompetitorTopicPattern],
+            dict[str, Any],
+        ]:
             assert candidate_limit >= 3
             return candidates, [], {
                 "successful_outlier_videos": 3,
@@ -1140,10 +1271,13 @@ def test_pipeline_discovery_runs_competitors_ideation_and_vidiq_without_fallback
             }
 
     class Editorial:
-        def assess(self, items):
+        def assess(
+            self,
+            candidates: list[OpportunityCandidate],
+        ) -> list[CandidateEditorialAssessment]:
             return [
                 CandidateEditorialAssessment(
-                    candidate_id=item.candidate_id,
+                    candidate_id=candidate.candidate_id,
                     audience_fit=90,
                     curiosity=90,
                     evergreen=90,
@@ -1156,7 +1290,7 @@ def test_pipeline_discovery_runs_competitors_ideation_and_vidiq_without_fallback
                     originality=90,
                     status=(
                         "PASS"
-                        if item.candidate_id in {
+                        if candidate.candidate_id in {
                             "idea-1",
                             "idea-2",
                             "idea-3",
@@ -1166,7 +1300,7 @@ def test_pipeline_discovery_runs_competitors_ideation_and_vidiq_without_fallback
                         else "REVIEW"
                     ),
                 )
-                for item in items
+                for candidate in candidates
             ]
 
     provider = Provider()
@@ -1179,6 +1313,16 @@ def test_pipeline_discovery_runs_competitors_ideation_and_vidiq_without_fallback
 
     assert len(result.candidates) == 5
     assert len(provider.validation_topics) == 8
+    assert provider.validation_topics == [
+        "ancient humans winter survival",
+        "ancient city water supply",
+        "ancient humans daily food",
+        "ancient engineering water lift",
+        "vanished roman legion",
+        "recent Nepal flood",
+        "championship result today",
+        "cloud shapes",
+    ]
     assert provider.competitor_queries == [
         f"{RITZZ_CHANNEL_NICHE} curiosity explainer format competitors"
     ]
@@ -1194,3 +1338,38 @@ def test_pipeline_discovery_runs_competitors_ideation_and_vidiq_without_fallback
     assert result.discovery_diagnostics["fallback_discovery_calls"] == 0
     assert result.discovery_diagnostics["recommendation_gate"]["qualified_candidates"] == 5
     assert result.discovery_diagnostics["status"] == "SUCCESS"
+    assert len(result.discovery_diagnostics["candidate_validation"]) == 8
+    first_validation = result.discovery_diagnostics["candidate_validation"][0]
+    assert first_validation["topic"] == "How Did Ancient Humans Stay Warm in Winter?"
+    assert first_validation["search_concepts"] == [
+        "ancient humans winter survival",
+        "prehistoric humans winter",
+        "ancient human cold survival",
+    ]
+    assert first_validation["vidiq_query"] == "ancient humans winter survival"
+    assert first_validation["raw_vidiq_response"]["records"][0]["keyword"] == (
+        "prehistoric winter survival"
+    )
+    assert first_validation["normalized_vidiq_evidence"]["search_volume"]["value"] == 100
+    assert first_validation["validation_result"] == "PASS"
+    current_event_validation = next(
+        item
+        for item in result.discovery_diagnostics["candidate_validation"]
+        if item["topic"] == "Why Did a Nepal Flood Become Deadly So Fast?"
+    )
+    assert current_event_validation["validation_result"] == "PASS"
+    assert current_event_validation["vidiq_query"] == "recent Nepal flood"
+    assert "Why Did a Nepal Flood Become Deadly So Fast?" not in {
+        item.topic for item in result.candidates
+    }
+    assert result.discovery_diagnostics["vidiq_validated_ideas"] == 7
+    failed_validation = next(
+        item
+        for item in result.discovery_diagnostics["candidate_validation"]
+        if item["vidiq_query"] == "cloud shapes"
+    )
+    assert failed_validation["validation_result"] == "FAIL"
+    assert failed_validation["rejection_reason"] == (
+        "No relevant keyword evidence was returned."
+    )
+    assert failed_validation["raw_vidiq_response"] == {"records": []}
