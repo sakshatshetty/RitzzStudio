@@ -14,6 +14,11 @@ from modules.topic_intelligence.editorial import (
     EditorialEvaluator,
 )
 from modules.topic_intelligence.engine import TopicIntelligenceEngine
+from modules.topic_intelligence.inventory import (
+    ContentInventoryEntry,
+    ContentInventoryManager,
+    normalize_topic,
+)
 from modules.topic_intelligence.market_intelligence import (
     CompetitorTopicPattern,
     MarketIntelligenceReport,
@@ -94,7 +99,11 @@ def _generation_batch(
             pattern_index=0,
             topic=topic,
             concrete_subject=concrete_subject,
-            subject_evidence_ids=subject_evidence_ids or ["video-a"],
+            subject_evidence_ids=(
+                subject_evidence_ids
+                if subject_evidence_ids is not None
+                else ["video-a"]
+            ),
             search_concepts=[
                 "ancient humans two-shift sleep",
                 "prehistoric sleep patterns",
@@ -171,7 +180,7 @@ def test_original_topics_require_repeated_success_across_multiple_channels():
     assert candidates[0].topic == "Why Did Humans Stop Sleeping in Two Shifts?"
     assert candidates[0].ritzz_differentiation_angle
     assert candidates[0].concrete_subject == "two shifts"
-    assert candidates[0].subject_evidence_refs == ["video-a"]
+    assert candidates[0].subject_evidence_refs == []
     assert candidates[0].originality_reason
     assert len(candidates[0].competitor_evidence) == 2
     assert {
@@ -185,7 +194,7 @@ def test_original_topics_require_repeated_success_across_multiple_channels():
     assert candidates[0].raw_evidence["competitor_signal_weight"] == 1.0
 
 
-def test_subject_may_be_supported_by_any_returned_outlier_not_only_pattern_evidence():
+def test_pattern_provenance_is_retained_without_subject_level_citations():
     report = MarketIntelligenceReport(
         query="ancient humans history",
         retrieved_at="2026-09-30T00:00:00+00:00",
@@ -218,7 +227,11 @@ def test_subject_may_be_supported_by_any_returned_outlier_not_only_pattern_evide
     ).generate(report)
 
     assert len(candidates) == 1
-    assert candidates[0].subject_evidence_refs == ["video-c"]
+    assert candidates[0].subject_evidence_refs == []
+    assert candidates[0].raw_evidence["supporting_video_ids"] == [
+        "video-a",
+        "video-b",
+    ]
     assert candidates[0].raw_evidence["vidiq_search_concepts"] == [
         "ancient humans two-shift sleep",
         "prehistoric sleep patterns",
@@ -226,7 +239,7 @@ def test_subject_may_be_supported_by_any_returned_outlier_not_only_pattern_evide
     assert diagnostics["candidate_rejections"] == []
 
 
-def test_rejected_gpt_proposal_diagnostics_include_citations_concepts_and_reason():
+def test_original_topic_does_not_require_competitor_subject_citation():
     report = MarketIntelligenceReport(
         query="ancient humans history",
         retrieved_at="2026-09-30T00:00:00+00:00",
@@ -236,26 +249,30 @@ def test_rejected_gpt_proposal_diagnostics_include_citations_concepts_and_reason
         ],
     )
     batch = _generation_batch(
-        "How Ancient People Slept Safely?",
-        concrete_subject="ancient sleep routines",
+        "Why Did Ancient People Build Cities Underground?",
+        concrete_subject="underground cities",
         subject_evidence_ids=["unknown-video"],
     )
+    batch.opportunities[0].search_concepts = [
+        "ancient underground cities",
+        "prehistoric underground homes",
+    ]
 
     candidates, _, diagnostics = CompetitorOpportunityGenerator(
         client=FakeGeneratorClient(batch)
     ).generate(report)
 
-    assert candidates == []
-    rejection = diagnostics["candidate_rejections"][0]
-    assert rejection["topic"] == "How Ancient People Slept Safely?"
-    assert rejection["search_concepts"] == [
-        "ancient humans two-shift sleep",
-        "prehistoric sleep patterns",
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate.topic == "Why Did Ancient People Build Cities Underground?"
+    assert candidate.concrete_subject == "underground cities"
+    assert candidate.subject_evidence_refs == []
+    assert candidate.raw_evidence["supporting_video_ids"] == ["video-a", "video-b"]
+    assert candidate.raw_evidence["vidiq_search_concepts"] == [
+        "ancient underground cities",
+        "prehistoric underground homes",
     ]
-    assert rejection["subject_evidence_ids"] == ["unknown-video"]
-    assert rejection["validation_result"] == "NOT_RUN"
-    assert rejection["vidiq_query"] is None
-    assert rejection["rejection_reason"] == rejection["reason"]
+    assert diagnostics["candidate_rejections"] == []
 
 
 def test_local_channel_baseline_requires_four_videos_and_uses_three_peers():
@@ -1359,6 +1376,8 @@ def test_pipeline_discovery_runs_competitors_ideation_and_vidiq_without_fallback
     )
     assert current_event_validation["validation_result"] == "PASS"
     assert current_event_validation["vidiq_query"] == "recent Nepal flood"
+    assert current_event_validation["final_validation_result"] == "FAIL"
+    assert current_event_validation["final_rejection_reason"]
     assert "Why Did a Nepal Flood Become Deadly So Fast?" not in {
         item.topic for item in result.candidates
     }
@@ -1373,3 +1392,204 @@ def test_pipeline_discovery_runs_competitors_ideation_and_vidiq_without_fallback
         "No relevant keyword evidence was returned."
     )
     assert failed_validation["raw_vidiq_response"] == {"records": []}
+
+
+def test_new_subjects_reach_vidiq_with_pattern_provenance_and_inventory_filter(
+    tmp_path,
+):
+    topics = [
+        (
+            "Why Did Ancient People Build Cities Underground?",
+            "underground cities",
+            ["ancient underground cities", "prehistoric underground homes"],
+        ),
+        (
+            "How Did Ancient Engineers Move Water Without Pumps?",
+            "ancient water engineering",
+            ["ancient water engineering", "ancient water lifting"],
+        ),
+        (
+            "How Did Ancient People Preserve Food for Winter?",
+            "ancient food preservation",
+            ["ancient food preservation", "prehistoric food storage"],
+        ),
+    ]
+    report = MarketIntelligenceReport(
+        query="ancient history curiosity",
+        retrieved_at="2026-10-05T00:00:00+00:00",
+        outliers=[
+            _video(
+                "video-jungle",
+                "channel-jungle",
+                "What's Hidden Under the Jungles of New Guinea?",
+                score=8,
+            ),
+            _video(
+                "video-ruins",
+                "channel-ruins",
+                "A Lost City Buried Beneath an Ancient Forest",
+                score=7,
+            ),
+        ],
+    )
+    batch = _generation_batch(
+        topics[0][0],
+        concrete_subject=topics[0][1],
+        subject_evidence_ids=[],
+    )
+    batch.patterns[0].observed_pattern = (
+        "Successful videos create curiosity about hidden archaeological places."
+    )
+    batch.patterns[0].topic_category = "archaeological discovery"
+    batch.patterns[0].curiosity_type = "hidden places"
+    batch.patterns[0].core_question = (
+        "What evidence and places remain hidden beneath familiar landscapes?"
+    )
+    batch.patterns[0].evidence_ids = ["video-jungle", "video-ruins"]
+    first_idea = batch.opportunities[0].model_copy(update={
+        "search_concepts": topics[0][2],
+        "angle": "Explain why some ancient communities chose underground city layouts.",
+        "originality_reason": (
+            "The new topic investigates ancient urban design rather than a hidden jungle discovery."
+        ),
+        "subject_evidence_ids": [],
+    })
+    additional_ideas = [
+        first_idea.model_copy(update={
+            "topic": topic,
+            "concrete_subject": subject,
+            "search_concepts": concepts,
+            "angle": f"Explain the historical problem behind {subject}.",
+            "originality_reason": (
+                f"This topic explores {subject}, distinct from the competitor videos' "
+                "hidden archaeological discoveries."
+            ),
+            "subject_evidence_ids": [],
+        })
+        for topic, subject, concepts in topics[1:]
+    ]
+    batch.opportunities = [first_idea, *additional_ideas]
+
+    class Provider:
+        name = "vidiq_mcp"
+
+        def __init__(self):
+            self.validation_queries: list[str] = []
+
+        def discover(self, request: TopicDiscoveryRequest) -> list[OpportunityCandidate]:
+            raise AssertionError("General discovery and fallback sources must not run.")
+
+        def discover_competitor_research(self, query, limit=10):
+            assert limit >= 2
+            return report
+
+        def enrich_topic_demand(self, topic: str) -> TopicDemandEnrichment:
+            self.validation_queries.append(topic)
+            return {
+                "available": True,
+                "metrics": {
+                    "search_volume": {
+                        "value": 100,
+                        "unit": "monthly searches",
+                        "available": True,
+                        "source": "mock_vidiq",
+                    }
+                },
+                "related_keywords": [topic],
+                "query": topic,
+                "raw_response": {
+                    "records": [{"keyword": topic, "search_volume": 100}]
+                },
+                "operation": {
+                    "source": "keyword_research_enrichment",
+                    "tool": "mock_vidiq",
+                    "status": "success",
+                    "query": topic,
+                    "call_made": "true",
+                },
+            }
+
+    class Editorial(EditorialEvaluator):
+        model_name = "fixture"
+        prompt_version = "fixture-v1"
+
+        def __init__(self):
+            pass
+
+        def assess(
+            self,
+            candidates: list[OpportunityCandidate],
+        ) -> list[CandidateEditorialAssessment]:
+            return [
+                CandidateEditorialAssessment(
+                    candidate_id=candidate.candidate_id,
+                    audience_fit=90,
+                    curiosity=90,
+                    evergreen=90,
+                    visual=90,
+                    format_fit=90,
+                    researchability=90,
+                    differentiation=90,
+                    saturation=80,
+                    story_depth=90,
+                    originality=90,
+                    story_type="HISTORY",
+                    status="PASS",
+                )
+                for candidate in candidates
+            ]
+
+    inventory_manager = ContentInventoryManager(tmp_path / "inventory.json")
+    inventory_manager.add(ContentInventoryEntry(
+        topic=topics[0][0],
+        normalized_topic=normalize_topic(topics[0][0]),
+    ))
+    provider = Provider()
+    result = TopicIntelligenceEngine(
+        provider=provider,
+        cache_dir=tmp_path,
+        inventory_manager=inventory_manager,
+        editorial_evaluator=Editorial(),
+        competitor_opportunity_generator=CompetitorOpportunityGenerator(
+            client=FakeGeneratorClient(batch)
+        ),
+    ).discover(TopicDiscoveryRequest(
+        pipeline_topic_gate=True,
+        force_refresh=True,
+    ))
+
+    assert result.discovery_diagnostics["gpt_ideas_generated"] == 3
+    assert result.discovery_diagnostics["gpt_candidates_grounded"] == 3
+    assert provider.validation_queries == [topics[1][2][0], topics[2][2][0]]
+    assert result.discovery_diagnostics["vidiq_validation_calls"] == 2
+    assert result.discovery_diagnostics["vidiq_validated_ideas"] == 2
+    assert result.discovery_diagnostics["fallback_discovery_calls"] == 0
+    assert len(result.candidates) == 2
+    assert {candidate.topic for candidate in result.candidates} == {
+        topics[1][0],
+        topics[2][0],
+    }
+    validations = result.discovery_diagnostics["candidate_validation"]
+    inventory_rejection = next(
+        item for item in validations if item["topic"] == topics[0][0]
+    )
+    assert inventory_rejection["rejection_reason"] == (
+        "Overlaps existing RITZZ content inventory."
+    )
+    assert inventory_rejection["vidiq_result"] == "NOT_RUN"
+    assert inventory_rejection["final_validation_result"] == "FAIL"
+    for topic in topics[1:]:
+        validation = next(item for item in validations if item["topic"] == topic[0])
+        assert validation["vidiq_result"] == "PASS"
+        assert validation["originality_result"] == "PASS"
+        assert validation["final_validation_result"] == "PASS"
+        assert validation["underlying_pattern"]["core_question"] == (
+            batch.patterns[0].core_question
+        )
+        assert validation["competitor_inspiration"]
+        assert {
+            source["title"] for source in validation["competitor_inspiration"]
+        } == {
+            "What's Hidden Under the Jungles of New Guinea?",
+            "A Lost City Buried Beneath an Ancient Forest",
+        }

@@ -218,7 +218,8 @@ def main() -> int:
         with Path(github_output).open("a", encoding="utf-8") as stream:
             stream.write(f"candidate_count={len(candidates)}\n")
 
-    print(summary)
+    stdout_encoding = sys.stdout.encoding or "utf-8"
+    print(summary.encode(stdout_encoding, errors="backslashreplace").decode(stdout_encoding))
     return 0
 
 
