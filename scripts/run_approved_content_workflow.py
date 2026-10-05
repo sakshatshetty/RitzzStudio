@@ -86,7 +86,7 @@ def main() -> int:
             project_directory = workflow.manager.get_project_path(project)
             archive_path = artifacts_directory / "content-project.tar.gz"
             with tarfile.open(archive_path, "w:gz") as archive:
-                archive.add(project_directory, arcname=project_id)
+                archive.add(project_directory, arcname=project_directory.name)
             validation_path = project_directory / "research" / "research_validation.json"
             qa_path = project_directory / "qa" / "qa_report.json"
             failure = {"error": str(exc)}
@@ -123,7 +123,7 @@ def main() -> int:
     if state_store or result.project_path.is_dir():
         archive_path = artifacts_directory / "content-project.tar.gz"
         with tarfile.open(archive_path, "w:gz") as archive:
-            archive.add(result.project_path, arcname=result.project.project_id)
+            archive.add(result.project_path, arcname=result.project_path.name)
     if state_store and production_id is not None:
         state = state_store.resume(production_id)
         if state["current_stage"] == "content_preparation":

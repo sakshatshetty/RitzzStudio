@@ -805,19 +805,6 @@ jobs:
           trap 'python scripts/manage_pipeline_production.py fail --stage "$stage" --error "Content preparation command failed."' ERR
           python scripts/run_approved_content_workflow.py
 
-      - name: Archive generated project artifacts
-        shell: bash
-        run: |
-          project_id=$(python -c "import json; print(json.load(open('.pipeline-artifacts/content_workflow_result.json'))['project_id'])")
-          project_name=$(find projects -mindepth 1 -maxdepth 1 -type d -name "${project_id}_*" -printf "%f\n" | head -n 1)
-          tar -czf .pipeline-artifacts/content-project.tar.gz -C projects "$project_name"
-
-      - name: Complete content preparation checkpoint
-        shell: bash
-        run: |
-          project_id=$(python -c "import json; print(json.load(open('.pipeline-artifacts/content_workflow_result.json'))['project_id'])")
-          python scripts/manage_pipeline_production.py complete --stage content_preparation --project-id "$project_id" --artifacts content_workflow_result.json content-project.tar.gz
-
       - name: Upload content artifacts
         if: ${{ success() }}
         uses: actions/upload-artifact@v4

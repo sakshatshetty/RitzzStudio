@@ -1,4 +1,5 @@
 import json
+import tarfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -142,6 +143,15 @@ def test_failed_content_run_saves_details_and_resume_reuses_project(
         "Research validation failed"
         in failed_state["stages"]["content_preparation"]["error"]
     )
+    failed_project = ProjectManager(projects_directory).load_project(project_id)
+    failed_project_directory = ProjectManager(projects_directory).get_project_path(
+        failed_project
+    )
+    with tarfile.open(
+        artifacts_directory / "content-project.tar.gz",
+        "r:gz",
+    ) as archive:
+        assert f"{failed_project_directory.name}/project.json" in archive.getnames()
 
     ProductionStateStore(
         artifacts_directory / "production_state.json",
@@ -170,3 +180,34 @@ def test_failed_content_run_saves_details_and_resume_reuses_project(
     assert captured["force_refresh_research"] is True
     assert len(list(projects_directory.iterdir())) == 1
     assert "refreshing research" in capsys.readouterr().out
+    completed_state = ProductionStateStore(
+        artifacts_directory / "production_state.json",
+        artifacts_directory,
+    ).resume("production-1")
+    assert completed_state["current_stage"] is None
+    assert completed_state["stages"]["content_preparation"]["status"] == "completed"
+    project = ProjectManager(projects_directory).load_project(project_id)
+    project_directory = ProjectManager(projects_directory).get_project_path(project)
+    with tarfile.open(
+        artifacts_directory / "content-project.tar.gz",
+        "r:gz",
+    ) as archive:
+        assert f"{project_directory.name}/project.json" in archive.getnames()
+
+
+def test_content_workflow_job_does_not_complete_checkpoint_twice():
+    workflow_path = (
+        Path(__file__).parents[1]
+        / ".github"
+        / "workflows"
+        / "ritzz-pipeline.yml"
+    )
+    workflow_text = workflow_path.read_text(encoding="utf-8")
+
+    assert "      - name: Run approved content workflow" in workflow_text
+    assert "      - name: Archive generated project artifacts" not in workflow_text
+    assert "      - name: Complete content preparation checkpoint" not in workflow_text
+    assert (
+        "python scripts/manage_pipeline_production.py complete "
+        "--stage content_preparation"
+    ) not in workflow_text
