@@ -23,6 +23,7 @@ from modules.topic_intelligence.market_intelligence import (
     top_outliers,
 )
 from modules.topic_intelligence.models import (
+    RITZZ_CHANNEL_NICHE,
     EvidenceMetric,
     OpportunityCandidate,
     TopicDiscoveryRequest,
@@ -214,9 +215,15 @@ def test_engine_attaches_competitor_report_when_provider_supports_it(tmp_path):
     ).discover()
 
     assert report.competitor_report == {
-        "query": "mixed curiosity explainers curiosity explainers",
+        "query": f"{RITZZ_CHANNEL_NICHE} curiosity explainers",
         "outliers": [],
     }
+
+
+def test_default_topic_discovery_request_uses_the_ancient_history_niche():
+    request = TopicDiscoveryRequest()
+
+    assert request.niche == RITZZ_CHANNEL_NICHE
 
 
 def test_growth_without_demand_does_not_receive_momentum_score():
@@ -247,8 +254,15 @@ def test_provider_arguments_follow_discovered_schema():
             "required": ["query"],
         },
     }
-    args = VidiqMcpProvider._arguments(tool, TopicDiscoveryRequest(timeframe="this week", limit=7))
-    assert args["query"] == "mixed curiosity explainers YouTube topic opportunities"
+    args = VidiqMcpProvider._arguments(
+        tool,
+        TopicDiscoveryRequest(
+            niche="test niche",
+            timeframe="this week",
+            limit=7,
+        ),
+    )
+    assert args["query"] == "test niche YouTube topic opportunities"
     assert args["timeframe"] == "this_week"
     assert args["limit"] == 7
 
@@ -302,9 +316,16 @@ def test_provider_argument_mapping_uses_field_names_and_schema_types():
             "required": ["keyword"],
         },
     }
-    args = VidiqMcpProvider._arguments(tool, TopicDiscoveryRequest(mode="EVERGREEN", limit=6))
+    args = VidiqMcpProvider._arguments(
+        tool,
+        TopicDiscoveryRequest(
+            niche="test niche",
+            mode="EVERGREEN",
+            limit=6,
+        ),
+    )
     assert args == {
-        "keyword": "mixed curiosity explainers YouTube topic opportunities",
+        "keyword": "test niche YouTube topic opportunities",
         "limit": 6,
     }
 

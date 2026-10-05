@@ -19,7 +19,8 @@ A selected candidate is a topic suggestion, not a commitment to produce or publi
 
 The pipeline's default discovery is deliberately separate from the legacy
 competitor-led opportunity engine described below. It makes one vidIQ keyword
-research discovery call using the `strange history` seed, then makes one
+research discovery call using the ancient-humans, ancient-civilizations, and
+history-curiosity niche, then makes one
 structured OpenAI request using the returned opportunity pool and full RITZZ
 channel profile. GPT transforms
 market keywords into concrete, curiosity-driven RITZZ ideas; vidIQ remains the
@@ -211,7 +212,7 @@ Discovery report, selected topic, and project artifacts should be distinct. A us
 
 ## 7. Filtering and scoring
 
-Apply channel-suitability filters before ranking. Exclude or flag topics that are outside the mixed-curiosity niche, unsafe for a general audience, difficult to explain accurately, purely gossip/celebrity news, highly political without a future policy decision, short-lived memes with no useful explainer angle, or visually difficult to communicate.
+Apply channel-suitability filters before ranking. Exclude or flag topics that are outside the ancient-humans, ancient-civilizations, and history-curiosity niche, unsafe for a general audience, difficult to explain accurately, purely gossip/celebrity news, highly political without a future policy decision, short-lived memes with no useful explainer angle, or visually difficult to communicate.
 
 Scoring is inspectable. The initial 100-point weighting is:
 

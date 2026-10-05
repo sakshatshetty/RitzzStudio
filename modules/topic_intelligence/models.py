@@ -24,9 +24,31 @@ StoryType = Literal[
     "OTHER",
 ]
 
+RITZZ_CHANNEL_NICHE = (
+    "ancient humans, ancient civilizations, and history curiosity"
+)
+RITZZ_CHANNEL_PROFILE = (
+    "RITZZ is a long-form faceless YouTube channel focused primarily on ancient "
+    "humans, ancient civilizations, and history curiosity. Its viewer promise is "
+    "to explain how people in the past actually lived, survived, built, traveled, "
+    "worked, ate, fought, solved problems, and entertained themselves without "
+    "modern technology. Prioritize ancient humans and ancient civilizations, "
+    "then ancient human survival and everyday life, ancient technology and "
+    "engineering, ancient history mysteries, and finally other historical "
+    "periods only when strongly aligned with "
+    "this curiosity pattern. Favor specific how/why/what-happened questions "
+    "about concrete historical people, objects, places, practices, problems, or "
+    "events that make viewers wonder how people managed. Ideas should suit "
+    "8–10 minute storytelling and simple hand-drawn stickman/cartoon visuals, "
+    "maps, timelines, diagrams, cross-sections, tools, buildings, and landscapes. "
+    "Avoid broad generic history labels and unrelated curiosity. Current news, "
+    "current disasters, politics, sports, celebrity/gossip, movies, generic "
+    "science or geography, finance, health, and self-help are outside the core niche."
+)
+
 
 class TopicDiscoveryRequest(BaseModel):
-    niche: str = "mixed curiosity explainers"
+    niche: str = RITZZ_CHANNEL_NICHE
     timeframe: str = "this month"
     locale: str = "English"
     mode: Literal["TRENDING", "EVERGREEN"] = "TRENDING"

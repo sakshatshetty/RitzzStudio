@@ -7,7 +7,11 @@ from openai import OpenAI
 from pydantic import BaseModel, Field
 
 from config import OPENAI_API_KEY, OPENAI_MODEL
-from modules.topic_intelligence.models import OpportunityCandidate, StoryType
+from modules.topic_intelligence.models import (
+    RITZZ_CHANNEL_PROFILE,
+    OpportunityCandidate,
+    StoryType,
+)
 
 
 class CandidateEditorialAssessment(BaseModel):
@@ -77,8 +81,10 @@ class EditorialEvaluator:
     @staticmethod
     def _system_prompt() -> str:
         return (
-            "Assess video-topic ideas for the RITZZ mixed-curiosity YouTube channel. "
-            "RITZZ publishes curiosity-led explainers, not generic reviews, recaps, reactions, or broad news summaries. "
+            "Assess video-topic ideas for RITZZ. Channel profile: "
+            + RITZZ_CHANNEL_PROFILE
+            + " RITZZ publishes curiosity-led explainers, not generic reviews, "
+            "recaps, reactions, or broad news summaries. "
             "A broad entity or institution is not automatically a suitable topic; it needs a specific explanatory question or mystery. "
             "Return exactly one assessment for every candidate ID. Score audience fit, "
             "curiosity, evergreen potential, visual storytelling, researchability, "
@@ -86,9 +92,14 @@ class EditorialEvaluator:
             "score means less saturated. Use only the topic and supplied evidence; "
             "do not invent search metrics, facts, or competitor counts. These are "
             "preliminary editorial judgments, not factual research. Mark PASS for a "
-            "clear general-audience curiosity explainer, REVIEW for uncertain fit or "
-            "evidence, and FAIL for clearly unsuitable ideas such as gossip, unsafe "
-            "topics, or political commentary without a curiosity-explainer angle. "
+            "specific ancient-human, ancient-civilization, ancient-everyday-life, "
+            "ancient-survival, ancient-engineering, or ancient-history-curiosity topic "
+            "when evidence and visual storytelling support it. Other historical "
+            "periods are secondary and must strongly match the channel promise. Mark "
+            "REVIEW for uncertain fit or evidence, and FAIL for clearly unsuitable "
+            "ideas such as current-event disasters, current news, unrelated modern "
+            "topics, gossip, unsafe topics, or political commentary without a "
+            "curiosity-explainer angle. "
             "Mark generic movie/TV reviews, recaps, reaction videos, and broad news topics FAIL unless the topic is explicitly reframed around a factual curiosity question. "
             "For every candidate also provide a proposed YouTube title, a distinct explanatory angle, "
             "and one concise reason it is interesting. Explain each judgment briefly and list exclusion concerns."
