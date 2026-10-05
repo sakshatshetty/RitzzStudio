@@ -372,15 +372,21 @@ def test_audio_timed_storyboard_save_records_callout_review(tmp_path):
     storyboard = make_storyboard(["The pirate waits."], ["A pirate on deck"])
     storyboard.scenes[0].duration_seconds = 2
     storyboard.scenes[0].text_overlay = "THE MYTH"
+    storyboard.scenes[0].camera_motion = "slow_zoom_in"
+    storyboard.scenes[0].transition = "fade"
     storyboard.total_scene_duration_seconds = 2
     output = tmp_path / "storyboard" / "storyboard_audio_timed.json"
 
     AudioTimedStoryboardEngine.save_storyboard(storyboard, output)
 
-    result = load_project_qa(tmp_path).stages["storyboard"][-1]
-    assert result.status == "REVIEW"
-    assert result.checks["timeline_coverage"] == "PASS"
-    assert result.checks["editorial_callouts"] == "REVIEW"
-    assert result.metrics["total_scenes"] == 1
-    assert result.metrics["malformed_callouts"] == 1
-    assert result.details["scene_001"] == "malformed_callout"
+    attempts = load_project_qa(tmp_path).stages["storyboard"]
+    assert [result.status for result in attempts] == ["FAIL", "PASS"]
+    assert attempts[0].checks["timeline_coverage"] == "PASS"
+    assert attempts[0].checks["static_camera"] == "FAIL"
+    assert attempts[0].checks["hard_cuts"] == "FAIL"
+    assert attempts[0].metrics["total_scenes"] == 1
+    assert attempts[0].metrics["malformed_callouts"] == 1
+    assert attempts[0].details["scene_001"] == "malformed_callout"
+    repaired = Storyboard.model_validate_json(output.read_text())
+    assert repaired.scenes[0].camera_motion == "static"
+    assert repaired.scenes[0].transition == "cut"

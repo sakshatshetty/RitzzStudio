@@ -106,6 +106,70 @@ def test_outline_prompt_includes_accepted_duration_range():
     assert "estimated_seconds values for all sections MUST sum" in user_prompt
 
 
+def test_invalid_cached_outline_is_regenerated_with_qa_feedback(tmp_path):
+    research = Research(
+        topic="Test topic",
+        category="Education",
+        core_question="What is the answer?",
+        short_answer="A short answer.",
+    )
+    research_file = tmp_path / "research.json"
+    research_file.write_text(research.model_dump_json(), encoding="utf-8")
+    outline_directory = tmp_path / "outline"
+    outline_directory.mkdir()
+    outline_file = outline_directory / "outline.json"
+    invalid_cached = Outline(
+        topic="Test topic",
+        target_duration_seconds=120,
+        hook="Hook",
+        sections=[
+            OutlineSection(
+                section_id="section_001",
+                section_type="hook",
+                title="Hook",
+                purpose="Create curiosity.",
+                estimated_seconds=90,
+            )
+        ],
+        total_estimated_seconds=90,
+        closing_message="Conclusion",
+    )
+    outline_file.write_text(invalid_cached.model_dump_json(), encoding="utf-8")
+    valid = invalid_cached.model_copy(
+        update={
+            "sections": [
+                invalid_cached.sections[0].model_copy(
+                    update={"estimated_seconds": 140}
+                )
+            ],
+            "total_estimated_seconds": 140,
+        }
+    )
+    prompts = []
+
+    class Responses:
+        def parse(self, **kwargs):
+            prompts.append(kwargs["input"][1]["content"])
+            return SimpleNamespace(output_parsed=valid)
+
+    engine = OutlineEngine.__new__(OutlineEngine)
+    engine.client = SimpleNamespace(responses=Responses())
+
+    result = engine.create_outline(
+        research_file,
+        outline_directory,
+        production_config=ProductionConfig(
+            target_duration_seconds=120,
+            minimum_duration_seconds=120,
+        ),
+    )
+
+    assert result.total_estimated_seconds == 140
+    assert len(prompts) == 1
+    assert "Cached outline failed QA" in prompts[0]
+    assert "90s" in prompts[0]
+
+
 def test_outline_duration_mismatch():
     engine = OutlineEngine.__new__(OutlineEngine)
 

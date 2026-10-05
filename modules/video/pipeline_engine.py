@@ -1,44 +1,40 @@
-from pathlib import Path
 import inspect
+import json
 import os
 import shutil
-import json
 import time
 from collections.abc import Mapping
+from itertools import pairwise
+from pathlib import Path
+from typing import ClassVar
 
+from modules.qa.engine import record_stage_qa
+from modules.qa.models import QAStageResult, QAStatus
 from modules.video.engine import (
     VideoAssemblyEngine,
 )
-
-from modules.video.motion_engine import (
-    VideoMotionEngine,
-)
-
-from modules.video.render_engine import (
-    FFmpegVideoRenderer,
-)
-
 from modules.video.models import (
     VideoAssemblyPlan,
 )
-
+from modules.video.motion_engine import (
+    VideoMotionEngine,
+)
 from modules.video.motion_models import (
     VideoMotionPlan,
 )
-
+from modules.video.pilot_qa import PilotVideoQA
 from modules.video.pipeline_models import (
     PipelineStageName,
     VideoProductionRequest,
     VideoProductionResult,
 )
-
+from modules.video.pipeline_state import load_pipeline_state, save_pipeline_state
+from modules.video.render_engine import (
+    FFmpegVideoRenderer,
+)
 from modules.video.sync_engine import (
     VideoSynchronizationEngine,
 )
-from modules.video.pipeline_state import load_pipeline_state, save_pipeline_state
-from modules.video.pilot_qa import PilotVideoQA
-from modules.qa.engine import record_stage_qa
-from modules.qa.models import QAStageResult, QAStatus
 
 
 class VideoProductionPipeline:
@@ -78,7 +74,14 @@ class VideoProductionPipeline:
 
     STATE_FILENAME = "pipeline_state.json"
     USAGE_FILENAME = "pipeline_usage.json"
-    STAGE_ORDER = ["asset_validation", "assembly", "synchronization", "motion", "render", "technical_qa"]
+    STAGE_ORDER: ClassVar[list[str]] = [
+        "asset_validation",
+        "assembly",
+        "synchronization",
+        "motion",
+        "render",
+        "technical_qa",
+    ]
 
     DEFAULT_OUTPUT_FILENAME = (
         "ritzz_final.mp4"
@@ -541,7 +544,7 @@ class VideoProductionPipeline:
             trial_positions.sort()
             if any(
                 right - left < 3
-                for left, right in zip(trial_positions, trial_positions[1:])
+                for left, right in pairwise(trial_positions)
             ):
                 unresolved_editorial.append(
                     f"{scenes[index].scene_id}: moving the callout would break the 3-4-scene cadence."
@@ -744,8 +747,11 @@ class VideoProductionPipeline:
                 reviewer="openai_vision",
             ),
         )
-        if status == "FAIL":
-            raise RuntimeError("Image/editorial QA still fails after one targeted regeneration; inspect qa/qa_report.json.")
+        if status != "PASS":
+            raise RuntimeError(
+                "Image/editorial QA remains unresolved after its bounded "
+                "automatic correction; inspect qa/qa_report.json."
+            )
         return status
 
     @staticmethod

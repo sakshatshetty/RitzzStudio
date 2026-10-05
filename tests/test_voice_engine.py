@@ -2,19 +2,22 @@ from pathlib import Path
 
 import pytest
 
+from modules.project.config import ProductionConfig
+from modules.project.manager import ProjectManager
+from modules.qa.engine import load_project_qa
 from modules.script.models import (
     Script,
     ScriptSection,
 )
-from modules.voice.engine import NarrationTooShortError, VoiceEngine
+from modules.voice.engine import (
+    NarrationTooShortError,
+    VoiceEngine,
+)
 from modules.voice.models import (
     VoiceAlignment,
     VoiceGenerationRequest,
     VoiceGenerationResult,
 )
-from modules.project.config import ProductionConfig
-from modules.project.manager import ProjectManager
-from modules.qa.engine import load_project_qa
 
 
 class MockVoiceProvider:
@@ -327,6 +330,63 @@ def test_project_voice_generation_records_duration_and_alignment_qa(tmp_path):
     assert result.actual_duration_seconds == 480.5
     assert report.stages["voice"][-1].status == "PASS"
     assert report.stages["voice"][-1].checks["character_alignment"] == "PASS"
+
+
+def test_create_voice_retries_invalid_alignment_once(tmp_path):
+    manager = ProjectManager(tmp_path / "projects")
+    project = manager.create_project("A test video")
+    project_directory = manager.get_project_path(project)
+    script_directory = project_directory / "script"
+    script_directory.mkdir(exist_ok=True)
+    script_file = script_directory / "script.json"
+    script_file.write_text(make_script().model_dump_json(), encoding="utf-8")
+
+    class AlignmentRetryProvider:
+        def __init__(self):
+            self.calls = 0
+
+        def generate(self, request):
+            self.calls += 1
+            Path(request.output_directory).mkdir(parents=True, exist_ok=True)
+            audio_file = Path(request.output_directory) / request.output_filename
+            audio_file.write_bytes(b"mock audio")
+            alignment = (
+                VoiceAlignment(
+                    characters=[],
+                    character_start_times_seconds=[],
+                    character_end_times_seconds=[],
+                )
+                if self.calls == 1
+                else VoiceAlignment(
+                    characters=["A"],
+                    character_start_times_seconds=[0.0],
+                    character_end_times_seconds=[0.1],
+                )
+            )
+            return VoiceGenerationResult(
+                voice_id=request.voice_id,
+                model_id=request.model_id,
+                status="completed",
+                file_path=str(audio_file),
+                duration_seconds=480.5,
+                character_count=len(request.text),
+                alignment=alignment,
+            )
+
+    provider = AlignmentRetryProvider()
+    engine = VoiceEngine(provider, duration_probe=lambda _: 480.5)
+    result = engine.create_voice(
+        script_file=script_file,
+        voice_id="ritzz_voice",
+        output_directory=project_directory / "voice",
+    )
+
+    assert result.status == "completed"
+    assert provider.calls == 2
+    assert [
+        attempt.status
+        for attempt in load_project_qa(project_directory).stages["voice"]
+    ] == ["FAIL", "PASS"]
 
 
 def test_save_and_load_result(tmp_path):

@@ -1099,6 +1099,28 @@ jobs:
           trap 'python scripts/manage_pipeline_production.py fail --stage "$stage" --error "Render or technical QA failed."' ERR
           python scripts/run_render_stage.py
 
+      - name: Preserve failed render QA report
+        if: ${{ failure() }}
+        shell: bash
+        env:
+          PROJECT_ID: ${{ steps.project.outputs.project_id }}
+        run: |
+          set -euo pipefail
+          project_directory=$(find projects -mindepth 1 -maxdepth 1 -type d -name "${PROJECT_ID}_*" -print -quit)
+          qa_report="$project_directory/qa/qa_report.json"
+          if [[ -s "$qa_report" ]] && grep -q '"technical_qa"' "$qa_report"; then
+            cp "$qa_report" .pipeline-artifacts/render_qa_report.json
+          fi
+
+      - name: Upload failed render QA report
+        if: ${{ failure() && hashFiles('.pipeline-artifacts/render_qa_report.json') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-render_video-diagnostics
+          path: .pipeline-artifacts/render_qa_report.json
+          if-no-files-found: error
+          include-hidden-files: true
+
       - name: Archive rendered project
         shell: bash
         run: |

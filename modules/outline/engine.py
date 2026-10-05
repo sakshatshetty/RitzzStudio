@@ -9,6 +9,8 @@ from modules.project.config import (
     DURATION_TOLERANCE_SECONDS,
     ProductionConfig,
 )
+from modules.qa.engine import record_stage_qa
+from modules.qa.models import QAStageResult
 from modules.research.models import Research
 
 
@@ -24,6 +26,7 @@ class OutlineEngine:
         outline_directory: Path,
         force_refresh: bool = False,
         production_config: ProductionConfig | None = None,
+        qa_feedback: str | None = None,
     ) -> Outline:
         """
         Generate an outline from a research JSON file.
@@ -45,11 +48,26 @@ class OutlineEngine:
         # -------------------------------------------------
 
         if outline_file.exists() and not force_refresh:
-            return self._validate_duration(
-                self._load_outline(outline_file),
-                config.target_duration_seconds,
-                config.minimum_duration_seconds,
-            )
+            try:
+                return self._validate_duration(
+                    self._load_outline(outline_file),
+                    config.target_duration_seconds,
+                    config.minimum_duration_seconds,
+                )
+            except ValueError as exc:
+                qa_feedback = f"Cached outline failed QA: {exc}"
+                record_stage_qa(
+                    outline_directory.parent,
+                    QAStageResult(
+                        stage="outline",
+                        status="FAIL",
+                        checks={"outline_validation": "FAIL"},
+                        findings=[str(exc)],
+                        recommendations=[
+                            "Regenerate the outline to satisfy the duration constraints."
+                        ],
+                    ),
+                )
 
         # -------------------------------------------------
         # Load research
@@ -61,48 +79,67 @@ class OutlineEngine:
         # Generate outline
         # -------------------------------------------------
 
-        response = self.client.responses.parse(
-            model=OPENAI_MODEL,
-            input=[
-                {
-                    "role": "system",
-                    "content": self._system_prompt(config),
-                },
-                {
-                    "role": "user",
-                    "content": self._build_user_prompt(research, config),
-                },
-            ],
-            text_format=Outline,
-        )
-
-        outline = response.output_parsed
-
-        if outline is None:
-            raise RuntimeError(
-                "OpenAI returned no structured outline."
+        last_error: ValueError | None = None
+        for attempt in range(2):
+            user_prompt = self._build_user_prompt(
+                research,
+                config,
+                qa_feedback=qa_feedback,
+            )
+            response = self.client.responses.parse(
+                model=OPENAI_MODEL,
+                input=[
+                    {
+                        "role": "system",
+                        "content": self._system_prompt(config),
+                    },
+                    {
+                        "role": "user",
+                        "content": user_prompt,
+                    },
+                ],
+                text_format=Outline,
             )
 
-        # -------------------------------------------------
-        # Validate duration
-        # -------------------------------------------------
+            outline = response.output_parsed
+            if outline is None:
+                raise RuntimeError(
+                    "OpenAI returned no structured outline."
+                )
+            try:
+                outline = self._validate_duration(
+                    outline,
+                    config.target_duration_seconds,
+                    config.minimum_duration_seconds,
+                )
+            except ValueError as exc:
+                last_error = exc
+                qa_feedback = f"Previous outline failed QA: {exc}"
+                record_stage_qa(
+                    outline_directory.parent,
+                    QAStageResult(
+                        stage="outline",
+                        status="FAIL",
+                        checks={"outline_validation": "FAIL"},
+                        findings=[str(exc)],
+                        recommendations=[
+                            "Regenerate the outline to satisfy the duration constraints."
+                        ],
+                    ),
+                )
+                if attempt == 0:
+                    continue
+                raise ValueError(
+                    "Outline QA failed after one automatic correction: "
+                    f"{exc}"
+                ) from exc
 
-        outline = self._validate_duration(
-            outline,
-            config.target_duration_seconds,
-            config.minimum_duration_seconds,
-        )
+            self._save_outline(outline_file, outline)
+            return outline
 
-        # -------------------------------------------------
-        # Save
-        # -------------------------------------------------
-
-        self._save_outline(
-            outline_file,
-            outline,
-        )
-
-        return outline
+        raise RuntimeError(
+            "Outline QA correction loop ended unexpectedly."
+        ) from last_error
 
     @staticmethod
     def _system_prompt(config: ProductionConfig | None = None) -> str:
@@ -154,6 +191,7 @@ class OutlineEngine:
     def _build_user_prompt(
         research: Research,
         config: ProductionConfig | None = None,
+        qa_feedback: str | None = None,
     ) -> str:
         """Build the user prompt from structured research."""
 
@@ -173,6 +211,11 @@ class OutlineEngine:
             "Treat these duration requirements as hard constraints.\n\n"
             "RESEARCH:\n"
             f"{research.model_dump_json(indent=2)}"
+            + (
+                f"\n\nQA issues to correct in this revision:\n{qa_feedback}"
+                if qa_feedback
+                else ""
+            )
         )
 
     @staticmethod

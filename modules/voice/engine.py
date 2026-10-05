@@ -1,16 +1,17 @@
 import math
 import re
+from itertools import pairwise
 from pathlib import Path
 from typing import Protocol
 
-from modules.script.models import Script
 from modules.project.config import ProductionConfig
+from modules.script.models import Script
+from modules.voice.audio import probe_audio_duration
 from modules.voice.models import (
     VoiceGenerationRequest,
     VoiceGenerationResult,
     VoiceModel,
 )
-from modules.voice.audio import probe_audio_duration
 from modules.voice.text import ensure_terminal_punctuation
 
 
@@ -30,6 +31,10 @@ class NarrationTooShortError(ValueError):
     def __init__(self, message: str, result: VoiceGenerationResult) -> None:
         super().__init__(message)
         self.result = result
+
+
+class VoiceAlignmentError(RuntimeError):
+    """Raised when completed audio has incomplete or invalid alignment."""
 
 
 class VoiceEngine:
@@ -125,8 +130,18 @@ class VoiceEngine:
 
         result.actual_duration_seconds = actual
         result.minimum_duration_seconds = minimum
-        self._record_project_voice_qa(request, result, actual >= minimum)
+        alignment_valid = self._record_project_voice_qa(
+            request,
+            result,
+            actual >= minimum,
+        )
         if actual >= minimum:
+            if not alignment_valid:
+                result.status = "failed"
+                result.error_message = (
+                    "Generated narration has missing or invalid character alignment."
+                )
+                raise VoiceAlignmentError(result.error_message)
             return
 
         words = len(re.findall(r"\b[\w’'-]+\b", request.text))
@@ -146,10 +161,10 @@ class VoiceEngine:
         request: VoiceGenerationRequest,
         result: VoiceGenerationResult,
         duration_passed: bool,
-    ) -> None:
+    ) -> bool:
         project_directory = Path(request.output_directory).parent
         if not (project_directory / "project.json").is_file():
-            return
+            return True
 
         from modules.qa.engine import record_stage_qa
         from modules.qa.models import QAStageResult
@@ -178,10 +193,7 @@ class VoiceEngine:
             )
             and all(
                 current >= previous
-                for previous, current in zip(
-                    alignment_starts,
-                    alignment_starts[1:],
-                )
+                for previous, current in pairwise(alignment_starts)
             )
         )
         findings = []
@@ -194,7 +206,7 @@ class VoiceEngine:
                 f"Narration is {result.actual_duration_seconds:.3f}s; minimum is {request.minimum_duration_seconds:.3f}s."
             )
             recommendations.append("Expand the script and regenerate narration; do not stretch the audio.")
-        status = "FAIL" if not duration_passed else "PASS" if timestamps_valid else "REVIEW"
+        status = "PASS" if duration_passed and timestamps_valid else "FAIL"
         record_stage_qa(
             project_directory,
             QAStageResult(
@@ -209,6 +221,7 @@ class VoiceEngine:
                 recommendations=recommendations,
             ),
         )
+        return timestamps_valid
 
     def create_voice(
         self,
@@ -232,7 +245,35 @@ class VoiceEngine:
             production_config=production_config,
         )
 
-        return self.generate(request)
+        try:
+            return self.generate(request)
+        except NarrationTooShortError as exc:
+            project_directory = Path(script_file).parent.parent
+            research_file = project_directory / "research" / "research.json"
+            outline_file = project_directory / "outline" / "outline.json"
+            if not research_file.is_file() or not outline_file.is_file():
+                raise
+            from modules.script.engine import ScriptEngine
+
+            corrected_script = ScriptEngine().create_script(
+                research_file=research_file,
+                outline_file=outline_file,
+                script_directory=Path(script_file).parent,
+                force_refresh=True,
+                production_config=production_config,
+                qa_feedback=str(exc),
+            )
+            corrected_request = self.create_request(
+                script=corrected_script,
+                voice_id=voice_id,
+                output_directory=output_directory,
+                output_filename=output_filename,
+                model_id=model_id,
+                production_config=production_config,
+            )
+            return self.generate(corrected_request)
+        except VoiceAlignmentError:
+            return self.generate(request)
 
     @staticmethod
     def _build_narration(
