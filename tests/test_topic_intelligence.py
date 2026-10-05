@@ -404,6 +404,80 @@ def test_provider_uses_mcp_initialize_discovery_and_structured_result():
     )
 
 
+def test_vidiq_enrichment_uses_a_search_concept_and_keeps_raw_evidence():
+    class KeywordResearchSession(FakeMcpSession):
+        def post(self, url: str, **kwargs: Any) -> FakeResponse:
+            self.calls.append(kwargs)
+            body = kwargs["json"]
+            if body["method"] == "initialize":
+                return FakeResponse({
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": {"capabilities": {}},
+                })
+            if body["method"] == "notifications/initialized":
+                return FakeResponse({})
+            if body["method"] == "tools/list":
+                return FakeResponse({
+                    "jsonrpc": "2.0",
+                    "id": body["id"],
+                    "result": {
+                        "tools": [{
+                            "name": "keyword_research",
+                            "description": "Keyword research and search volume",
+                            "inputSchema": {
+                                "type": "object",
+                                "properties": {
+                                    "keyword": {"type": "string"},
+                                    "mode": {
+                                        "type": "string",
+                                        "enum": ["research"],
+                                    },
+                                },
+                                "required": ["keyword", "mode"],
+                            },
+                        }]
+                    },
+                })
+            return FakeResponse({
+                "jsonrpc": "2.0",
+                "id": body["id"],
+                "result": {
+                    "structuredContent": {
+                        "keywords": [{
+                            "keyword": "prehistoric winter survival",
+                            "search_volume": 1200,
+                            "related_keywords": ["ancient humans cold weather"],
+                        }]
+                    }
+                },
+            })
+
+    session = KeywordResearchSession()
+    provider = VidiqMcpProvider(api_key="fixture", session=session)
+
+    result = provider.enrich_topic_demand("ancient humans winter survival")
+
+    assert result["available"] is True
+    assert result["query"] == "ancient humans winter survival"
+    assert result["metrics"]["search_volume"]["value"] == 1200
+    assert result["related_keywords"] == ["ancient humans cold weather"]
+    assert result["raw_response"]["structuredContent"]["keywords"][0]["keyword"] == (
+        "prehistoric winter survival"
+    )
+    call = next(
+        item["json"]
+        for item in session.calls
+        if item["json"]["method"] == "tools/call"
+    )
+    assert call["params"]["arguments"]["keyword"] == "ancient humans winter survival"
+    assert result["operation"]["query"] == "ancient humans winter survival"
+    assert json.loads(result["operation"]["arguments"]) == {
+        "keyword": "ancient humans winter survival",
+        "mode": "research",
+    }
+
+
 def test_provider_rejects_non_candidate_prose():
     assert VidiqMcpProvider._extract_records({"content": [{"type": "text", "text": "Here are some ideas"}]}) == []
 

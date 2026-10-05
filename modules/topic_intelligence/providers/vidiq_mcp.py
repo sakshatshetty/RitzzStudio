@@ -141,6 +141,7 @@ class VidiqMcpProvider:
             "status": "unavailable",
             "error_type": "CAPABILITY_UNAVAILABLE",
             "message": "",
+            "query": topic,
             "call_made": "false",
             "tool_discovery_call_made": "false",
             "fallback_behavior": "Retain the candidate with demand and competition marked unavailable.",
@@ -149,6 +150,8 @@ class VidiqMcpProvider:
             "available": False,
             "metrics": {},
             "related_keywords": [],
+            "query": topic,
+            "raw_response": None,
             "operation": operation,
         }
         if not self.api_key:
@@ -174,10 +177,16 @@ class VidiqMcpProvider:
                 )
                 return result
             operation["call_made"] = "true"
+            operation["arguments"] = json.dumps(
+                arguments,
+                ensure_ascii=False,
+                sort_keys=True,
+            )
             response = self._rpc("tools/call", {
                 "name": tool["name"],
                 "arguments": arguments,
             })
+            result["raw_response"] = response
             records = self._extract_records(response)
         except ProviderUnavailableError as exc:
             operation.update({
