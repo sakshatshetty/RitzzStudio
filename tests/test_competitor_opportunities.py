@@ -126,18 +126,27 @@ def test_ritzz_profile_and_gpt_prompts_prioritize_ancient_history():
     for focus in (
         "ancient humans",
         "ancient civilizations",
-        "ancient human survival",
+        "specific human problem",
+        "daily life",
+        "food",
+        "sleep",
+        "travel",
         "everyday life",
-        "ancient technology",
-        "ancient history mysteries",
+        "practical engineering",
+        "ancient mysteries",
     ):
         assert focus in profile
     assert "ancient-human" in ideation_prompt
-    assert "ancient-civilization" in ideation_prompt
+    assert "human experience" in ideation_prompt
+    assert "curiosity family" in ideation_prompt
+    assert "genuinely different subject" in ideation_prompt
+    assert "ancient-human situation" in ideation_prompt
+    assert "ancient civilization daily life" in ideation_prompt
     assert "current disasters" in ideation_prompt
     assert "sports" in ideation_prompt
     assert "unrelated general curiosity" in ideation_prompt
-    assert "ancient-survival" in editorial_prompt
+    assert "health/survival practices" in editorial_prompt
+    assert "specific human problem" in editorial_prompt
     assert "current-event disasters" in editorial_prompt
 
 

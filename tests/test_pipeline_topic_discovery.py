@@ -229,9 +229,11 @@ def test_gpt_receives_vidiq_pool_and_generates_concepts_in_one_request():
     system_prompt = client.responses.calls[0]["input"][0]["content"].casefold()
     assert "ancient humans" in system_prompt
     assert "ancient civilizations" in system_prompt
-    assert "ancient everyday life and survival" in system_prompt
-    assert "ancient technology and engineering" in system_prompt
-    assert "ancient history mysteries" in system_prompt
+    assert "specific ancient-human situation" in system_prompt
+    assert "survival, daily life, behavior, food, sleep, travel, shelter" in system_prompt
+    assert "practical engineering/technology" in system_prompt
+    assert "use competitor opportunities as curiosity-pattern signals" in system_prompt
+    assert "generic ancient-history labels" in system_prompt
     assert "current disasters" in system_prompt
     assert user_payload["channel_profile"] == RITZZ_CHANNEL_PROFILE
 
