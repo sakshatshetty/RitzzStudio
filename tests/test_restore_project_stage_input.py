@@ -47,6 +47,7 @@ def _artifact(stage: str, artifact_id: int, created_at: str) -> dict:
         ("image_generation", ("storyboard", "storyboard-project.tar.gz")),
         ("render_video", ("image", "image-project.tar.gz")),
         ("metadata_packaging", ("rendered", "rendered-project.tar.gz")),
+        ("thumbnail_packaging", ("metadata", "rendered-project.tar.gz")),
         ("private_upload", ("metadata", "rendered-project.tar.gz")),
     ],
 )

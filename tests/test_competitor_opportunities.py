@@ -156,6 +156,55 @@ def test_original_topics_require_repeated_success_across_multiple_channels():
     assert candidates[0].raw_evidence["competitor_signal_weight"] == 1.0
 
 
+def test_local_channel_baseline_requires_four_videos_and_uses_three_peers():
+    records = [
+        {
+            "videoId": f"video-{index}",
+            "channelId": "channel-a",
+            "channelTitle": "Channel A",
+            "videoTitle": f"Topic {index}",
+            "viewCount": views,
+        }
+        for index, views in enumerate((1000, 100, 200, 300), start=1)
+    ]
+
+    three_video_report = build_market_intelligence_report(
+        "history",
+        records[:3],
+    )
+    four_video_report = build_market_intelligence_report(
+        "history",
+        records,
+    )
+
+    assert three_video_report.outliers[0].baseline_views is None
+    assert four_video_report.outliers[0].baseline_views == 200
+    assert four_video_report.outliers[0].baseline_sample_size == 3
+    assert four_video_report.outliers[0].baseline_method == (
+        "median of returned same-channel videos"
+    )
+
+
+def test_numeric_string_publish_time_and_video_url_are_kept_as_provenance():
+    video = normalize_outlier(
+        {
+            "videoId": "video-a",
+            "videoTitle": "A historical curiosity",
+            "videoUrl": "https://example.com/video-a",
+            "publishedAt": "1000000000",
+        }
+    )
+
+    evidence = competitor_evidence_for_video(
+        video,
+        "fixture",
+        "2001-09-19T01:46:40+00:00",
+    )
+
+    assert evidence.video["url"] == "https://example.com/video-a"
+    assert evidence.video["age_days"] == 10
+
+
 def test_single_competitor_video_can_seed_a_low_confidence_topic():
     batch = _generation_batch()
     batch.patterns[0].evidence_ids = ["video-a"]
@@ -952,7 +1001,7 @@ def test_keyword_provider_error_is_optional_for_competitor_candidate_generation(
         cache_dir=tmp_path,
         editorial_evaluator=Editorial(),
         competitor_opportunity_generator=Generator(),
-    ).discover(TopicDiscoveryRequest(pipeline_topic_gate=True))
+    ).discover(TopicDiscoveryRequest(pipeline_topic_gate=False))
 
     assert result.candidates[0].topic == "Why Did Humans Stop Sleeping in Two Shifts?"
     assert result.candidates[0].ritzz_fit is not None
@@ -974,3 +1023,116 @@ def test_keyword_provider_error_is_optional_for_competitor_candidate_generation(
         item.startswith("keyword_research_enrichment: PROVIDER_ERROR")
         for item in sources_unavailable
     )
+
+
+def test_pipeline_discovery_runs_competitors_ideation_and_vidiq_without_fallback(
+    tmp_path,
+):
+    competitor_report = MarketIntelligenceReport(
+        query="mixed curiosity explainers",
+        retrieved_at="2026-09-30T00:00:00+00:00",
+        outliers=[
+            _video(
+                f"video-{index}",
+                f"channel-{index}",
+                f"Successful curiosity video {index}",
+                score=8,
+            )
+            for index in range(1, 4)
+        ],
+    )
+    candidates = [
+        OpportunityCandidate(
+            candidate_id=f"idea-{index}",
+            topic=topic,
+            provider="vidiq_mcp",
+            discovery_sources=["configured_competitor_outliers"],
+        )
+        for index, topic in enumerate(
+            (
+                "Why Do Moonbows Appear at Night?",
+                "Why Do Sand Dunes Produce Singing Sounds?",
+                "How Do Fireflies Synchronize Their Flashes?",
+                "Why Do Some Rivers Flow Underground?",
+            ),
+            start=1,
+        )
+    ]
+
+    class Provider:
+        name = "vidiq_mcp"
+
+        def __init__(self):
+            self.validation_topics = []
+
+        def discover(self, _request):
+            raise AssertionError("General topic discovery must not be called.")
+
+        def discover_competitor_research(self, _query, limit=10):
+            assert limit > 0
+            return competitor_report
+
+        def enrich_topic_demand(self, topic):
+            self.validation_topics.append(topic)
+            return {
+                "available": True,
+                "metrics": {
+                    "search_volume": {
+                        "value": 100,
+                        "unit": "monthly searches",
+                        "available": True,
+                        "source": "fixture",
+                    }
+                },
+                "related_keywords": [],
+                "operation": {
+                    "source": "keyword_research_enrichment",
+                    "tool": "fixture",
+                    "status": "success",
+                    "call_made": "true",
+                },
+            }
+
+    class Generator:
+        def generate(self, _report, *, candidate_limit):
+            assert candidate_limit >= 3
+            return candidates, [], {
+                "successful_outlier_videos": 3,
+                "generated_candidates": 4,
+            }
+
+    class Editorial:
+        def assess(self, items):
+            return [
+                CandidateEditorialAssessment(
+                    candidate_id=item.candidate_id,
+                    audience_fit=90,
+                    curiosity=90,
+                    evergreen=90,
+                    visual=90,
+                    researchability=90,
+                    differentiation=90,
+                    saturation=90,
+                    format_fit=90,
+                    story_depth=90,
+                    originality=90,
+                    status="REVIEW" if item.candidate_id == "idea-4" else "PASS",
+                )
+                for item in items
+            ]
+
+    provider = Provider()
+    result = TopicIntelligenceEngine(
+        provider=provider,
+        cache_dir=tmp_path,
+        editorial_evaluator=Editorial(),
+        competitor_opportunity_generator=Generator(),
+    ).discover(TopicDiscoveryRequest(pipeline_topic_gate=True, force_refresh=True))
+
+    assert len(result.candidates) == 3
+    assert len(provider.validation_topics) == 4
+    assert result.discovery_diagnostics["gpt_ideation_calls"] == 1
+    assert result.discovery_diagnostics["vidiq_validation_calls"] == 4
+    assert result.discovery_diagnostics["fallback_discovery_calls"] == 0
+    assert result.discovery_diagnostics["recommendation_gate"]["qualified_candidates"] == 3
+    assert result.discovery_diagnostics["status"] == "SUCCESS"

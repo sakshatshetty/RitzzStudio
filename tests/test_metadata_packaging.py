@@ -215,6 +215,14 @@ def test_title_options_and_final_selected_title_are_persisted(tmp_path):
         item["title"] for item in artifact["title_options"]
     }
     assert artifact["title_rationale"]
+    assert [item["title"] for item in artifact["title_lint"]] == [
+        item["title"] for item in artifact["title_options"]
+    ]
+    assert all(
+        item["mobile_truncation_risk"] == (item["characters"] > 40)
+        and item["desktop_truncation_risk"] == (item["characters"] > 60)
+        for item in artifact["title_lint"]
+    )
     upload_package = json.loads((project_path / "packaging.json").read_text())
     assert upload_package["selected_title"] == artifact["selected_title"]
     assert upload_package["metadata"]["description"] == artifact["description"]
@@ -305,8 +313,20 @@ def test_semantic_review_is_preserved_but_semantic_fail_blocks_metadata(tmp_path
         ("tags", ["moonbow science", "soccer tactics"], "unrelated"),
         (
             "description",
-            "Moonbows last 99 years and are formed by moonlight and water droplets.",
+            (
+                "Moonbows last 99 years and are formed by moonlight and water droplets. "
+                "This video explains how moonbows appear."
+            ),
             "unsupported",
+        ),
+        (
+            "title_options",
+            [
+                {"title": "Why Is The Moonbow Formed?", "rationale": "A title"},
+                {"title": "Moonbows and Their Night-Sky Colors", "rationale": "B title"},
+                {"title": "How Water Droplets Bend Moonlight", "rationale": "C title"},
+            ],
+            "Title does not front-load",
         ),
     ],
 )
@@ -317,7 +337,10 @@ def test_invalid_generated_metadata_is_retried_then_rejected(
     message,
 ):
     project, project_path = _project(tmp_path)
-    invalid = _generated_metadata(**{field: value})
+    updates = {field: value}
+    if field == "title_options":
+        updates["recommended_title"] = value[0]["title"]
+    invalid = _generated_metadata(**updates)
     generator = FakeGenerator([invalid, invalid])
 
     with pytest.raises(ValueError, match=message):
@@ -358,6 +381,37 @@ def test_completed_metadata_is_reused_without_calling_gpt_again(tmp_path):
     assert resumed["status"] == "COMPLETE"
 
 
+def test_completed_legacy_metadata_adds_title_lint_without_regeneration(tmp_path):
+    project, project_path = _project(tmp_path)
+    original = MetadataPackagingEngine(FakeGenerator()).package(
+        project_path,
+        production_id="production-1",
+        project_id=project.project_id,
+        render_metadata=_render_metadata(),
+    )
+    original.pop("title_lint")
+    (project_path / METADATA_FILENAME).write_text(
+        json.dumps(original),
+        encoding="utf-8",
+    )
+
+    class MustNotGenerate:
+        def generate(self, context):
+            del context
+            pytest.fail("Completed metadata must be reused.")
+
+    resumed = MetadataPackagingEngine(MustNotGenerate()).package(
+        project_path,
+        production_id="production-1",
+        project_id=project.project_id,
+        render_metadata=_render_metadata(),
+    )
+
+    assert resumed["title_lint"]
+    persisted = json.loads((project_path / METADATA_FILENAME).read_text())
+    assert persisted["title_lint"] == resumed["title_lint"]
+
+
 def test_failed_metadata_is_retried_and_successful_result_replaces_it(tmp_path):
     project, project_path = _project(tmp_path)
     first_generator = FakeGenerator([RuntimeError("temporary provider failure")])
@@ -382,20 +436,23 @@ def test_failed_metadata_is_retried_and_successful_result_replaces_it(tmp_path):
     assert len(retry_generator.contexts) == 1
 
 
-def test_metadata_packaging_stage_follows_render_before_final_approval():
+def test_metadata_packaging_and_thumbnail_stage_precede_final_approval():
     from pathlib import Path
 
     workflow = Path(".github/workflows/ritzz-pipeline.yml").read_text(encoding="utf-8")
     render = workflow.index("  render-video:")
     video_approval = workflow.index("  video-approval:")
     metadata = workflow.index("  metadata-packaging:")
+    thumbnail = workflow.index("  thumbnail-packaging:")
     final_approval = workflow.index("  packaging-approval:")
     private_upload = workflow.index("  private-upload:")
 
-    assert render < video_approval < metadata < final_approval < private_upload
+    assert render < video_approval < metadata < thumbnail < final_approval < private_upload
     assert "needs: [video-approval, render-video, restore-production]" in workflow
     assert "needs: [metadata-packaging, restore-production]" in workflow
+    assert "needs: [metadata-packaging, thumbnail-packaging, restore-production]" in workflow
     assert "- metadata_packaging" in workflow
+    assert "- thumbnail_packaging" in workflow
 
 
 def test_production_state_migrates_existing_state_with_metadata_stage(tmp_path):
@@ -410,6 +467,23 @@ def test_production_state_migrates_existing_state_with_metadata_stage(tmp_path):
 
     assert tuple(resumed["stages"]) == PIPELINE_STAGES
     assert resumed["stages"]["metadata_packaging"]["status"] == "pending"
+
+
+def test_production_state_migrates_thumbnail_stage_for_existing_metadata_state(
+    tmp_path,
+):
+    artifact_root = tmp_path / "artifacts"
+    artifact_root.mkdir()
+    store = ProductionStateStore(artifact_root / "production_state.json", artifact_root)
+    state = store.initialize("production-1")
+    state["stages"].pop("thumbnail_packaging")
+    store.state_file.write_text(json.dumps(state), encoding="utf-8")
+
+    resumed = store.resume("production-1")
+
+    assert tuple(resumed["stages"]) == PIPELINE_STAGES
+    assert resumed["stages"]["metadata_packaging"]["status"] == "pending"
+    assert resumed["stages"]["thumbnail_packaging"]["status"] == "pending"
 
 
 def test_runner_requires_render_checkpoint_and_records_complete_metadata_stage(

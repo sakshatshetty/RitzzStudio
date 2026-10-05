@@ -21,6 +21,7 @@ PIPELINE_STAGES = (
     "image_generation",
     "render_video",
     "metadata_packaging",
+    "thumbnail_packaging",
     "private_upload",
 )
 _PRODUCTION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
@@ -369,17 +370,22 @@ class ProductionStateStore:
             not isinstance(state, dict)
             or state.get("state_version") != STATE_VERSION
             or not isinstance(state.get("stages"), dict)
-            or "metadata_packaging" in state["stages"]
         ):
             return False
-        state["stages"]["metadata_packaging"] = {
-            "status": "pending",
-            "attempts": 0,
-            "started_at": None,
-            "completed_at": None,
-            "error": None,
-            "artifacts": [],
-        }
+        migrated = False
+        for new_stage in ("metadata_packaging", "thumbnail_packaging"):
+            if new_stage not in state["stages"]:
+                state["stages"][new_stage] = {
+                    "status": "pending",
+                    "attempts": 0,
+                    "started_at": None,
+                    "completed_at": None,
+                    "error": None,
+                    "artifacts": [],
+                }
+                migrated = True
+        if not migrated:
+            return False
         state["stages"] = {
             stage: state["stages"][stage]
             for stage in PIPELINE_STAGES

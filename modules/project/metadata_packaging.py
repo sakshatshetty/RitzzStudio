@@ -31,6 +31,11 @@ _PLACEHOLDER_PATTERN = re.compile(
     r"\b(?:todo|tbd|placeholder|lorem ipsum|insert (?:text|title|description))\b",
     re.IGNORECASE,
 )
+_TITLE_LEADING_FILLER = {
+    "a", "an", "and", "are", "for", "how", "i", "in", "is", "it", "my",
+    "of", "on", "or", "the", "that", "this", "to", "what", "why", "with",
+    "you", "your",
+}
 
 
 class MetadataTitleOption(BaseModel):
@@ -72,9 +77,12 @@ class OpenAIMetadataGenerator:
                         "Do not invent facts or promise material not present in the video. "
                         "Write 3-5 distinct, concise, accurate, curiosity-driven title options "
                         "for an 8-10 minute general-audience explainer. Recommend one option; "
-                        "do not choose merely for keyword score and do not copy the topic verbatim. "
+                        "keep titles within YouTube's 100-character hard limit, front-load the "
+                        "specific subject so it survives short-feed truncation, do not choose "
+                        "merely for keyword score, and do not copy the topic verbatim. "
                         "Write one complete, natural YouTube description with a clear opening "
-                        "hook, what the viewer will learn, and the actual examples/concepts covered. "
+                        "hook: the first two lines should clearly say what the video explains "
+                        "and what the viewer will learn, followed by the actual examples/concepts covered. "
                         "Do not concatenate fields, repeat the title or hook, copy script passages, "
                         "use placeholders, leave fragments, or end abruptly. Use relevant vidIQ "
                         "keyword evidence only if it accurately describes the finished video. "
@@ -196,6 +204,10 @@ class MetadataPackagingEngine:
                     "title_rationale": generated.title_rationale.strip(),
                     "description": generated.description.strip(),
                     "tags": [tag.strip() for tag in generated.tags],
+                    "title_lint": [
+                        self._title_lint(option.title)
+                        for option in generated.title_options
+                    ],
                     "status": "COMPLETE",
                     "error": None,
                     "updated_at": self.clock(),
@@ -294,6 +306,12 @@ class MetadataPackagingEngine:
         normalized_titles = [
             cls._normalize(option.title) for option in draft.title_options
         ]
+        for option in draft.title_options:
+            first_words = re.findall(r"[a-z0-9']+", option.title.casefold())[:3]
+            if first_words and all(
+                word in _TITLE_LEADING_FILLER for word in first_words
+            ):
+                raise ValueError("Title does not front-load a specific subject.")
         if len(set(normalized_titles)) != len(normalized_titles):
             raise ValueError("Title options must be distinct.")
         selected = cls._normalize(draft.recommended_title)
@@ -312,12 +330,21 @@ class MetadataPackagingEngine:
         if description.count('"') % 2 or description.count("(") != description.count(")"):
             raise ValueError("Description has unclosed punctuation.")
         paragraphs = [
-            cls._normalize(part)
+            part.strip()
             for part in re.split(r"\n\s*\n", description)
             if part.strip()
         ]
-        if len(paragraphs) != len(set(paragraphs)):
+        if len({cls._normalize(part) for part in paragraphs}) != len(paragraphs):
             raise ValueError("Description contains duplicate paragraphs.")
+        opening_sentences = [
+            sentence.strip()
+            for sentence in re.split(r"(?<=[.!?])\s+", paragraphs[0])
+            if sentence.strip()
+        ]
+        if len(opening_sentences) < 2:
+            raise ValueError(
+                "Description opening must clearly explain the video in its first two lines."
+            )
         sentences = [
             cls._normalize(part)
             for part in re.split(r"(?<=[.!?])\s+", description)
@@ -505,6 +532,12 @@ class MetadataPackagingEngine:
                     "tags": cached.get("tags"),
                 }
             )
+            if "title_lint" not in cached:
+                cached["title_lint"] = [
+                    cls._title_lint(item["title"])
+                    for item in cached["title_options"]
+                ]
+                cls._write(path, cached)
             return cached
         return None
 
@@ -556,3 +589,13 @@ class MetadataPackagingEngine:
             for word in re.findall(r"[a-z0-9]+", text.casefold())
             if len(word) > 2 and word not in _STOP_WORDS
         ]
+
+    @staticmethod
+    def _title_lint(title: str) -> dict[str, Any]:
+        character_count = len(title.strip())
+        return {
+            "title": title.strip(),
+            "characters": character_count,
+            "mobile_truncation_risk": character_count > 40,
+            "desktop_truncation_risk": character_count > 60,
+        }

@@ -1,7 +1,7 @@
-"""Discover four pipeline candidates without interactive terminal input."""
+"""Discover pipeline candidates without interactive terminal input."""
 
-import json
 import hashlib
+import json
 import os
 import sys
 from pathlib import Path
@@ -11,9 +11,22 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from modules.topic_intelligence.engine import TopicIntelligenceEngine
-from modules.topic_intelligence.inventory import ContentInventoryManager, normalize_topic
-from modules.topic_intelligence.models import OpportunityCandidate, OpportunityReport, TopicDiscoveryRequest
+from modules.topic_intelligence.competitor_opportunities import (
+    CompetitorOpportunityGenerator,
+)
+from modules.topic_intelligence.engine import (
+    CompetitorPipelineDiscoveryError,
+    TopicIntelligenceEngine,
+)
+from modules.topic_intelligence.inventory import (
+    ContentInventoryManager,
+    normalize_topic,
+)
+from modules.topic_intelligence.models import (
+    OpportunityCandidate,
+    OpportunityReport,
+    TopicDiscoveryRequest,
+)
 
 
 class TopicDiscoveryEngine(Protocol):
@@ -27,16 +40,46 @@ def _candidate_markdown(index: int, candidate) -> str:
         else "unscored"
     )
     rationale = "; ".join(candidate.rationale[:2]) or "No additional rationale recorded."
+    metrics = [
+        f"{name}: {metric.value} {metric.unit or ''}".strip()
+        for name, metric in candidate.current_vidiq_demand_signals.items()
+        if metric.available and metric.value is not None
+    ]
+    outlier_lines = []
+    for evidence in candidate.competitor_evidence[:3]:
+        video = evidence.video
+        performance = evidence.observed_performance
+        signal = evidence.outlier_signal
+        details = [video.get("title") or "Untitled competitor video"]
+        channel = evidence.channel.get("name")
+        if channel:
+            details.append(f"channel: {channel}")
+        if performance.get("views") is not None:
+            details.append(f"views: {performance['views']}")
+        if video.get("age_days") is not None:
+            details.append(f"age: {video['age_days']} days")
+        if signal.get("ratio") is not None:
+            details.append(f"channel baseline multiple: {signal['ratio']}x")
+        elif performance.get("breakout_score") is not None:
+            details.append(f"vidIQ breakout score: {performance['breakout_score']}")
+        if evidence.baseline.get("views") is not None:
+            details.append(f"baseline: {evidence.baseline['views']} views")
+        outlier_lines.append("- Outlier inspiration: " + "; ".join(map(str, details)))
+    inspiration = "\n".join(outlier_lines) or "- Outlier inspiration: unavailable"
     return (
         f"### {index}. {candidate.proposed_title or candidate.topic}\n"
-        f"- VidIQ topic signal: {candidate.topic}\n"
+        f"- Proposed topic: {candidate.topic}\n"
         f"- Candidate ID: `{candidate.candidate_id}`\n"
         f"- Type: `{candidate.opportunity_type}`\n"
         f"- Opportunity score: `{score}`\n"
         f"- Editorial fit: `{candidate.editorial_status or 'REVIEW'}`\n"
         f"- Evidence status: `{candidate.validation_status}`\n"
         f"- Explainer angle: {candidate.angle or 'Not provided.'}\n"
-        f"- Why it is interesting: {candidate.why_interesting or 'Not provided.'}\n"
+        f"- Curiosity hook: {candidate.curiosity_hook or candidate.why_interesting or 'Not provided.'}\n"
+        f"- Original RITZZ angle: {candidate.ritzz_differentiation_angle or 'Not provided.'}\n"
+        f"{inspiration}\n"
+        f"- vidIQ validation: {'; '.join(metrics) if metrics else 'No usable metrics.'}\n"
+        f"- Inventory status: {candidate.inventory_status or 'Not recorded'}\n"
         f"- Notes: {rationale}\n"
     )
 
@@ -54,6 +97,7 @@ def discover_four_candidates(
         for candidate in items:
             if (
                 candidate.editorial_status != "PASS"
+                or candidate.validation_status != "RECOMMENDED"
                 or candidate.filter_reasons
                 or any("near-duplicate" in reason.casefold() for reason in candidate.validation_reasons)
             ):
@@ -70,29 +114,24 @@ def discover_four_candidates(
                 candidates.append(candidate)
 
     add_distinct(report.candidates)
-    discovery_notes = [f"{request.trend_topic or 'unscoped'}: {len(candidates)} distinct candidate(s)"]
-
-    if len(candidates) < 4 and request.mode == "TRENDING" and request.trend_topic:
-        broader_request = request.model_copy(update={"trend_topic": None, "force_refresh": True})
-        broader_report = engine.discover(broader_request)
-        add_distinct(broader_report.candidates)
-        report = broader_report
-        discovery_notes.append(f"unscoped fallback: {len(candidates)} distinct candidate(s) total")
-        report.warnings.insert(
-            0,
-            f"The '{request.trend_topic}' category returned fewer than four unique candidates; unscoped trending results were added.",
+    discovery_notes = [
+        (
+            f"{request.trend_topic or request.niche}: {len(candidates)} distinct "
+            "competitor-inspired candidate(s); no fallback discovery was run"
         )
+    ]
 
-    report.candidates = candidates[:4]
+    report.candidates = candidates[:5]
     report.shortlist_candidate_ids = [
         candidate.candidate_id
         for candidate in report.candidates
     ]
-    if len(report.candidates) < 4:
+    if len(report.candidates) < 3:
         warning_text = "; ".join(report.warnings)
-        raise RuntimeError(
-            f"vidIQ returned only {len(report.candidates)} distinct candidates after fallback discovery; four are required. "
-            f"Discovery details: {'; '.join(discovery_notes)}. {warning_text}"
+        raise CompetitorPipelineDiscoveryError(
+            f"Only {len(report.candidates)} distinct candidates passed competitor and vidIQ validation; three are required. "
+            f"Discovery details: {'; '.join(discovery_notes)}. {warning_text}",
+            report.discovery_diagnostics,
         )
     return report, report.candidates, discovery_notes
 
@@ -113,19 +152,33 @@ def main() -> int:
     inventory_file = Path(
         os.environ.get("RITZZ_INVENTORY_FILE", "data/content_inventory.json")
     )
-    engine = TopicIntelligenceEngine(
-        inventory_manager=ContentInventoryManager(inventory_file),
-    )
-    report, candidates, discovery_notes = discover_four_candidates(
-        engine,
-        TopicDiscoveryRequest(
-            mode=mode,
-            timeframe=timeframe,
-            trend_topic=trend_topic,
-            force_refresh=True,
-            pipeline_topic_gate=True,
-        ),
-    )
+    diagnostics_file = output_directory / "topic_discovery_diagnostics.json"
+    try:
+        engine = TopicIntelligenceEngine(
+            inventory_manager=ContentInventoryManager(inventory_file),
+            competitor_opportunity_generator=CompetitorOpportunityGenerator(),
+        )
+        report, candidates, discovery_notes = discover_four_candidates(
+            engine,
+            TopicDiscoveryRequest(
+                mode=mode,
+                timeframe=timeframe,
+                trend_topic=trend_topic,
+                force_refresh=True,
+                pipeline_topic_gate=True,
+            ),
+        )
+    except Exception as exc:
+        diagnostics = (
+            exc.diagnostics
+            if isinstance(exc, CompetitorPipelineDiscoveryError)
+            else {"status": "FAILED", "error": str(exc)}
+        )
+        diagnostics_file.write_text(
+            json.dumps(diagnostics, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        raise
 
     payload = {
         "report_id": report.report_id,
@@ -137,11 +190,15 @@ def main() -> int:
     }
     candidates_file = output_directory / "topic_candidates.json"
     candidates_file.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    diagnostics_file.write_text(
+        json.dumps(report.discovery_diagnostics, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
     lines = [
         "## RITZZ topic approval required",
         "",
-        "Reply to the pipeline approval issue with exactly `1`, `2`, `3`, or `4`.",
+        f"Reply to the pipeline approval issue with exactly one number from `1` to `{len(candidates)}`.",
         "The selected candidate will be persisted before production continues.",
         "",
         "Discovery: " + "; ".join(discovery_notes),
@@ -156,6 +213,10 @@ def main() -> int:
     if github_summary:
         with Path(github_summary).open("a", encoding="utf-8") as stream:
             stream.write(summary)
+    github_output = os.environ.get("GITHUB_OUTPUT")
+    if github_output:
+        with Path(github_output).open("a", encoding="utf-8") as stream:
+            stream.write(f"candidate_count={len(candidates)}\n")
 
     print(summary)
     return 0

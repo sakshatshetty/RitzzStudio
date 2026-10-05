@@ -46,6 +46,22 @@ def _write_github_summary(metadata: dict, summary_file: str | None) -> None:
         f"- **{option['title']}** — {option.get('rationale', '')}"
         for option in metadata["title_options"]
     )
+    if metadata.get("title_lint"):
+        lines.extend(
+            [
+                "",
+                "## Title length checks",
+                "",
+            ]
+        )
+        lines.extend(
+            (
+                f"- {item['characters']} characters — "
+                f"{'mobile preview may truncate' if item['mobile_truncation_risk'] else 'within 40-character mobile preview'}; "
+                f"{'desktop preview may truncate' if item['desktop_truncation_risk'] else 'within 60-character desktop preview'}"
+            )
+            for item in metadata["title_lint"]
+        )
     lines.extend(
         [
             "",
