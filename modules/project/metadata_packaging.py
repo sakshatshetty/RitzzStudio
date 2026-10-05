@@ -59,11 +59,13 @@ class OpenAIMetadataGenerator:
     """Generate one structured metadata draft from the finished production context."""
 
     def __init__(self, client: Any | None = None) -> None:
-        if client is None and not OPENAI_API_KEY:
-            raise ValueError("OPENAI_API_KEY is required for metadata packaging.")
-        self.client = client or OpenAI(api_key=OPENAI_API_KEY)
+        self.client = client
 
     def generate(self, context: dict[str, Any]) -> GeneratedVideoMetadata:
+        if self.client is None:
+            if not OPENAI_API_KEY:
+                raise ValueError("OPENAI_API_KEY is required for metadata packaging.")
+            self.client = OpenAI(api_key=OPENAI_API_KEY)
         response = self.client.responses.parse(
             model=OPENAI_MODEL,
             input=[
