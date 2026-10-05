@@ -53,6 +53,7 @@ _SCENE_REVIEW_RESPONSE_FORMAT: ResponseTextConfigParam = {
         "schema": {
             "type": "object",
             "properties": {
+                "scene_id": {"type": "string"},
                 "narration_image": {
                     "type": "string",
                     "enum": ["PASS", "REVIEW", "FAIL"],
@@ -70,6 +71,7 @@ _SCENE_REVIEW_RESPONSE_FORMAT: ResponseTextConfigParam = {
                 "suggested_editorial_scene_id": {"type": ["string", "null"]},
             },
             "required": [
+                "scene_id",
                 "narration_image",
                 "narration_description",
                 "editorial_context",
@@ -77,6 +79,57 @@ _SCENE_REVIEW_RESPONSE_FORMAT: ResponseTextConfigParam = {
                 "correction_prompt",
                 "suggested_editorial_scene_id",
             ],
+            "additionalProperties": False,
+        },
+    }
+}
+
+_SCENE_BATCH_REVIEW_RESPONSE_FORMAT: ResponseTextConfigParam = {
+    "format": {
+        "type": "json_schema",
+        "name": "rendered_scene_batch_review",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "scenes": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "scene_id": {"type": "string"},
+                            "narration_image": {
+                                "type": "string",
+                                "enum": ["PASS", "REVIEW", "FAIL"],
+                            },
+                            "narration_description": {
+                                "type": "string",
+                                "enum": ["PASS", "REVIEW", "FAIL"],
+                            },
+                            "editorial_context": {
+                                "type": "string",
+                                "enum": ["PASS", "REVIEW", "FAIL"],
+                            },
+                            "rationale": {"type": "string"},
+                            "correction_prompt": {"type": ["string", "null"]},
+                            "suggested_editorial_scene_id": {
+                                "type": ["string", "null"]
+                            },
+                        },
+                        "required": [
+                            "scene_id",
+                            "narration_image",
+                            "narration_description",
+                            "editorial_context",
+                            "rationale",
+                            "correction_prompt",
+                            "suggested_editorial_scene_id",
+                        ],
+                        "additionalProperties": False,
+                    },
+                }
+            },
+            "required": ["scenes"],
             "additionalProperties": False,
         },
     }
@@ -188,37 +241,75 @@ class OpenAIImageEditorialReviewer:
         scene: Any,
         editorial_candidates: list[dict[str, str]] | None = None,
     ) -> SceneQAResult:
-        encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
-        editorial = scene.text_overlay or "(none)"
+        return self.review_batch(
+            [(image_path, scene, editorial_candidates)]
+        )[0]
+
+    def review_batch(
+        self,
+        items: list[tuple[Path, Any, list[dict[str, str]] | None]],
+    ) -> list[SceneQAResult]:
+        if not items:
+            return []
+        content: list[dict[str, Any]] = []
+        expected_ids: list[str] = []
+        for image_path, scene, editorial_candidates in items:
+            narration = scene.narration.strip()
+            if not narration:
+                raise ValueError(
+                    f"QA_INPUT_INVALID: {scene.scene_id} has empty narration."
+                )
+            if not scene.visual_description.strip() or not scene.image_prompt.strip():
+                raise ValueError(
+                    f"QA_INPUT_INVALID: {scene.scene_id} is missing visual intent or image prompt."
+                )
+            expected_ids.append(scene.scene_id)
+            expected_editorial = scene.text_overlay.strip()
+            content.append({
+                "type": "input_text",
+                "text": (
+                    f"Scene ID: {scene.scene_id}\n"
+                    f"Full narration (do not truncate or infer missing text): {narration}\n"
+                    f"Visual description / intent: {scene.visual_description}\n"
+                    f"Image prompt: {scene.image_prompt}\n"
+                    f"Editorial required: {str(bool(expected_editorial)).lower()}\n"
+                    f"Expected editorial word: {expected_editorial or '(none)'}\n"
+                    f"Editorial position: {scene.callout_position or '(unspecified)'}\n"
+                    "Nearby editorial candidates: "
+                    f"{json.dumps(editorial_candidates or [], ensure_ascii=False)}"
+                ),
+            })
+            encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
+            content.append({
+                "type": "input_image",
+                "image_url": "data:image/png;base64," + encoded,
+                "detail": "low",
+            })
         prompt = (
-            "Review this frame from the rendered educational video at the midpoint of the listed scene. "
-            "Check whether the visible scene matches its synchronized narration and whether the requested "
-            "editorial word is contextually appropriate and visibly legible. If an editorial word is requested, "
-            "mark editorial_context FAIL when it is clearly absent or incorrect, and REVIEW if it is too unclear "
-            "to verify. Do not review research, script quality, style "
-            "preferences, or production metadata. Return JSON keys narration_image, narration_description, "
-            "editorial_context, rationale, correction_prompt, suggested_editorial_scene_id. Status values "
-            "must be PASS, REVIEW, or FAIL. Use FAIL only for a clear mismatch; use REVIEW when uncertain. "
-            "For every FAIL, provide a concrete, actionable correction_prompt that addresses the stated "
-            "mismatch; if the correction is an editorial move, use suggested_editorial_scene_id instead. "
-            "For REVIEW, provide a correction_prompt only if a safe, specific visual improvement is clear; "
-            "otherwise use null. If the image is wrong, correction_prompt must describe a concrete "
-            "image-only correction while "
-            "preserving the requested style and character. If the word belongs on another supplied scene, "
-            "set suggested_editorial_scene_id to that scene ID; otherwise use null.\n"
-            "Current scene ID: " + scene.scene_id + "\nEditorial word: " + editorial +
-            "\nNarration: " + scene.narration +
-            "\nVisual description: " + scene.visual_description +
-            "\nEditorial candidate scenes: " + json.dumps(editorial_candidates or [], ensure_ascii=False) +
-            "\nImage prompt: " + scene.image_prompt
+            "Review each supplied scene independently for semantic fit between image, full narration, "
+            "and visual intent. Editorial text is intentionally embedded in the generated image when "
+            "Editorial required is true. The storyboard is authoritative: verify that the exact expected "
+            "uppercase word is present, legible, and contextually appropriate. Do not mark editorial text "
+            "as an error merely because it is embedded in the image. If editorial is not required, "
+            "unintended editorial text is a mismatch. Return exactly one result per scene in the same order "
+            "and preserve each scene_id exactly. Use FAIL only for a clear mismatch, REVIEW when uncertain, "
+            "and PASS when the visual evidence supports the scene. Every FAIL must include a concrete "
+            "actionable correction_prompt, except an editorial relocation which should use "
+            "suggested_editorial_scene_id. A REVIEW should include a correction only when a safe, specific "
+            "visual change is clear; otherwise correction_prompt must be null. Keep corrections specific "
+            "to the image and preserve the established character and illustration style."
         )
         response = self.client.responses.create(
             model=self.model,
             input=[{"role": "user", "content": [
                 {"type": "input_text", "text": prompt},
-                {"type": "input_image", "image_url": "data:image/png;base64," + encoded, "detail": "low"},
+                *content,
             ]}],
-            text=_SCENE_REVIEW_RESPONSE_FORMAT,
+            text=(
+                _SCENE_REVIEW_RESPONSE_FORMAT
+                if len(items) == 1
+                else _SCENE_BATCH_REVIEW_RESPONSE_FORMAT
+            ),
         )
         output_text = response.output_text
         if not output_text or not output_text.strip():
@@ -231,25 +322,54 @@ class OpenAIImageEditorialReviewer:
             details = f"status={response_status}"
             if incomplete_reason:
                 details += f", incomplete_reason={incomplete_reason}"
+            target = expected_ids[0] if len(expected_ids) == 1 else expected_ids
             raise ValueError(
                 f"Semantic reviewer returned no structured output for "
-                f"{scene.scene_id} ({details})."
+                f"{target} ({details})."
             )
         try:
             result = json.loads(output_text)
-            statuses = [result[k] for k in ("narration_image", "narration_description", "editorial_context")]
-            if any(status not in {"PASS", "REVIEW", "FAIL"} for status in statuses):
-                raise ValueError("invalid status")
+            results = result.get("scenes") if len(items) > 1 else [result]
+            if not isinstance(results, list) or len(results) != len(items):
+                raise ValueError("result count does not match batch")
+            returned_ids = [item.get("scene_id") for item in results]
+            if returned_ids != expected_ids:
+                raise ValueError("scene IDs do not match request ordering")
+            validated: list[SceneQAResult] = []
+            for item in results:
+                statuses = [
+                    item[key]
+                    for key in (
+                        "narration_image",
+                        "narration_description",
+                        "editorial_context",
+                    )
+                ]
+                if any(status not in {"PASS", "REVIEW", "FAIL"} for status in statuses):
+                    raise ValueError("invalid status")
+                overall = (
+                    "FAIL" if "FAIL" in statuses
+                    else "REVIEW" if "REVIEW" in statuses
+                    else "PASS"
+                )
+                validated.append(SceneQAResult(
+                    scene_id=item["scene_id"],
+                    status=overall,
+                    narration_image=item["narration_image"],
+                    narration_description=item["narration_description"],
+                    editorial_context=item["editorial_context"],
+                    rationale=str(item.get("rationale", "")),
+                    correction_prompt=item.get("correction_prompt"),
+                    suggested_editorial_scene_id=item.get(
+                        "suggested_editorial_scene_id"
+                    ),
+                ))
         except (ValueError, KeyError, TypeError) as exc:
-            raise ValueError(f"Semantic reviewer returned invalid JSON for {scene.scene_id}.") from exc
-        overall = "FAIL" if "FAIL" in statuses else "REVIEW" if "REVIEW" in statuses else "PASS"
-        return SceneQAResult(scene_id=scene.scene_id, status=overall,
-                             narration_image=result["narration_image"],
-                             narration_description=result["narration_description"],
-                             editorial_context=result["editorial_context"],
-                             rationale=str(result.get("rationale", "")),
-                             correction_prompt=result.get("correction_prompt"),
-                             suggested_editorial_scene_id=result.get("suggested_editorial_scene_id"))
+            raise ValueError(
+                f"Semantic reviewer returned invalid JSON or scene results for "
+                f"{expected_ids}: {exc}"
+            ) from exc
+        return validated
 
     def match_audio_image(self, image_path: Path, scene: Any, start_seconds: float,
                           end_seconds: float) -> AudioImageMatchResult:

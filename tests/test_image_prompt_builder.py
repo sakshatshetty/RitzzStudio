@@ -225,32 +225,32 @@ def test_prompt_adds_editorial_text_when_present() -> None:
     builder = ImagePromptBuilder()
 
     scene = sample_scene()
-    scene.text_overlay = "THE MYSTERY"
+    scene.text_overlay = "MYSTERY"
 
     prompt = builder.build(scene)
 
-    assert "exact word will be composited into the final image" in prompt
-    assert "Keep clear negative space near the lower-left" in prompt
-    assert "Do not render letters" in prompt
+    assert "exact editorial word MYSTERY" in prompt
+    assert "intentionally part of the generated image" in prompt
+    assert "Do not add any other letters" in prompt
 
 
-def test_editorial_text_is_rendered_after_image_generation() -> None:
+def test_editorial_text_is_included_in_image_generation_prompt() -> None:
     builder = ImagePromptBuilder()
 
     scene = sample_scene()
-    scene.text_overlay = "WILD SIZE"
+    scene.text_overlay = "WILDSIZE"
 
     prompt = builder.build(scene)
 
-    assert "composited into the final image after generation" in prompt
-    assert "WILD SIZE" not in prompt
+    assert "exact editorial word WILDSIZE" in prompt
+    assert "intentionally part of the generated image" in prompt
 
 
 def test_editorial_text_does_not_change_the_colored_illustration_style() -> None:
     builder = ImagePromptBuilder()
 
     scene = sample_scene()
-    scene.text_overlay = "THE MYSTERY"
+    scene.text_overlay = "MYSTERY"
 
     prompt = builder.build(scene)
 
@@ -258,50 +258,50 @@ def test_editorial_text_does_not_change_the_colored_illustration_style() -> None
     assert "Do not make the illustration monochrome" in prompt
 
 
-def test_editorial_text_prompt_requires_no_generated_typography() -> None:
+def test_editorial_text_prompt_allows_only_the_assigned_word() -> None:
     builder = ImagePromptBuilder()
 
     scene = sample_scene()
-    scene.text_overlay = "THE MYSTERY"
+    scene.text_overlay = "MYSTERY"
 
     prompt = builder.build(scene)
 
-    assert "Do not render letters, words, captions, labels, or any other typography." in prompt
-    assert "DO NOT DRAW EDITORIAL CALLOUT TEXT." in prompt
+    assert "exact editorial word MYSTERY" in prompt
+    assert "Do not add any other letters, words, captions, labels, or typography." in prompt
 
 
-def test_editorial_text_prompt_preserves_negative_space_for_composite() -> None:
+def test_editorial_text_prompt_preserves_negative_space_for_callout() -> None:
     builder = ImagePromptBuilder()
 
     scene = sample_scene()
-    scene.text_overlay = "THE MYSTERY"
+    scene.text_overlay = "MYSTERY"
 
     prompt = builder.build(scene)
 
-    assert "Keep clear negative space near the lower-left" in prompt
-    assert "Do not render letters" in prompt
+    assert "near the lower-left" in prompt
+    assert "exact editorial word MYSTERY" in prompt
 
 
 def test_editorial_text_avoids_graphic_text_elements() -> None:
     builder = ImagePromptBuilder()
 
     scene = sample_scene()
-    scene.text_overlay = "10× LARGER"
+    scene.text_overlay = "LARGER"
 
     prompt = builder.build(scene)
 
-    assert "Do not render letters" in prompt
+    assert "Do not add any other letters" in prompt
 
 
 def test_editorial_text_changes_negative_text_instruction() -> None:
     builder = ImagePromptBuilder()
 
     scene = sample_scene()
-    scene.text_overlay = "10× LARGER"
+    scene.text_overlay = "LARGER"
 
     prompt = builder.build(scene)
 
-    assert "NO TEXT." in prompt
+    assert "Avoid photorealism" in prompt
 
 
 def test_editorial_text_is_trimmed() -> None:
@@ -309,23 +309,23 @@ def test_editorial_text_is_trimmed() -> None:
 
     scene = sample_scene()
     scene.text_overlay = (
-        "   THE REAL REASON   "
+        "   REASON   "
     )
 
     prompt = builder.build(scene)
 
-    assert "exact word will be composited into the final image" in prompt
+    assert "exact editorial word REASON" in prompt
 
 
-def test_editorial_text_is_part_of_artwork() -> None:
+def test_editorial_text_is_part_of_generated_image() -> None:
     builder = ImagePromptBuilder()
 
     scene = sample_scene()
-    scene.text_overlay = "THE MYSTERY"
+    scene.text_overlay = "MYSTERY"
 
     prompt = builder.build(scene)
 
-    assert "composited into the final image after generation" in prompt
+    assert "intentionally part of the generated image" in prompt
 
 
 def test_prompt_contains_simple_visual_direction() -> None:

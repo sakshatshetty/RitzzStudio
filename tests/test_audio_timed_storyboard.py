@@ -318,7 +318,10 @@ def test_adjacent_same_visual_beats_are_merged_and_scene_duration_stays_safe():
     assert len(timed.scenes) >= 2
     assert all(scene.duration_seconds <= 4 for scene in timed.scenes)
     assert " ".join(scene.narration for scene in timed.scenes) == " ".join(lines)
-    assert "DO NOT DRAW EDITORIAL CALLOUT TEXT." in timed.scenes[0].image_prompt
+    if timed.scenes[0].text_overlay:
+        assert f"exact editorial word {timed.scenes[0].text_overlay}" in timed.scenes[0].image_prompt
+    else:
+        assert "DO NOT DRAW EDITORIAL CALLOUT TEXT." in timed.scenes[0].image_prompt
 
 
 def test_repeated_composition_gets_a_meaningful_variation_prompt():

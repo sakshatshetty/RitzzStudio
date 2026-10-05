@@ -231,6 +231,7 @@ def test_openai_rendered_scene_reviewer_requests_strict_json_schema(tmp_path):
     storyboard, _, _, image = make_inputs(tmp_path)
     captured = {}
     payload = {
+        "scene_id": "scene_001",
         "narration_image": "PASS",
         "narration_description": "PASS",
         "editorial_context": "REVIEW",
@@ -283,6 +284,107 @@ def test_openai_rendered_scene_reviewer_reports_empty_incomplete_output(tmp_path
             match=r"no structured output for scene_001 \(status=incomplete, incomplete_reason=max_output_tokens\)",
         ):
             reviewer.review(image, storyboard.scenes[0])
+    finally:
+        monkeypatch.undo()
+
+
+def test_openai_rendered_scene_batch_preserves_full_narration_and_order(tmp_path):
+    storyboard, _, _, image = make_inputs(tmp_path)
+    second_image = tmp_path / "scene_002.png"
+    second_image.write_bytes(make_png())
+    second_scene = storyboard.scenes[0].model_copy(update={
+        "scene_id": "scene_002",
+        "narration": "The complete second scene narration.",
+        "start_seconds": 2,
+    })
+    captured = {}
+    payload = {
+        "scenes": [
+            {
+                "scene_id": scene.scene_id,
+                "narration_image": "PASS",
+                "narration_description": "PASS",
+                "editorial_context": "PASS",
+                "rationale": "The image fits.",
+                "correction_prompt": None,
+                "suggested_editorial_scene_id": None,
+            }
+            for scene in (storyboard.scenes[0], second_scene)
+        ]
+    }
+    reviewer = OpenAIImageEditorialReviewer(api_key="test-key", model="test-model")
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        reviewer.client.responses,
+        "create",
+        lambda **kwargs: (
+            captured.update(kwargs)
+            or SimpleNamespace(
+                output_text=json.dumps(payload),
+                status="completed",
+                incomplete_details=None,
+            )
+        ),
+    )
+
+    try:
+        results = reviewer.review_batch([
+            (image, storyboard.scenes[0], []),
+            (second_image, second_scene, []),
+        ])
+    finally:
+        monkeypatch.undo()
+
+    assert [result.scene_id for result in results] == ["scene_001", "scene_002"]
+    assert "Pirate narration." in captured["input"][0]["content"][1]["text"]
+    assert "The complete second scene narration." in captured["input"][0]["content"][3]["text"]
+    schema = captured["text"]["format"]["schema"]
+    assert captured["text"]["format"]["strict"] is True
+    assert schema["additionalProperties"] is False
+    assert schema["properties"]["scenes"]["items"]["additionalProperties"] is False
+
+
+def test_openai_rendered_scene_batch_rejects_reordered_scene_ids(tmp_path):
+    storyboard, _, _, image = make_inputs(tmp_path)
+    second_image = tmp_path / "scene_002.png"
+    second_image.write_bytes(make_png())
+    second_scene = storyboard.scenes[0].model_copy(update={
+        "scene_id": "scene_002",
+        "narration": "Second scene.",
+        "start_seconds": 2,
+    })
+    payload = {
+        "scenes": [
+            {
+                "scene_id": scene_id,
+                "narration_image": "PASS",
+                "narration_description": "PASS",
+                "editorial_context": "PASS",
+                "rationale": "The image fits.",
+                "correction_prompt": None,
+                "suggested_editorial_scene_id": None,
+            }
+            for scene_id in ("scene_002", "scene_001")
+        ]
+    }
+    reviewer = OpenAIImageEditorialReviewer(api_key="test-key", model="test-model")
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        reviewer.client.responses,
+        "create",
+        lambda **_kwargs: SimpleNamespace(
+            output_text=json.dumps(payload),
+            status="completed",
+            incomplete_details=None,
+        ),
+    )
+
+    try:
+        with pytest.raises(ValueError, match="scene IDs do not match request ordering"):
+            reviewer.review_batch([
+                (image, storyboard.scenes[0], []),
+                (second_image, second_scene, []),
+            ])
     finally:
         monkeypatch.undo()
 
