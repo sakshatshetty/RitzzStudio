@@ -126,10 +126,10 @@ def discover_four_candidates(
         candidate.candidate_id
         for candidate in report.candidates
     ]
-    if len(report.candidates) < 3:
+    if len(report.candidates) < 2:
         warning_text = "; ".join(report.warnings)
         raise CompetitorPipelineDiscoveryError(
-            f"Only {len(report.candidates)} distinct candidates passed competitor and vidIQ validation; three are required. "
+            f"Only {len(report.candidates)} distinct candidates passed competitor and vidIQ validation; at least two are required. "
             f"Discovery details: {'; '.join(discovery_notes)}. {warning_text}",
             report.discovery_diagnostics,
         )

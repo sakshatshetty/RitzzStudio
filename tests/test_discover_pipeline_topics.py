@@ -80,19 +80,31 @@ def test_insufficient_competitor_candidates_stop_without_fallback():
         [
             _report(
                 request,
-                [
-                    _candidate(1, "Topic One"),
-                    _candidate(2, "Topic Two"),
-                ],
+                [_candidate(1, "Topic One")],
             )
         ]
     )
 
-    with pytest.raises(RuntimeError, match="Only 2 distinct candidates"):
+    with pytest.raises(RuntimeError, match="Only 1 distinct candidates"):
         discover_four_candidates(engine, request)
 
     assert len(engine.requests) == 1
     assert engine.requests[0].trend_topic == "history"
+
+
+def test_pipeline_discovery_accepts_two_qualified_competitor_candidates():
+    request = TopicDiscoveryRequest(mode="TRENDING", trend_topic="history")
+    candidates = [_candidate(1, "Topic One"), _candidate(2, "Topic Two")]
+    report = _report(request, candidates)
+    engine = SequencedEngine([report])
+
+    result, selected, _ = discover_four_candidates(engine, request)
+
+    assert result is report
+    assert [candidate.topic for candidate in selected] == ["Topic One", "Topic Two"]
+    assert report.shortlist_candidate_ids == [
+        candidate.candidate_id for candidate in candidates
+    ]
 
 
 def test_pipeline_discovery_caps_candidate_choices_at_five():

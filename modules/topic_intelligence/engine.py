@@ -40,7 +40,7 @@ from modules.topic_intelligence.validation import (
 
 SCORING_VERSION = "ritzz-opportunity-v3"
 VALIDATION_VERSION = "ritzz-topic-validation-v2"
-PIPELINE_CANDIDATE_MINIMUM = 3
+PIPELINE_CANDIDATE_MINIMUM = 2
 PIPELINE_CANDIDATE_LIMIT = 5
 IDEATION_CANDIDATE_LIMIT = 10
 
@@ -314,7 +314,7 @@ class TopicIntelligenceEngine:
             )
         if not shortlist_candidate_ids:
             warnings.append("No candidate passed the recommendation gate; review the visible candidates or revise discovery criteria.")
-        elif len(shortlist_candidate_ids) < 3:
+        elif len(shortlist_candidate_ids) < PIPELINE_CANDIDATE_MINIMUM:
             warnings.append(f"Only {len(shortlist_candidate_ids)} candidate(s) passed the recommendation gate.")
         report = OpportunityReport(
             report_id=cache_key,
