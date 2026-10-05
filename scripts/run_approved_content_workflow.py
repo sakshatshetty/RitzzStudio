@@ -14,7 +14,11 @@ from config import PROJECTS_DIR
 from modules.content_workflow import ContentWorkflow
 from modules.production_state import ProductionStateStore
 from modules.project.manager import ProjectManager
-from modules.topic_intelligence.models import OpportunityReport, TopicDiscoveryRequest
+from modules.topic_intelligence.models import (
+    RITZZ_CHANNEL_NICHE,
+    OpportunityReport,
+    TopicDiscoveryRequest,
+)
 
 
 def main() -> int:
@@ -31,7 +35,7 @@ def main() -> int:
     request_payload = candidates_payload.get("request")
     if request_payload is None:
         request_payload = TopicDiscoveryRequest(
-            niche="RITZZ mixed curiosity explainers",
+            niche=RITZZ_CHANNEL_NICHE,
             limit=20,
             pipeline_topic_gate=True,
         ).model_dump(mode="json")

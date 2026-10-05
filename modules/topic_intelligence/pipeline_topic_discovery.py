@@ -18,6 +18,8 @@ from modules.topic_intelligence.inventory import (
     normalize_topic,
 )
 from modules.topic_intelligence.models import (
+    RITZZ_CHANNEL_NICHE,
+    RITZZ_CHANNEL_PROFILE,
     EvidenceMetric,
     OpportunityCandidate,
     OpportunityReport,
@@ -36,14 +38,7 @@ FINAL_CANDIDATE_LIMIT = 5
 PIPELINE_TOPIC_SOURCE = "vidiq_discovery + gpt_ideation"
 DISCOVERY_MODE = "VIDIQ_TO_GPT"
 VIDIQ_USAGE_MODE = "DISCOVERY_ONLY"
-RITZZ_CHANNEL_PROFILE = (
-    "Long-form faceless stickman/doodle curiosity explainers covering strange "
-    "history, mysteries, unusual science, ancient civilizations, forgotten "
-    "stories and inventions, archaeology, geography, space, and human behavior. "
-    "Ideas should be evergreen, broadly appealing, researchable, visual, and "
-    "suitable for 8–10 minute videos."
-)
-VIDIQ_DISCOVERY_QUERY = "strange history"
+VIDIQ_DISCOVERY_QUERY = RITZZ_CHANNEL_NICHE
 
 
 class GeneratedTopicIdea(BaseModel):
@@ -170,21 +165,24 @@ class GPTTopicIdeaGenerator:
     def _system_prompt() -> str:
         return (
             "You create ideas for RITZZ, a long-form faceless hand-drawn "
-            "stickman/doodle curiosity explainer channel. Use the supplied vidIQ "
+            "stickman/cartoon history-curiosity channel. Channel profile: "
+            + RITZZ_CHANNEL_PROFILE
+            + " Use the supplied vidIQ "
             "opportunities as market signals; vidIQ owns demand assessment. Your "
             "job is to transform opportunities into specific, curiosity-driven, "
             "original 8–10 minute video concepts, not to evaluate demand. The tone "
-            "is curious and entertaining, never a school lecture. The channel "
-            "covers strange history, historical mysteries, forgotten stories, "
-            "unusual science, ancient civilizations, archaeology, discoveries, "
-            "geography, space, hidden places, inventions, technology, human "
-            "behavior, and researchable real-world mysteries. Concepts must be "
-            "concrete, researchable, durable, broadly appealing, and easy to show "
-            "with static maps, diagrams, objects, timelines, or stick figures. "
+            "is curious and entertaining, never a school lecture. Concentrate "
+            "ideas on ancient humans, ancient civilizations, ancient everyday "
+            "life and survival, ancient technology and engineering, and ancient "
+            "history mysteries. Other historical periods are secondary and must "
+            "strongly match the same question-led curiosity pattern. Concepts "
+            "must be specific, evidence-grounded, researchable, durable, and easy "
+            "to show with static maps, diagrams, objects, timelines, or stick figures. "
             "Avoid politics/current affairs, celebrity gossip, sports news, "
             "movie/trailer/review topics, motivation, generic self-help, finance "
-            "or health advice, breaking news, generic academic subjects, and broad "
-            "umbrella topics. Do not invent factual claims. Do not merely copy the "
+            "or health advice, current disasters, breaking news, unrelated generic "
+            "science/geography, generic academic subjects, and broad umbrella topics. "
+            "Do not invent factual claims. Do not merely copy the "
             "keyword; make a distinct explanatory question and explain its "
             "originality. Return 8–10 concepts and cite a supplied opportunity ID "
             "for each."

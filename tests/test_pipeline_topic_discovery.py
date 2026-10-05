@@ -9,6 +9,7 @@ from modules.topic_intelligence.inventory import (
     normalize_topic,
 )
 from modules.topic_intelligence.models import (
+    RITZZ_CHANNEL_PROFILE,
     EvidenceMetric,
     OpportunityCandidate,
     OpportunityReport,
@@ -16,7 +17,6 @@ from modules.topic_intelligence.models import (
 )
 from modules.topic_intelligence.pipeline_topic_discovery import (
     PIPELINE_TOPIC_SOURCE,
-    RITZZ_CHANNEL_PROFILE,
     TOPIC_OPPORTUNITY_COUNT,
     VIDIQ_DISCOVERY_QUERY,
     GeneratedTopicBatch,
@@ -226,7 +226,14 @@ def test_gpt_receives_vidiq_pool_and_generates_concepts_in_one_request():
     assert user_payload["vidiq_opportunities"][0]["keyword_score"]["value"] == 90
     assert user_payload["vidiq_opportunities"][0]["volume_score"]["value"] == 80
     assert "Do not simply repeat a keyword" in user_payload["instructions"]
-    assert "RITZZ" in client.responses.calls[0]["input"][0]["content"]
+    system_prompt = client.responses.calls[0]["input"][0]["content"].casefold()
+    assert "ancient humans" in system_prompt
+    assert "ancient civilizations" in system_prompt
+    assert "ancient everyday life and survival" in system_prompt
+    assert "ancient technology and engineering" in system_prompt
+    assert "ancient history mysteries" in system_prompt
+    assert "current disasters" in system_prompt
+    assert user_payload["channel_profile"] == RITZZ_CHANNEL_PROFILE
 
 
 def test_pipeline_generates_one_idea_batch_filters_and_preserves_market_evidence(tmp_path):

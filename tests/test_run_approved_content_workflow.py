@@ -3,6 +3,7 @@ import json
 import pytest
 
 from modules.topic_intelligence.models import (
+    RITZZ_CHANNEL_NICHE,
     OpportunityCandidate,
     TopicDiscoveryRequest,
 )
@@ -24,7 +25,7 @@ def test_approved_content_workflow_loads_request_from_discovery_artifact(
         provider="vidiq_discovery + gpt_ideation",
     )
     request = TopicDiscoveryRequest(
-        niche="RITZZ mixed curiosity explainers",
+        niche=RITZZ_CHANNEL_NICHE,
         mode="EVERGREEN",
         limit=20,
         pipeline_topic_gate=True,
@@ -89,7 +90,7 @@ def test_approved_content_workflow_loads_request_from_discovery_artifact(
         assert report.request == request
         assert "legacy pipeline defaults" not in capsys.readouterr().out
     else:
-        assert report.request.niche == "RITZZ mixed curiosity explainers"
+        assert report.request.niche == RITZZ_CHANNEL_NICHE
         assert report.request.limit == 20
         assert report.request.pipeline_topic_gate is True
         assert "legacy pipeline defaults" in capsys.readouterr().out

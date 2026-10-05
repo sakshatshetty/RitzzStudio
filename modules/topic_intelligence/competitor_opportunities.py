@@ -18,6 +18,7 @@ from modules.topic_intelligence.market_intelligence import (
     is_successful_outlier_video,
 )
 from modules.topic_intelligence.models import (
+    RITZZ_CHANNEL_PROFILE,
     OpportunityCandidate,
     RitzzFitResult,
     StoryType,
@@ -156,8 +157,9 @@ class CompetitorOpportunityGenerator:
     @staticmethod
     def _system_prompt(candidate_limit: int) -> str:
         return (
-            "You are the RITZZ competitor-topic analyst. RITZZ is a general-audience "
-            "English mixed-curiosity channel making educational, story-driven explainers. "
+            "You are the RITZZ competitor-topic analyst. Channel profile: "
+            + RITZZ_CHANNEL_PROFILE
+            + " RITZZ makes English-language, story-driven explainers. "
             "Analyze only the supplied successful videos. Identify repeated patterns when "
             "multiple distinct videos and channels support them. A one-video signal may be "
             "reported as a tentative low-confidence pattern, but never describe it as repeated. "
@@ -191,7 +193,11 @@ class CompetitorOpportunityGenerator:
             "signal (weight 1.0); emerging-format channels are early signals (weight 0.7); "
             "topic competitors are secondary subject signals (weight 0.5). Format competitors "
             "inform storytelling/visual opportunities, not factual truth. Build diverse ideas "
-            "across curiosity families. Favor subjects that can be explained with static "
+            "within the RITZZ ancient-human, ancient-civilization, ancient-life, survival, "
+            "engineering, and history-curiosity niche. Prefer specific questions about how "
+            "people in the past lived, survived, built, traveled, worked, ate, or solved "
+            "problems. Do not propose current news, current disasters, sports, or unrelated "
+            "general curiosity. Favor subjects that can be explained with static "
             "illustrations, objects, maps, diagrams, or timelines. Never invent demand, "
             "competition, view counts, or competitor evidence."
         )

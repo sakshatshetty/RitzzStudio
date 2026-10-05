@@ -22,6 +22,8 @@ from modules.topic_intelligence.market_intelligence import (
     normalize_outlier,
 )
 from modules.topic_intelligence.models import (
+    RITZZ_CHANNEL_NICHE,
+    RITZZ_CHANNEL_PROFILE,
     OpportunityCandidate,
     TopicDiscoveryRequest,
 )
@@ -101,6 +103,29 @@ def _generation_batch(
             why_interesting="A familiar nightly routine has a surprising history.",
         )],
     )
+
+
+def test_ritzz_profile_and_gpt_prompts_prioritize_ancient_history():
+    profile = RITZZ_CHANNEL_PROFILE.casefold()
+    ideation_prompt = CompetitorOpportunityGenerator._system_prompt(10).casefold()
+    editorial_prompt = EditorialEvaluator._system_prompt().casefold()
+
+    for focus in (
+        "ancient humans",
+        "ancient civilizations",
+        "ancient human survival",
+        "everyday life",
+        "ancient technology",
+        "ancient history mysteries",
+    ):
+        assert focus in profile
+    assert "ancient-human" in ideation_prompt
+    assert "ancient-civilization" in ideation_prompt
+    assert "current disasters" in ideation_prompt
+    assert "sports" in ideation_prompt
+    assert "unrelated general curiosity" in ideation_prompt
+    assert "ancient-survival" in editorial_prompt
+    assert "current-event disasters" in editorial_prompt
 
 
 def test_original_topics_require_repeated_success_across_multiple_channels():
@@ -1029,16 +1054,23 @@ def test_pipeline_discovery_runs_competitors_ideation_and_vidiq_without_fallback
     tmp_path,
 ):
     competitor_report = MarketIntelligenceReport(
-        query="mixed curiosity explainers",
+        query="ancient humans ancient civilizations",
         retrieved_at="2026-09-30T00:00:00+00:00",
         outliers=[
             _video(
                 f"video-{index}",
                 f"channel-{index}",
-                f"Successful curiosity video {index}",
+                title,
                 score=8,
             )
-            for index in range(1, 4)
+            for index, title in enumerate(
+                (
+                    "How Ancient Humans Survived Freezing Winters",
+                    "How Ancient Cities Brought Water to Their People",
+                    "What Ancient Families Ate Every Day",
+                ),
+                start=1,
+            )
         ],
     )
     candidates = [
@@ -1050,10 +1082,14 @@ def test_pipeline_discovery_runs_competitors_ideation_and_vidiq_without_fallback
         )
         for index, topic in enumerate(
             (
-                "Why Do Moonbows Appear at Night?",
-                "Why Do Sand Dunes Produce Singing Sounds?",
-                "How Do Fireflies Synchronize Their Flashes?",
-                "Why Do Some Rivers Flow Underground?",
+                "How Did Ancient Humans Stay Warm in Winter?",
+                "How Did Ancient Cities Get Clean Water?",
+                "What Did Ancient Families Eat Every Day?",
+                "How Did Ancient Engineers Move Water Uphill?",
+                "What Happened to the Ancient Army That Vanished?",
+                "Why Did a Nepal Flood Become Deadly So Fast?",
+                "What Happened in Yesterday's Championship Final?",
+                "Why Are Clouds Different Shapes?",
             ),
             start=1,
         )
@@ -1064,12 +1100,14 @@ def test_pipeline_discovery_runs_competitors_ideation_and_vidiq_without_fallback
 
         def __init__(self):
             self.validation_topics = []
+            self.competitor_queries = []
 
         def discover(self, _request):
             raise AssertionError("General topic discovery must not be called.")
 
-        def discover_competitor_research(self, _query, limit=10):
+        def discover_competitor_research(self, query, limit=10):
             assert limit > 0
+            self.competitor_queries.append(query)
             return competitor_report
 
         def enrich_topic_demand(self, topic):
@@ -1098,7 +1136,7 @@ def test_pipeline_discovery_runs_competitors_ideation_and_vidiq_without_fallback
             assert candidate_limit >= 3
             return candidates, [], {
                 "successful_outlier_videos": 3,
-                "generated_candidates": 4,
+                "generated_candidates": 8,
             }
 
     class Editorial:
@@ -1116,7 +1154,17 @@ def test_pipeline_discovery_runs_competitors_ideation_and_vidiq_without_fallback
                     format_fit=90,
                     story_depth=90,
                     originality=90,
-                    status="REVIEW" if item.candidate_id == "idea-4" else "PASS",
+                    status=(
+                        "PASS"
+                        if item.candidate_id in {
+                            "idea-1",
+                            "idea-2",
+                            "idea-3",
+                            "idea-4",
+                            "idea-5",
+                        }
+                        else "REVIEW"
+                    ),
                 )
                 for item in items
             ]
@@ -1129,10 +1177,20 @@ def test_pipeline_discovery_runs_competitors_ideation_and_vidiq_without_fallback
         competitor_opportunity_generator=Generator(),
     ).discover(TopicDiscoveryRequest(pipeline_topic_gate=True, force_refresh=True))
 
-    assert len(result.candidates) == 3
-    assert len(provider.validation_topics) == 4
+    assert len(result.candidates) == 5
+    assert len(provider.validation_topics) == 8
+    assert provider.competitor_queries == [
+        f"{RITZZ_CHANNEL_NICHE} curiosity explainer format competitors"
+    ]
+    assert {item.topic for item in result.candidates} == {
+        "How Did Ancient Humans Stay Warm in Winter?",
+        "How Did Ancient Cities Get Clean Water?",
+        "What Did Ancient Families Eat Every Day?",
+        "How Did Ancient Engineers Move Water Uphill?",
+        "What Happened to the Ancient Army That Vanished?",
+    }
     assert result.discovery_diagnostics["gpt_ideation_calls"] == 1
-    assert result.discovery_diagnostics["vidiq_validation_calls"] == 4
+    assert result.discovery_diagnostics["vidiq_validation_calls"] == 8
     assert result.discovery_diagnostics["fallback_discovery_calls"] == 0
-    assert result.discovery_diagnostics["recommendation_gate"]["qualified_candidates"] == 3
+    assert result.discovery_diagnostics["recommendation_gate"]["qualified_candidates"] == 5
     assert result.discovery_diagnostics["status"] == "SUCCESS"
