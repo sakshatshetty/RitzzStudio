@@ -284,7 +284,7 @@ OpenAISemanticReviewer = OpenAIImageEditorialReviewer
 
 
 class PilotVideoQA:
-    LOUDNESS_TOLERANCE_LU = 1.5
+    LOUDNESS_TOLERANCE_LU = 2.0
     TRUE_PEAK_MEASUREMENT_TOLERANCE_DB = 0.1
 
     def run_audio_image_match(self, storyboard: Storyboard, plan: VideoAssemblyPlan,

@@ -111,9 +111,34 @@ def test_technical_qa_reports_in_range_audio_loudness(tmp_path, monkeypatch):
     assert any("-14.4 LUFS integrated" in issue for issue in result.issues)
 
 
+def test_technical_qa_accepts_audio_within_two_lu_of_target(tmp_path, monkeypatch):
+    storyboard, plan, audio, _ = make_inputs(tmp_path)
+    video = tmp_path / "rendered.mp4"
+    video.write_bytes(b"video")
+    monkeypatch.setattr(
+        "modules.video.render_engine.FFmpegVideoRenderer.measure_audio_loudness",
+        lambda self, path: AudioLoudnessMeasurement(
+            integrated_lufs=-15.9,
+            true_peak_dbtp=-2.4,
+        ),
+    )
+
+    result = PilotVideoQA().run_technical(
+        storyboard,
+        plan,
+        audio,
+        video_file=video,
+        audio_duration=2,
+        video_duration=2,
+    )
+
+    assert result.checks["audio_loudness"] == "PASS"
+    assert result.status == "PASS"
+
+
 @pytest.mark.parametrize(
     ("integrated_lufs", "true_peak_dbtp"),
-    [(-16.0, -1.0), (-14.0, -0.8)],
+    [(-16.1, -1.0), (-14.0, -0.8)],
 )
 def test_technical_qa_reviews_audio_outside_loudness_limits(
     tmp_path,
