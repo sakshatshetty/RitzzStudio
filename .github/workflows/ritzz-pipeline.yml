@@ -1175,12 +1175,14 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           {
-            echo "## Rendered video download"
-            echo "- Download ZIP artifact: [ritzz-production-${PRODUCTION_ID}-rendered-video-zip](${GITHUB_SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}#artifacts)"
-            echo "- GitHub CLI to save the ZIP artifact into your local Downloads folder:"
-            echo '  ```powershell'
-            echo "  gh run download ${RUN_ID} --repo ${REPOSITORY} --name ritzz-production-${PRODUCTION_ID}-rendered-video-zip --dir `"$HOME\\Downloads`""
-            echo '  ```'
+            printf '%s\n' \
+              '## Rendered video download' \
+              "- Download ZIP artifact: [ritzz-production-${PRODUCTION_ID}-rendered-video-zip](${GITHUB_SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}#artifacts)" \
+              '- GitHub CLI to save the ZIP artifact into your local Downloads folder:' \
+              '  ```powershell'
+            printf '  gh run download %s --repo %s --name ritzz-production-%s-rendered-video-zip --dir "$HOME\\Downloads"\n' \
+              "$RUN_ID" "$REPOSITORY" "$PRODUCTION_ID"
+            printf '%s\n' '  ```'
           } >> "$GITHUB_STEP_SUMMARY"
 
   video-approval:
