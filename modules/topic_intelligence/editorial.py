@@ -50,7 +50,7 @@ class EditorialAssessmentProvider(Protocol):
 class EditorialEvaluator:
     """Use the configured OpenAI model for preliminary editorial judgment only."""
 
-    prompt_version = "ritzz-editorial-assessment-v1"
+    prompt_version = "ritzz-editorial-assessment-v2"
 
     def __init__(self, client=None) -> None:
         self.client = client or OpenAI(api_key=OPENAI_API_KEY)
@@ -91,11 +91,20 @@ class EditorialEvaluator:
             "differentiation, and low saturation from 0 to 100. A higher saturation "
             "score means less saturated. Use only the topic and supplied evidence; "
             "do not invent search metrics, facts, or competitor counts. These are "
-            "preliminary editorial judgments, not factual research. Mark PASS for a "
-            "specific ancient-human, ancient-civilization, ancient-everyday-life, "
-            "ancient-survival, ancient-engineering, or ancient-history-curiosity topic "
-            "when evidence and visual storytelling support it. Other historical "
-            "periods are secondary and must strongly match the channel promise. Mark "
+            "preliminary editorial judgments, not factual research. Give strongest "
+            "priority to ancient-human topics built around a specific human problem, "
+            "experience, activity, or curiosity question. Survival, daily life, behavior, "
+            "food, sleep, travel, shelter, dangers, work, entertainment, health/survival "
+            "practices, and tools/inventions are high-priority families. Ancient "
+            "civilization everyday life, city problems, practical engineering/technology, "
+            "customs, and archaeology revealing how people lived are secondary but welcome "
+            "when framed as a concrete human-curiosity question. Ancient mysteries, "
+            "monuments, construction, and wars are lower priority unless they explain how "
+            "people lived or dealt with a specific problem. Human evolution and other "
+            "historical periods are secondary and must strongly match this question-led "
+            "curiosity. Mark FAIL for generic ancient-history labels, broad civilization "
+            "overviews, broad archaeology, and generic historical events unless reframed "
+            "as a specific human question. Mark "
             "REVIEW for uncertain fit or evidence, and FAIL for clearly unsuitable "
             "ideas such as current-event disasters, current news, unrelated modern "
             "topics, gossip, unsafe topics, or political commentary without a "

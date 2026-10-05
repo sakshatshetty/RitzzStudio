@@ -160,7 +160,7 @@ def test_engine_returns_at_most_four_distinct_candidates(tmp_path):
     assert len({item.topic for item in report.candidates}) == 4
 
 
-def test_niche_filter_flags_broad_and_unsuitable_topics():
+def test_niche_filter_flags_broad_unsuitable_and_unrelated_topics():
     items = [
         candidate("United Nations"),
         candidate("Celebrity gossip"),
@@ -174,7 +174,47 @@ def test_niche_filter_flags_broad_and_unsuitable_topics():
     assert items[0].filter_reasons
     assert items[1].filter_reasons
     assert items[2].filter_reasons
-    assert items[3].filter_reasons == []
+    assert items[3].filter_reasons
+
+
+def test_niche_filter_accepts_priority_ancient_human_and_civilization_families():
+    items = [
+        candidate("How Did Ancient Humans Survive Freezing Winters?"),
+        candidate("What Did Ancient People Actually Do All Day?"),
+        candidate("What Did Ancient Egyptians Eat During a Failed Harvest?"),
+        candidate("How Did Ancient Humans Travel Long Distances Without Roads?"),
+        candidate("How Did Prehistoric People Keep Their Shelters Warm?"),
+        candidate("How Did Roman Aqueducts Solve the Problem of Clean Water?"),
+        candidate("Why Did Ancient Cities Keep Building Over Themselves?"),
+        candidate("Why Are We the Only Human Species Left?"),
+    ]
+
+    from modules.topic_intelligence.validation import apply_niche_filter
+
+    apply_niche_filter(items)
+
+    assert all(item.filter_reasons == [] for item in items)
+
+
+def test_niche_filter_downranks_broad_history_current_events_and_sports():
+    items = [
+        candidate("Ancient History"),
+        candidate("History of Egypt"),
+        candidate("Roman Aqueducts"),
+        candidate("Why Did a Nepal Flood Become Deadly So Fast?"),
+        candidate("What Happened in Yesterday's Championship Final?"),
+        candidate("Why Do Clouds Have Different Shapes?"),
+    ]
+
+    from modules.topic_intelligence.validation import apply_niche_filter
+
+    apply_niche_filter(items)
+
+    assert all(item.filter_reasons for item in items)
+    assert "Current-event disasters" in items[3].filter_reasons[0]
+    assert "sports" in items[4].filter_reasons[0].casefold()
+    assert "Broad historical category" in items[0].filter_reasons[0]
+    assert "Broad historical category" in items[2].filter_reasons[0]
 
 
 def test_pipeline_topic_gate_keeps_editorial_pass_even_if_metrics_need_review(tmp_path):
@@ -185,10 +225,10 @@ def test_pipeline_topic_gate_keeps_editorial_pass_even_if_metrics_need_review(tm
             return [
                 candidate("Paradise movie review", search_volume=100),
                 candidate("United Nations", search_volume=90),
-                candidate("Why do cats purr?", search_volume=80),
-                candidate("Why do birds migrate?", search_volume=70),
-                candidate("How do bats navigate?", search_volume=60),
-                candidate("Why do volcanoes erupt?", search_volume=50),
+                candidate("How Did Ancient People Stay Warm in Winter?", search_volume=80),
+                candidate("What Did Ancient Families Eat Every Day?", search_volume=70),
+                candidate("How Did Roman Cities Get Clean Water?", search_volume=60),
+                candidate("Why Did Ancient Greeks Build Open-Air Theaters?", search_volume=50),
             ]
 
     report = TopicIntelligenceEngine(
