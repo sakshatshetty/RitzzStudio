@@ -504,7 +504,7 @@ def test_image_ai_qa_moves_editorial_and_repairs_impacted_images(tmp_path: Path)
     assert [attempt.status for attempt in report.stages["image_editorial_qa"]] == ["FAIL", "PASS"]
 
 
-def test_image_ai_qa_stops_on_unresolved_review(tmp_path: Path) -> None:
+def test_image_ai_qa_keeps_repairing_and_blocks_until_pass(tmp_path: Path) -> None:
     image_directory = create_images(tmp_path)
     audio_file = create_audio(tmp_path)
     storyboard_file = create_storyboard(tmp_path, audio_file)
@@ -521,7 +521,24 @@ def test_image_ai_qa_stops_on_unresolved_review(tmp_path: Path) -> None:
                 rationale="The visual relation is uncertain.",
             )
 
-    pipeline = VideoProductionPipeline(image_reviewer=Reviewer())
+    class ImageProvider:
+        def __init__(self):
+            self.generated_scenes: list[str] = []
+
+        def generate(self, request):
+            output = Path(request.output_directory) / f"{request.image_id}.png"
+            shutil.copyfile(image_directory / "scene_003.png", output)
+            self.generated_scenes.append(request.scene_id)
+            return ImageGenerationResult(
+                image_id=request.image_id,
+                scene_id=request.scene_id,
+                provider="openai",
+                status="completed",
+                file_path=str(output),
+            )
+
+    provider = ImageProvider()
+    pipeline = VideoProductionPipeline(image_reviewer=Reviewer(), image_provider=provider)
     request = pipeline.create_request(
         storyboard_file=storyboard_file,
         image_directory=image_directory,
@@ -531,9 +548,48 @@ def test_image_ai_qa_stops_on_unresolved_review(tmp_path: Path) -> None:
         enable_image_ai_qa=True,
     )
 
-    with pytest.raises(RuntimeError, match="remains unresolved"):
-        pipeline._review_and_repair_images(request, tmp_path)
-    assert load_project_qa(tmp_path).stages["image_editorial_qa"][-1].status == "REVIEW"
+    status = pipeline._review_and_repair_images(request, tmp_path)
+
+    assert status == "REVIEW"
+    assert provider.generated_scenes == [
+        scene_id
+        for _ in range(VideoProductionPipeline.MAX_QA_REPAIR_ATTEMPTS)
+        for scene_id in ("scene_001", "scene_002", "scene_003")
+    ]
+    qa_attempts = load_project_qa(tmp_path).stages["image_editorial_qa"]
+    assert [attempt.status for attempt in qa_attempts] == ["REVIEW"] * 6
+
+
+def test_unresolved_image_qa_blocks_video_render_pipeline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    image_directory = create_images(tmp_path)
+    audio_file = create_audio(tmp_path)
+    storyboard_file = create_storyboard(tmp_path, audio_file)
+    alignment_file = create_alignment(tmp_path)
+    pipeline = VideoProductionPipeline()
+    request = pipeline.create_request(
+        storyboard_file=storyboard_file,
+        image_directory=image_directory,
+        narration_result_file=alignment_file,
+        audio_file=audio_file,
+        output_directory=tmp_path / "output",
+        enable_image_ai_qa=True,
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_review_and_repair_images",
+        lambda *_args: "REVIEW",
+    )
+
+    result = pipeline.run(request)
+
+    assert result.status == "failed"
+    assert result.technical_qa_status == "FAIL"
+    assert result.image_ai_qa_status == "REVIEW"
+    assert "did not pass after 3 repair attempts" in (result.error_message or "")
+    assert result.output_video_file is None
 
 
 def test_pipeline_requests_bounded_sync_repair_for_timeline_drift_review() -> None:
@@ -603,7 +659,90 @@ def test_pipeline_resynchronizes_and_renders_again_on_timeline_drift_review(
     assert technical_attempts == 2
     assert render_attempts == 2
     qa_report = load_project_qa(tmp_path)
-    assert qa_report.stages["sync_repair"][-1].status == "PASS"
+    assert [item.status for item in qa_report.stages["technical_qa"]] == [
+        "REVIEW",
+        "PASS",
+    ]
+    assert qa_report.stages["technical_qa_repair"][-1].status == "PASS"
+    pipeline_state = json.loads(
+        (tmp_path / "output" / "pipeline_state.json").read_text(encoding="utf-8")
+    )
+    assert pipeline_state["stages"]["render"]["status"] == "completed"
+    assert pipeline_state["stages"]["technical_qa"]["status"] == "completed"
+
+
+def test_pipeline_leaves_render_incomplete_when_technical_qa_never_passes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    image_directory = create_images(tmp_path)
+    audio_file = create_audio(tmp_path)
+    storyboard_file = create_storyboard(tmp_path, audio_file)
+    alignment_file = create_alignment(tmp_path)
+    qa_attempts = 0
+    render_attempts = 0
+
+    def run_technical(self, storyboard, plan, audio, video):
+        nonlocal qa_attempts
+        qa_attempts += 1
+        checks: dict[str, QAStatus] = {
+            "images": "PASS",
+            "audio": "PASS",
+            "scene_order": "PASS",
+            "timestamps_monotonic": "PASS",
+            "no_gaps_or_overlaps": "PASS",
+            "scene_durations": "PASS",
+            "duration_consistency": "PASS",
+            "video": "PASS",
+            "timestamp_coverage": "PASS",
+            "timeline_drift": "PASS",
+            "audio_loudness": "REVIEW",
+            "editorial_callouts": "PASS",
+        }
+        return TechnicalQAResult(
+            status="REVIEW",
+            checks=checks,
+            issues=["Audio loudness remains outside target."],
+            scene_count=len(plan.clips),
+            audio_duration_seconds=3.0,
+            video_duration_seconds=3.0,
+            maximum_timeline_drift_seconds=0.0,
+        )
+
+    monkeypatch.setattr(
+        "modules.video.pipeline_engine.PilotVideoQA.run_technical",
+        run_technical,
+    )
+    pipeline = VideoProductionPipeline()
+    original_render = pipeline.renderer.render
+
+    def count_render(*args, **kwargs):
+        nonlocal render_attempts
+        render_attempts += 1
+        return original_render(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline.renderer, "render", count_render)
+    request = pipeline.create_request(
+        storyboard_file,
+        image_directory,
+        alignment_file,
+        tmp_path / "output",
+        audio_file,
+    )
+
+    result = pipeline.run(request)
+    pipeline_state = json.loads(
+        (tmp_path / "output" / "pipeline_state.json").read_text(encoding="utf-8")
+    )
+    qa_report = load_project_qa(tmp_path)
+
+    assert result.status == "failed"
+    assert result.technical_qa_status == "REVIEW"
+    assert qa_attempts == VideoProductionPipeline.MAX_QA_REPAIR_ATTEMPTS
+    assert render_attempts == VideoProductionPipeline.MAX_QA_REPAIR_ATTEMPTS
+    assert pipeline_state["stages"]["render"]["status"] == "failed"
+    assert pipeline_state["stages"]["technical_qa"]["status"] == "failed"
+    assert len(qa_report.stages["technical_qa"]) == VideoProductionPipeline.MAX_QA_REPAIR_ATTEMPTS
 
 
 def test_pipeline_saves_expected_artifacts(
