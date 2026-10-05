@@ -316,6 +316,56 @@ class TopicIntelligenceEngine:
             warnings.append("No candidate passed the recommendation gate; review the visible candidates or revise discovery criteria.")
         elif len(shortlist_candidate_ids) < PIPELINE_CANDIDATE_MINIMUM:
             warnings.append(f"Only {len(shortlist_candidate_ids)} candidate(s) passed the recommendation gate.")
+        if competitor_led_pipeline:
+            final_candidate_ids = set(shortlist_candidate_ids)
+            candidate_by_id = {
+                candidate.candidate_id: candidate
+                for candidate in ranked_all
+            }
+            for validation in discovery_diagnostics.get(
+                "candidate_validation",
+                [],
+            ):
+                candidate_id = validation.get("candidate_id")
+                if not candidate_id:
+                    validation.setdefault("final_validation_result", "FAIL")
+                    continue
+                if candidate_id in final_candidate_ids:
+                    validation["final_validation_result"] = "PASS"
+                    continue
+                validation["final_validation_result"] = "FAIL"
+                candidate = candidate_by_id.get(candidate_id)
+                if candidate is not None:
+                    reasons = [
+                        reason
+                        for reason in (
+                            candidate.filter_reasons
+                            + candidate.validation_reasons
+                        )
+                        if reason
+                    ]
+                    if reasons:
+                        rejection_reason = "; ".join(reasons)
+                    elif candidate.editorial_status != "PASS":
+                        rejection_reason = (
+                            "RITZZ editorial status was "
+                            f"{candidate.editorial_status or 'unavailable'}."
+                        )
+                    elif candidate.validation_status != "RECOMMENDED":
+                        rejection_reason = (
+                            "Topic validation status was "
+                            f"{candidate.validation_status}."
+                        )
+                    else:
+                        rejection_reason = (
+                            "Candidate did not qualify for the final RITZZ shortlist."
+                        )
+                    validation["final_rejection_reason"] = rejection_reason
+                else:
+                    validation["final_rejection_reason"] = (
+                        validation.get("rejection_reason")
+                        or "Candidate did not remain in the final RITZZ recommendation set."
+                    )
         report = OpportunityReport(
             report_id=cache_key,
             request=request,
@@ -446,11 +496,16 @@ class TopicIntelligenceEngine:
         for rejection in generation_diagnostics.get("candidate_rejections", []):
             diagnostics["candidate_validation"].append({
                 **rejection,
+                "competitor_inspiration": rejection.get("source_videos", []),
+                "underlying_pattern": rejection.get("underlying_pattern"),
+                "originality_result": rejection.get("originality_result", "NOT_RUN"),
                 "search_concepts": rejection.get("search_concepts", []),
                 "vidiq_query": None,
                 "raw_vidiq_response": None,
                 "normalized_vidiq_evidence": None,
+                "vidiq_result": "NOT_RUN",
                 "validation_result": "NOT_RUN",
+                "final_validation_result": "FAIL",
                 "rejection_reason": rejection.get("reason"),
             })
 
@@ -459,7 +514,8 @@ class TopicIntelligenceEngine:
                 status="NO_GROUNDED_GPT_CANDIDATES",
                 error=(
                     f"GPT returned {diagnostics['gpt_ideas_generated']} proposal(s), "
-                    "but none passed concrete-subject competitor-evidence validation. "
+                    "but none passed validated competitor-pattern evidence and "
+                    "originality/specificity checks. "
                     "vidIQ validation was not run."
                 ),
             )
@@ -471,17 +527,31 @@ class TopicIntelligenceEngine:
         eligible: list[OpportunityCandidate] = []
         for candidate in generated:
             search_concepts = self._vidiq_search_concepts(candidate)
+            competitor_inspiration = candidate.raw_evidence.get(
+                "competitor_inspiration",
+                [],
+            )
+            underlying_pattern = candidate.raw_evidence.get("pattern")
+            originality_result = candidate.raw_evidence.get(
+                "originality_result",
+                "PASS" if candidate.originality_reason else "NOT_RUN",
+            )
             overlaps = self.inventory_manager.find_overlap(candidate.topic)
             if overlaps:
                 candidate.inventory_status = "OVERLAP"
                 rejection = {
                     "candidate_id": candidate.candidate_id,
                     "topic": candidate.topic,
+                    "competitor_inspiration": competitor_inspiration,
+                    "underlying_pattern": underlying_pattern,
+                    "originality_result": originality_result,
                     "search_concepts": search_concepts,
                     "vidiq_query": None,
                     "raw_vidiq_response": None,
                     "normalized_vidiq_evidence": None,
                     "validation_result": "NOT_RUN",
+                    "vidiq_result": "NOT_RUN",
+                    "final_validation_result": "FAIL",
                     "reason": "Overlaps existing RITZZ content inventory.",
                     "rejection_reason": "Overlaps existing RITZZ content inventory.",
                     "inventory_topics": [item.topic for item in overlaps],
@@ -497,6 +567,11 @@ class TopicIntelligenceEngine:
                 "normalized_evidence": None,
                 "result": "PENDING",
                 "rejection_reason": None,
+            }
+            candidate.raw_evidence["competitor_validation_provenance"] = {
+                "competitor_inspiration": competitor_inspiration,
+                "underlying_pattern": underlying_pattern,
+                "originality_result": originality_result,
             }
             eligible.append(candidate)
 
@@ -563,6 +638,10 @@ class TopicIntelligenceEngine:
                 diagnostics["ideas_rejected"].append({
                     "candidate_id": candidate.candidate_id,
                     "topic": candidate.topic,
+                    **candidate.raw_evidence.get(
+                        "competitor_validation_provenance",
+                        {},
+                    ),
                     "search_concepts": validation_context["search_concepts"],
                     "vidiq_query": query,
                     "raw_vidiq_response": raw_response,
@@ -581,11 +660,21 @@ class TopicIntelligenceEngine:
             diagnostics["candidate_validation"].append({
                 "candidate_id": candidate.candidate_id,
                 "topic": candidate.topic,
+                **candidate.raw_evidence.get(
+                    "competitor_validation_provenance",
+                    {},
+                ),
                 "search_concepts": validation_context["search_concepts"],
                 "vidiq_query": query,
                 "raw_vidiq_response": raw_response,
                 "normalized_vidiq_evidence": normalized_evidence,
                 "validation_result": validation_result,
+                "vidiq_result": validation_result,
+                "final_validation_result": (
+                    "PENDING_RITZZ_FILTER"
+                    if validation_result == "PASS"
+                    else "FAIL"
+                ),
                 "rejection_reason": rejection_reason,
                 "operation": enrichment.get("operation"),
             })
