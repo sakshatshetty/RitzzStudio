@@ -404,7 +404,7 @@ first, then channel-scoped recent/popular videos when supported.
 The active pipeline topic gate uses configured competitor outliers as the sole
 ideation evidence: GPT generates original proposals from that evidence, then
 vidIQ validates each proposal with keyword research. It stops with diagnostics
-if competitor evidence or the minimum of three qualified ideas is unavailable;
+if competitor evidence or the minimum of two qualified ideas is unavailable;
 it does not backfill with unscoped trending, rising, or evergreen results.
 General-purpose topic discovery remains a separate path, bounded by
 `RITZZ_CANDIDATE_POOL_TARGET` (15–30, default 30). The adapter does not invent
@@ -417,9 +417,9 @@ only for candidates that remain plausible. Editorial `PASS` alone is not
 sufficient: candidates must also pass the explicit RITZZ-fit threshold, final
 duplicate validation, opportunity score, and evidence-completeness checks.
 Competitor or historical signals cannot override these gates. The final
-pipeline issue contains three to five candidates that pass the recommendation
+pipeline issue contains two to five candidates that pass the recommendation
 gate; discovery safely fails with JSON and Markdown diagnostics if fewer than
-three qualify.
+two qualify.
 
 The RITZZ-fit result records `PASS`/`REVIEW`/`FAIL`, score, story type, fit
 dimensions, trend dependency, and rationale. Cheap deterministic checks hold

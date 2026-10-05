@@ -84,7 +84,7 @@ and collection time when available. GPT generates original topic ideas from
 that evidence; vidIQ keyword research validates those ideas, not a separate
 trending/evergreen fallback pool. The workflow does not call unscoped trending,
 rising, broader-trending, or long-tail fallbacks. It stops before approval if
-fewer than three strong candidates pass inventory, editorial, and vidIQ checks.
+fewer than two strong candidates pass inventory, editorial, and vidIQ checks.
 The collaborator still chooses the topic; no highest-score candidate is
 selected automatically.
 

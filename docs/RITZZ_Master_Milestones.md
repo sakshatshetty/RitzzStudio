@@ -189,8 +189,8 @@ Project: `20260820_001_why_do_pirates_wear_eye_patches`
 ### Acceptance criteria
 
 - No recommended candidate substantially overlaps an existing RITZZ topic unless explicitly allowed.
-- Pipeline discovery returns 3–5 distinct candidates that pass inventory,
-  editorial, recommendation, and vidIQ validation gates; fewer than three stops
+- Pipeline discovery returns 2–5 distinct candidates that pass inventory,
+  editorial, recommendation, and vidIQ validation gates; fewer than two stops
   discovery rather than triggering an unscoped fallback.
 - Missing provider signals remain missing and are visible.
 - Competitor success is treated as evidence, not a guarantee.

@@ -548,8 +548,8 @@ jobs:
             const fs = require('fs');
             const summary = fs.readFileSync(process.env.CANDIDATE_SUMMARY, 'utf8');
             const candidateCount = Number(process.env.CANDIDATE_COUNT);
-            if (!Number.isInteger(candidateCount) || candidateCount < 3 || candidateCount > 5) {
-              core.setFailed(`Expected 3–5 topic candidates; received ${process.env.CANDIDATE_COUNT}.`);
+            if (!Number.isInteger(candidateCount) || candidateCount < 2 || candidateCount > 5) {
+              core.setFailed(`Expected 2–5 topic candidates; received ${process.env.CANDIDATE_COUNT}.`);
               return;
             }
             const choices = Array.from({ length: candidateCount }, (_, index) => `\`${index + 1}\``).join(', ');
