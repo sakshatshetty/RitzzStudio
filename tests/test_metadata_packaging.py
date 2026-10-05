@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 
@@ -468,6 +469,9 @@ def test_metadata_packaging_and_thumbnail_stage_precede_final_approval():
     assert "needs: [metadata-packaging, thumbnail-packaging, restore-production]" in workflow
     assert "- metadata_packaging" in workflow
     assert "- thumbnail_packaging" in workflow
+    assert '"render_video": "rendered-project.tar.gz"' in workflow
+    assert '"metadata_packaging": "metadata-project.tar.gz"' in workflow
+    assert "archive=.pipeline-artifacts/metadata-project.tar.gz" in workflow
 
 
 def test_production_state_migrates_existing_state_with_metadata_stage(tmp_path):
@@ -512,13 +516,16 @@ def test_runner_requires_render_checkpoint_and_records_complete_metadata_stage(
     store.initialize("production-1")
     rendered_marker = artifacts / "rendered.json"
     rendered_marker.write_text("{}", encoding="utf-8")
+    render_archive = artifacts / "rendered-project.tar.gz"
+    render_archive.write_bytes(b"immutable render checkpoint")
     store.start_stage("render_video")
     project, _ = _project(tmp_path)
     store.complete_stage(
         "render_video",
-        ["rendered.json"],
+        ["rendered.json", "rendered-project.tar.gz"],
         project_id=project.project_id,
     )
+    render_archive_hash = hashlib.sha256(render_archive.read_bytes()).hexdigest()
     monkeypatch.setenv("RITZZ_PRODUCTION_ID", "production-1")
     monkeypatch.setenv("RITZZ_PROJECT_ID", project.project_id)
     monkeypatch.setenv("RITZZ_PIPELINE_ARTIFACTS", str(artifacts))
@@ -545,7 +552,14 @@ def test_runner_requires_render_checkpoint_and_records_complete_metadata_stage(
     final_state = store.resume("production-1")
     assert final_state["stages"]["metadata_packaging"]["status"] == "completed"
     assert (artifacts / METADATA_FILENAME).is_file()
-    assert (artifacts / "rendered-project.tar.gz").is_file()
+    assert (artifacts / "metadata-project.tar.gz").is_file()
+    assert (
+        hashlib.sha256(render_archive.read_bytes()).hexdigest()
+        == render_archive_hash
+    )
+    assert final_state["stages"]["render_video"]["artifacts"][1]["sha256"] == (
+        render_archive_hash
+    )
     assert first["status"] == "COMPLETE"
     assert first["selected_title"] == "The Science Behind a Moonbow"
     assert first["vidiq_evidence"]["source"] == "cached_discovery"

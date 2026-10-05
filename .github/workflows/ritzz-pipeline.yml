@@ -427,7 +427,7 @@ jobs:
                   "storyboard_generation": "storyboard-project.tar.gz",
                   "image_generation": "image-project.tar.gz",
                   "render_video": "rendered-project.tar.gz",
-                  "metadata_packaging": "rendered-project.tar.gz",
+                  "metadata_packaging": "metadata-project.tar.gz",
                   "thumbnail_packaging": "thumbnail-project.tar.gz",
                   "private_upload": "private-upload-project.tar.gz",
               }
@@ -1144,6 +1144,12 @@ jobs:
           cp "$video_file" .pipeline-artifacts/ritzz_test.mp4
           cp "$thumbnail_file" .pipeline-artifacts/ritzz_thumbnail.jpg
 
+      - name: Create standalone rendered video ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          zip -j .pipeline-artifacts/ritzz_test_video.zip .pipeline-artifacts/ritzz_test.mp4
+
       - name: Upload rendered video artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -1152,6 +1158,30 @@ jobs:
           if-no-files-found: error
           include-hidden-files: true
           overwrite: true
+
+      - name: Upload standalone rendered video ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-rendered-video-zip
+          path: .pipeline-artifacts/ritzz_test_video.zip
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: Add rendered video download instructions
+        shell: bash
+        env:
+          PRODUCTION_ID: ${{ needs.restore-production.outputs.production_id }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          {
+            echo "## Rendered video download"
+            echo "- Download ZIP artifact: [ritzz-production-${PRODUCTION_ID}-rendered-video-zip](${GITHUB_SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}#artifacts)"
+            echo "- GitHub CLI to save the ZIP artifact into your local Downloads folder:"
+            echo '  ```powershell'
+            echo "  gh run download ${RUN_ID} --repo ${REPOSITORY} --name ritzz-production-${PRODUCTION_ID}-rendered-video-zip --dir `"$HOME\\Downloads`""
+            echo '  ```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   video-approval:
     name: Human approval for generated test video
@@ -1306,9 +1336,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          archive=.pipeline-artifacts/rendered-project.tar.gz
+          archive=.pipeline-artifacts/metadata-project.tar.gz
           if [[ ! -s "$archive" ]]; then
-            echo "Rendered metadata checkpoint has no project archive." >&2
+            echo "Metadata checkpoint has no project archive." >&2
             exit 1
           fi
           mkdir -p projects
@@ -1536,6 +1566,8 @@ jobs:
           mkdir -p projects
           if [[ -f .pipeline-artifacts/thumbnail-project.tar.gz ]]; then
             tar -xzf .pipeline-artifacts/thumbnail-project.tar.gz -C projects
+          elif [[ -f .pipeline-artifacts/metadata-project.tar.gz ]]; then
+            tar -xzf .pipeline-artifacts/metadata-project.tar.gz -C projects
           else
             tar -xzf .pipeline-artifacts/rendered-project.tar.gz -C projects
           fi

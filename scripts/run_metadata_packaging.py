@@ -152,11 +152,11 @@ def main() -> int:
         artifacts_directory.mkdir(parents=True, exist_ok=True)
         artifact_copy = artifacts_directory / METADATA_FILENAME
         shutil.copy2(metadata_file, artifact_copy)
-        project_archive = artifacts_directory / "rendered-project.tar.gz"
+        project_archive = artifacts_directory / "metadata-project.tar.gz"
         _archive_project(project_directory, project_archive)
         store.complete_stage(
             "metadata_packaging",
-            [METADATA_FILENAME, "rendered-project.tar.gz"],
+            [METADATA_FILENAME, "metadata-project.tar.gz"],
             project_id=project_id,
         )
     except Exception as exc:
@@ -186,7 +186,7 @@ def main() -> int:
                     encoding="utf-8",
                 )
                 shutil.copy2(metadata_file, artifacts_directory / METADATA_FILENAME)
-            project_archive = artifacts_directory / "rendered-project.tar.gz"
+            project_archive = artifacts_directory / "metadata-project.tar.gz"
             _archive_project(project_directory, project_archive)
         finally:
             store.fail_stage(
@@ -194,7 +194,7 @@ def main() -> int:
                 str(exc),
                 [
                     path
-                    for path in (METADATA_FILENAME, "rendered-project.tar.gz")
+                    for path in (METADATA_FILENAME, "metadata-project.tar.gz")
                     if (artifacts_directory / path).is_file()
                 ],
                 project_id=project_id,
