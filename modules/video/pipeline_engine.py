@@ -29,6 +29,7 @@ from modules.video.pipeline_models import (
     VideoProductionResult,
 )
 from modules.video.pipeline_state import load_pipeline_state, save_pipeline_state
+from modules.video.qa_models import TechnicalQAResult
 from modules.video.render_engine import (
     FFmpegVideoRenderer,
 )
@@ -74,6 +75,7 @@ class VideoProductionPipeline:
 
     STATE_FILENAME = "pipeline_state.json"
     USAGE_FILENAME = "pipeline_usage.json"
+    MAX_QA_REPAIR_ATTEMPTS = 3
     STAGE_ORDER: ClassVar[list[str]] = [
         "asset_validation",
         "assembly",
@@ -206,6 +208,12 @@ class VideoProductionPipeline:
                     request,
                     project_directory,
                 )
+                if image_ai_status != "PASS":
+                    raise RuntimeError(
+                        "Image/editorial QA did not pass after "
+                        f"{self.MAX_QA_REPAIR_ATTEMPTS} repair attempts; "
+                        "video assembly cannot proceed."
+                    )
 
             video_plan_file = output_directory / self.VIDEO_PLAN_FILENAME
             current_stage = "assembly"
@@ -269,71 +277,15 @@ class VideoProductionPipeline:
                 / self.DEFAULT_OUTPUT_FILENAME
             )
 
-            current_stage = "render"
-            usage["stages"].append({"stage": current_stage, "started_at": time.time()})
-            state.start(current_stage)
-            save_pipeline_state(state, state_file)
-            rendered_file = (
-                self.renderer.render(
-                    assembly_plan=synchronized_plan,
-                    motion_plan=motion_plan,
-                    audio_file=audio_path,
-                    output_file=(
-                        output_video_file
-                    ),
-                )
-            )
-            state.complete("render")
-            save_pipeline_state(state, state_file)
-            self._save_usage(usage, usage_file, "render")
-
-            current_stage = "technical_qa"
-            usage["stages"].append({"stage": current_stage, "started_at": time.time()})
-            state.start(current_stage)
             storyboard = self.assembly_engine.load_storyboard(request.storyboard_file)
-            technical = PilotVideoQA().run_technical(
-                storyboard,
-                synchronized_plan,
-                audio_path,
-                rendered_file,
-            )
-            state.complete(current_stage) if technical.status == "PASS" else state.fail(current_stage, technical.status)
-            save_pipeline_state(state, state_file)
-            self._save_usage(usage, usage_file, "technical_qa")
-
-            record_stage_qa(
-                project_directory,
-                QAStageResult(
-                    stage="technical_qa",
-                    status=technical.status,
-                    checks=technical.checks,
-                    findings=technical.issues,
-                    metrics=(
-                        technical.editorial_callouts.metrics()
-                        if technical.editorial_callouts
-                        else {}
-                    ),
-                    details=(
-                        technical.editorial_callouts.scene_statuses
-                        if technical.editorial_callouts
-                        else {}
-                    ),
-                    reviewer="deterministic",
-                ),
-            )
-
-            if technical.status in {"FAIL", "REVIEW"} and self._has_sync_failures(technical.checks):
-                state.start("synchronization")
-                save_pipeline_state(state, state_file)
-                synchronized_plan = self._build_synchronized_plan(request, video_plan)
-                self.assembly_engine.save_plan(synchronized_plan, synchronized_plan_file)
-                state.complete("synchronization")
-                state.start("motion")
-                save_pipeline_state(state, state_file)
-                motion_plan = self._build_motion_plan(request, synchronized_plan)
-                self.motion_engine.save_plan(motion_plan, motion_plan_file)
-                state.complete("motion")
-                state.start("render")
+            rendered_file: Path | None = None
+            technical: TechnicalQAResult | None = None
+            for qa_attempt in range(1, self.MAX_QA_REPAIR_ATTEMPTS + 1):
+                current_stage = "render"
+                usage["stages"].append(
+                    {"stage": current_stage, "started_at": time.time()}
+                )
+                state.start(current_stage)
                 save_pipeline_state(state, state_file)
                 rendered_file = self.renderer.render(
                     assembly_plan=synchronized_plan,
@@ -341,40 +293,19 @@ class VideoProductionPipeline:
                     audio_file=audio_path,
                     output_file=output_video_file,
                 )
-                state.complete("render")
-                state.start("technical_qa")
+                self._save_usage(usage, usage_file, "render")
+
+                current_stage = "technical_qa"
+                usage["stages"].append(
+                    {"stage": current_stage, "started_at": time.time()}
+                )
+                state.start(current_stage)
+                save_pipeline_state(state, state_file)
                 technical = PilotVideoQA().run_technical(
                     storyboard,
                     synchronized_plan,
                     audio_path,
                     rendered_file,
-                )
-                if technical.status == "PASS":
-                    state.complete("technical_qa")
-                else:
-                    state.fail("technical_qa", "Sync QA still fails after one automatic repair.")
-                save_pipeline_state(state, state_file)
-                record_stage_qa(
-                    project_directory,
-                    QAStageResult(
-                        stage="sync_repair",
-                        status="PASS" if technical.status == "PASS" else technical.status,
-                        checks=technical.checks,
-                        findings=technical.issues,
-                        metrics=(
-                            technical.editorial_callouts.metrics()
-                            if technical.editorial_callouts
-                            else {}
-                        ),
-                        details=(
-                            technical.editorial_callouts.scene_statuses
-                            if technical.editorial_callouts
-                            else {}
-                        ),
-                        recommendations=[] if technical.status == "PASS" else [
-                            "Automatic resynchronization retry did not resolve the issue; stop for diagnosis."
-                        ],
-                    ),
                 )
                 record_stage_qa(
                     project_directory,
@@ -394,8 +325,77 @@ class VideoProductionPipeline:
                             else {}
                         ),
                         reviewer="deterministic",
+                        attempt=qa_attempt,
                     ),
                 )
+                self._save_usage(usage, usage_file, "technical_qa")
+                if technical.status == "PASS":
+                    if qa_attempt > 1:
+                        record_stage_qa(
+                            project_directory,
+                            QAStageResult(
+                                stage="technical_qa_repair",
+                                status="PASS",
+                                checks=technical.checks,
+                                findings=technical.issues,
+                                recommendations=[],
+                                attempt=qa_attempt - 1,
+                            ),
+                        )
+                    state.complete("technical_qa")
+                    state.complete("render")
+                    save_pipeline_state(state, state_file)
+                    break
+
+                if qa_attempt == self.MAX_QA_REPAIR_ATTEMPTS:
+                    state.fail(
+                        "technical_qa",
+                        "Technical QA did not pass after "
+                        f"{self.MAX_QA_REPAIR_ATTEMPTS} repair-and-render attempts.",
+                    )
+                    state.fail(
+                        "render",
+                        "Render cannot complete until technical QA passes.",
+                    )
+                    save_pipeline_state(state, state_file)
+                    break
+
+                record_stage_qa(
+                    project_directory,
+                    QAStageResult(
+                        stage="technical_qa_repair",
+                        status=technical.status,
+                        checks=technical.checks,
+                        findings=technical.issues,
+                        recommendations=[
+                            "Repair the reported technical QA issues and rerender."
+                        ],
+                        attempt=qa_attempt,
+                    ),
+                )
+                if self._has_sync_failures(technical.checks):
+                    state.start("synchronization")
+                    save_pipeline_state(state, state_file)
+                    synchronized_plan = self._build_synchronized_plan(
+                        request,
+                        video_plan,
+                    )
+                    self.assembly_engine.save_plan(
+                        synchronized_plan,
+                        synchronized_plan_file,
+                    )
+                    state.complete("synchronization")
+                    state.start("motion")
+                    save_pipeline_state(state, state_file)
+                    motion_plan = self._build_motion_plan(
+                        request,
+                        synchronized_plan,
+                    )
+                    self.motion_engine.save_plan(motion_plan, motion_plan_file)
+                    state.complete("motion")
+                    save_pipeline_state(state, state_file)
+            assert technical is not None
+            assert rendered_file is not None
 
             return VideoProductionResult(
                 status="completed" if technical.status == "PASS" else "failed",
@@ -419,9 +419,9 @@ class VideoProductionPipeline:
                     .total_duration_seconds
                 ),
                 error_message=(
-                    "Image/editorial QA failed; inspect qa/qa_report.json before approval."
-                    if image_ai_status == "FAIL"
-                    else "Technical QA did not pass after the bounded synchronization repair; inspect qa/qa_report.json."
+                    "Technical QA did not pass after "
+                    f"{self.MAX_QA_REPAIR_ATTEMPTS} repair-and-render attempts; "
+                    "inspect qa/qa_report.json."
                     if technical.status != "PASS"
                     else None
                 ),
@@ -478,6 +478,7 @@ class VideoProductionPipeline:
         self,
         request: VideoProductionRequest,
         project_directory: Path,
+        repair_attempt: int = 1,
     ) -> QAStatus:
         from modules.image.character_profile import load_character_profile
         from modules.image.models import ImageGenerationRequest
@@ -574,7 +575,7 @@ class VideoProductionPipeline:
             affected_indices.update({index, target_index})
 
         for index, review in first_reviews.items():
-            has_actionable_image_finding = any(
+            if any(
                 status != "PASS"
                 for status in (
                     review.status,
@@ -582,12 +583,6 @@ class VideoProductionPipeline:
                     review.narration_description,
                     review.editorial_context,
                 )
-            )
-            if (
-                review.status == "FAIL"
-                or review.narration_image == "FAIL"
-                or review.narration_description == "FAIL"
-                or (has_actionable_image_finding and bool(review.correction_prompt))
             ):
                 affected_indices.add(index)
             if (
@@ -655,6 +650,10 @@ class VideoProductionPipeline:
             correction = review.correction_prompt if review else None
             if not correction:
                 correction = (
+                    f"Correct this image QA finding: {review.rationale}. "
+                    if review
+                    else ""
+                ) + (
                     "Correct the visible mismatch with the scene narration and visual description. "
                     "Keep the established character, hand-drawn style, and requested editorial word accurate."
                 )
@@ -717,7 +716,23 @@ class VideoProductionPipeline:
             if review.status == "FAIL" or review.narration_image == "FAIL" or review.narration_description == "FAIL" or review.editorial_context == "FAIL":
                 unresolved.append(f"{scenes[index].scene_id}: {review.rationale}")
 
-        status = "FAIL" if unresolved else "REVIEW" if any(review.status == "REVIEW" for review in final_reviews.values()) else "PASS"
+        final_check_statuses = [
+            check_status
+            for review in final_reviews.values()
+            for check_status in (
+                review.status,
+                review.narration_image,
+                review.narration_description,
+                review.editorial_context,
+            )
+        ]
+        status: QAStatus = (
+            "FAIL"
+            if unresolved or "FAIL" in final_check_statuses
+            else "REVIEW"
+            if "REVIEW" in final_check_statuses
+            else "PASS"
+        )
         checks = {
             f"{scenes[index].scene_id}.narration_image": review.narration_image
             for index, review in final_reviews.items()
@@ -739,18 +754,31 @@ class VideoProductionPipeline:
                 findings=unresolved + [
                     f"{scenes[index].scene_id}: {review.rationale}"
                     for index, review in final_reviews.items()
-                    if review.status == "REVIEW"
+                    if any(
+                        check_status != "PASS"
+                        for check_status in (
+                            review.status,
+                            review.narration_image,
+                            review.narration_description,
+                            review.editorial_context,
+                        )
+                    )
                 ],
                 recommendations=[] if status == "PASS" else [
                     "Inspect the preserved originals and QA report before approval."
                 ],
                 reviewer="openai_vision",
+                attempt=repair_attempt,
             ),
         )
-        if status != "PASS":
-            raise RuntimeError(
-                "Image/editorial QA remains unresolved after its bounded "
-                "automatic correction; inspect qa/qa_report.json."
+        if (
+            status != "PASS"
+            and repair_attempt < self.MAX_QA_REPAIR_ATTEMPTS
+        ):
+            return self._review_and_repair_images(
+                request,
+                project_directory,
+                repair_attempt=repair_attempt + 1,
             )
         return status
 
