@@ -10,6 +10,7 @@ from modules.project.metadata_packaging import (
     METADATA_FILENAME,
     GeneratedVideoMetadata,
     MetadataPackagingEngine,
+    OpenAIMetadataGenerator,
 )
 from scripts import run_metadata_packaging
 
@@ -59,6 +60,18 @@ class FakeGenerator:
         if isinstance(result, Exception):
             raise result
         return result
+
+
+def test_openai_metadata_generator_requires_api_key_only_when_generating(monkeypatch):
+    monkeypatch.setattr(metadata_packaging, "OPENAI_API_KEY", None)
+
+    generator = OpenAIMetadataGenerator()
+
+    with pytest.raises(
+        ValueError,
+        match="OPENAI_API_KEY is required for metadata packaging",
+    ):
+        generator.generate({})
 
 
 def _project(tmp_path: Path, *, semantic_status="REVIEW"):
