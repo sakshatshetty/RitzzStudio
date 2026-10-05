@@ -2,6 +2,8 @@
 
 from pydantic import BaseModel, Field, model_validator
 
+DURATION_TOLERANCE_SECONDS = 60
+
 
 class ProductionConfig(BaseModel):
     target_duration_seconds: int = Field(default=480, ge=1)
@@ -22,3 +24,14 @@ class ProductionConfig(BaseModel):
     @property
     def minimum_word_count(self) -> int:
         return max(1, round(self.minimum_duration_seconds * self.words_per_minute / 60))
+
+    @property
+    def minimum_acceptable_duration_seconds(self) -> int:
+        return max(
+            self.minimum_duration_seconds,
+            self.target_duration_seconds - DURATION_TOLERANCE_SECONDS,
+        )
+
+    @property
+    def maximum_acceptable_duration_seconds(self) -> int:
+        return self.target_duration_seconds + DURATION_TOLERANCE_SECONDS

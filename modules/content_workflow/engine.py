@@ -168,13 +168,20 @@ class ContentWorkflow:
             if isinstance(outline_result, Outline):
                 section_total = sum(section.estimated_seconds for section in outline_result.sections)
                 section_sum_ok = section_total == outline_result.total_estimated_seconds
-                duration_ok = int(target_duration_seconds * 0.85) <= section_total <= int(target_duration_seconds * 1.15)
+                duration_ok = (
+                    production_config.minimum_acceptable_duration_seconds
+                    <= section_total
+                    <= production_config.maximum_acceptable_duration_seconds
+                )
                 outline_status = "PASS" if section_sum_ok and duration_ok else "FAIL"
                 findings = []
                 if not section_sum_ok:
                     findings.append("Section durations do not sum to the reported outline duration.")
                 if not duration_ok:
-                    findings.append("Outline duration is outside the configured acceptance range.")
+                    findings.append(
+                        "Outline duration is outside the configured minimum and "
+                        "±60-second target range."
+                    )
                 record_stage_qa(
                     project_path,
                     QAStageResult(

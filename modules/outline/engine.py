@@ -5,7 +5,10 @@ from openai import OpenAI
 
 from config import OPENAI_API_KEY, OPENAI_MODEL
 from modules.outline.models import Outline
-from modules.project.config import ProductionConfig
+from modules.project.config import (
+    DURATION_TOLERANCE_SECONDS,
+    ProductionConfig,
+)
 from modules.research.models import Research
 
 
@@ -29,6 +32,7 @@ class OutlineEngine:
         is True.
         """
 
+        config = production_config or ProductionConfig()
         outline_directory.mkdir(
             parents=True,
             exist_ok=True,
@@ -41,7 +45,11 @@ class OutlineEngine:
         # -------------------------------------------------
 
         if outline_file.exists() and not force_refresh:
-            return self._load_outline(outline_file)
+            return self._validate_duration(
+                self._load_outline(outline_file),
+                config.target_duration_seconds,
+                config.minimum_duration_seconds,
+            )
 
         # -------------------------------------------------
         # Load research
@@ -53,7 +61,6 @@ class OutlineEngine:
         # Generate outline
         # -------------------------------------------------
 
-        config = production_config or ProductionConfig()
         response = self.client.responses.parse(
             model=OPENAI_MODEL,
             input=[
@@ -76,15 +83,15 @@ class OutlineEngine:
                 "OpenAI returned no structured outline."
             )
 
-        outline = outline.model_copy(update={
-            "target_duration_seconds": config.target_duration_seconds,
-        })
-
         # -------------------------------------------------
         # Validate duration
         # -------------------------------------------------
 
-        self._validate_duration(outline, config.target_duration_seconds)
+        outline = self._validate_duration(
+            outline,
+            config.target_duration_seconds,
+            config.minimum_duration_seconds,
+        )
 
         # -------------------------------------------------
         # Save
@@ -101,9 +108,10 @@ class OutlineEngine:
     def _system_prompt(config: ProductionConfig | None = None) -> str:
         """Return the editorial system prompt."""
 
-        target = (config or ProductionConfig()).target_duration_seconds
-        minimum = int(target * 0.85)
-        maximum = int(target * 1.15)
+        config = config or ProductionConfig()
+        target = config.target_duration_seconds
+        minimum = config.minimum_acceptable_duration_seconds
+        maximum = config.maximum_acceptable_duration_seconds
 
         return (
             "You are the Outline Engine for Ritzz, "
@@ -149,18 +157,20 @@ class OutlineEngine:
     ) -> str:
         """Build the user prompt from structured research."""
 
-        target = (config or ProductionConfig()).target_duration_seconds
-        minimum = int(target * 0.85)
-        maximum = int(target * 1.15)
+        config = config or ProductionConfig()
+        target = config.target_duration_seconds
+        minimum = config.minimum_acceptable_duration_seconds
+        maximum = config.maximum_acceptable_duration_seconds
 
         return (
             "Create a video outline using ONLY the research "
             "provided below.\n\n"
-            f"TARGET DURATION: exactly {target} seconds.\n"
+            f"TARGET DURATION: approximately {target} seconds.\n"
             f"The estimated_seconds values for all sections MUST sum to "
-            f"exactly {target} seconds and remain between {minimum} and "
-            f"{maximum} seconds. Set total_estimated_seconds to the same "
-            "section sum. Treat these duration requirements as hard constraints.\n\n"
+            f"a duration between {minimum} and {maximum} seconds. "
+            "Set total_estimated_seconds to the section sum and keep it "
+            f"between {minimum} and {maximum} seconds. "
+            "Treat these duration requirements as hard constraints.\n\n"
             "RESEARCH:\n"
             f"{research.model_dump_json(indent=2)}"
         )
@@ -214,31 +224,48 @@ class OutlineEngine:
     def _validate_duration(
         outline: Outline,
         target_duration_seconds: int = 480,
-    ) -> None:
-        """Validate the outline's estimated duration."""
+        minimum_duration_seconds: int | None = None,
+    ) -> Outline:
+        """Validate and normalize the outline's estimated duration."""
 
         section_total = sum(
             section.estimated_seconds
             for section in outline.sections
         )
 
-        if section_total != outline.total_estimated_seconds:
+        if (
+            abs(section_total - outline.total_estimated_seconds)
+            > DURATION_TOLERANCE_SECONDS
+        ):
             raise ValueError(
                 "Outline duration mismatch: "
                 f"sections total {section_total}s, "
                 f"but outline reports "
-                f"{outline.total_estimated_seconds}s."
+                f"{outline.total_estimated_seconds}s "
+                f"(difference exceeds {DURATION_TOLERANCE_SECONDS}s)."
             )
 
-        target = target_duration_seconds
-
-        # Allow approximately ±15% around the target.
-        minimum = int(target * 0.85)
-        maximum = int(target * 1.15)
+        config = ProductionConfig(
+            target_duration_seconds=target_duration_seconds,
+            minimum_duration_seconds=(
+                minimum_duration_seconds
+                if minimum_duration_seconds is not None
+                else target_duration_seconds
+            ),
+        )
+        minimum = config.minimum_acceptable_duration_seconds
+        maximum = config.maximum_acceptable_duration_seconds
 
         if not minimum <= section_total <= maximum:
             raise ValueError(
                 "Outline duration is outside the acceptable range: "
                 f"{section_total}s "
-                f"(target: {target}s)."
+                f"(acceptable range: {minimum}-{maximum}s; "
+                f"target: {target_duration_seconds}s, "
+                f"minimum: {config.minimum_duration_seconds}s)."
             )
+
+        return outline.model_copy(update={
+            "target_duration_seconds": target_duration_seconds,
+            "total_estimated_seconds": section_total,
+        })
