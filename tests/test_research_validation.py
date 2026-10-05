@@ -38,6 +38,29 @@ def test_validation_fails_when_important_claim_has_no_source():
     assert "no source" in report.claims[0].issues[0].casefold()
 
 
+def test_validation_reviews_unknown_extra_reference_when_known_sources_exist():
+    report = validate_research(research_with_fact(
+        sources=["source_001", "https://unknown.example/article"],
+    ))
+
+    assert report.status == "REVIEW"
+    assert report.claims[0].status == "REVIEW"
+    assert any(
+        "Unknown source reference" in issue
+        for issue in report.claims[0].issues
+    )
+
+
+def test_validation_fails_important_claim_with_only_unknown_sources():
+    report = validate_research(research_with_fact(
+        sources=["https://unknown.example/article"],
+    ))
+
+    assert report.status == "FAIL"
+    assert report.claims[0].status == "FAIL"
+    assert "Unknown source reference" in report.claims[0].issues[0]
+
+
 def test_validation_reviews_low_confidence_claims():
     research = research_with_fact()
     research.key_facts[0].confidence = "low"
