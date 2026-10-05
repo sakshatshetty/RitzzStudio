@@ -99,6 +99,42 @@ def test_resume_detects_missing_or_modified_completed_artifact(tmp_path):
         store.resume("prod-123")
 
 
+def test_resume_migrates_legacy_shared_render_and_metadata_archive(tmp_path):
+    artifact_root = tmp_path / "artifacts"
+    artifact_root.mkdir()
+    store = ProductionStateStore(artifact_root / "production_state.json", artifact_root)
+    store.initialize("prod-123")
+
+    archive = artifact_root / "rendered-project.tar.gz"
+    archive.write_bytes(b"render checkpoint")
+    store.start_stage("render_video")
+    store.complete_stage("render_video", ["rendered-project.tar.gz"])
+
+    archive.write_bytes(b"metadata checkpoint")
+    metadata = artifact_root / "metadata_packaging.json"
+    metadata.write_text('{"status": "COMPLETE"}', encoding="utf-8")
+    store.start_stage("metadata_packaging")
+    store.complete_stage(
+        "metadata_packaging",
+        ["metadata_packaging.json", "rendered-project.tar.gz"],
+    )
+
+    resumed = store.resume("prod-123")
+
+    metadata_archive = artifact_root / "metadata-project.tar.gz"
+    assert metadata_archive.read_bytes() == archive.read_bytes()
+    assert (
+        resumed["stages"]["render_video"]["artifacts"][0]["sha256"]
+        == resumed["stages"]["metadata_packaging"]["artifacts"][1]["sha256"]
+    )
+    assert resumed["stages"]["metadata_packaging"]["artifacts"][1]["path"] == (
+        "metadata-project.tar.gz"
+    )
+    assert store.resume("prod-123")["stages"]["metadata_packaging"]["status"] == (
+        "completed"
+    )
+
+
 def test_private_upload_intent_allows_only_its_original_attempt(tmp_path):
     state_file = tmp_path / "production_state.json"
     store = ProductionStateStore(state_file)
