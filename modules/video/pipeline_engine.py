@@ -1,8 +1,10 @@
 import inspect
+import hashlib
 import json
 import os
 import shutil
 import time
+from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Mapping
 from itertools import pairwise
 from pathlib import Path
@@ -29,7 +31,7 @@ from modules.video.pipeline_models import (
     VideoProductionResult,
 )
 from modules.video.pipeline_state import load_pipeline_state, save_pipeline_state
-from modules.video.qa_models import TechnicalQAResult
+from modules.video.qa_models import SceneQAResult, TechnicalQAResult
 from modules.video.render_engine import (
     FFmpegVideoRenderer,
 )
@@ -198,7 +200,10 @@ class VideoProductionPipeline:
             usage.setdefault("stages", [])
             current_stage = "asset_validation"
             usage["stages"].append({"stage": current_stage, "started_at": time.time()})
-            self._validate_assets(request)
+            self._validate_assets(
+                request,
+                allow_image_repair=request.enable_image_ai_qa,
+            )
             self._save_usage(usage, usage_file, current_stage)
 
             project_directory = self._project_directory(request.storyboard_file)
@@ -496,19 +501,156 @@ class VideoProductionPipeline:
         request: VideoProductionRequest,
         project_directory: Path,
         repair_attempt: int = 1,
+        cached_reviews: dict[str, dict] | None = None,
+        usage_metrics: dict[str, int | float] | None = None,
     ) -> QAStatus:
         from modules.image.character_profile import load_character_profile
         from modules.image.models import ImageGenerationRequest
         from modules.image.prompt_builder import ImagePromptBuilder
         from modules.storyboard.engine import StoryboardEngine
         from modules.video.pilot_qa import OpenAIImageEditorialReviewer, _validate_png
+        from modules.video.image_asset_qa import (
+            duplicate_scene_findings,
+            expected_image_size,
+            inspect_image_asset,
+        )
+        from modules.video.sync_engine import VideoSynchronizationEngine
 
+        qa_started = time.monotonic()
         storyboard_path = Path(request.storyboard_file)
         storyboard = StoryboardEngine.load_storyboard(storyboard_path)
         image_directory = Path(request.image_directory)
         reviewer = self.image_reviewer or OpenAIImageEditorialReviewer()
         scenes = list(storyboard.scenes)
-        first_reviews = {}
+        first_reviews: dict[int, SceneQAResult] = {}
+        usage_metrics = usage_metrics if usage_metrics is not None else {
+            "ai_reviewed_scenes": 0,
+            "ai_batch_count": 0,
+            "ai_retry_count": 0,
+            "images_regenerated": 0,
+            "deterministic_checked": 0,
+            "deterministic_failed": 0,
+            "started_monotonic": time.monotonic(),
+        }
+        cache_file = project_directory / "qa" / "image_editorial_cache.json"
+        if cached_reviews is None:
+            if cache_file.is_file():
+                cache_document = json.loads(cache_file.read_text(encoding="utf-8"))
+                if (
+                    not isinstance(cache_document, dict)
+                    or cache_document.get("version") != 1
+                    or not isinstance(cache_document.get("scenes"), dict)
+                ):
+                    raise ValueError(f"Invalid semantic QA cache: {cache_file}")
+                cached_reviews = cache_document["scenes"]
+            else:
+                cached_reviews = {}
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+
+        scene_ids = [scene.scene_id for scene in scenes]
+        structure_issues: list[str] = []
+        if len(set(scene_ids)) != len(scene_ids):
+            structure_issues.append("QA_INPUT_INVALID: duplicate scene IDs in storyboard.")
+        if any(
+            not scene.scene_id.startswith("scene_")
+            or not scene.narration.strip()
+            or not scene.visual_description.strip()
+            or not scene.image_prompt.strip()
+            for scene in scenes
+        ):
+            structure_issues.append(
+                "QA_INPUT_INVALID: scene ID, full narration, visual description, or image prompt is missing."
+            )
+        if any(
+            right.start_seconds < left.start_seconds
+            for left, right in pairwise(scenes)
+        ):
+            structure_issues.append("QA_INPUT_INVALID: storyboard scenes are not in timestamp order.")
+        for scene in scenes:
+            word = scene.text_overlay.strip()
+            if word and (
+                len(word.split()) != 1
+                or not word.isupper()
+                or len(word) > 20
+            ):
+                structure_issues.append(
+                    f"QA_INPUT_INVALID: {scene.scene_id} editorial must be one uppercase word of at most 20 characters."
+                )
+
+        alignment = VideoSynchronizationEngine.load_narration_alignment(
+            request.narration_result_file
+        )
+        compact_narration = "".join(
+            VideoSynchronizationEngine._compact_text(scene.narration)
+            for scene in scenes
+        )
+        compact_alignment = VideoSynchronizationEngine._compact_text(
+            "".join(alignment.characters)
+        )
+        if compact_narration != compact_alignment:
+            structure_issues.append(
+                "QA_INPUT_INVALID: concatenated full scene narration does not exactly cover the narration alignment."
+            )
+        if structure_issues:
+            record_stage_qa(
+                project_directory,
+                QAStageResult(
+                    stage="image_editorial_qa",
+                    status="FAIL",
+                    findings=structure_issues,
+                    recommendations=[
+                        "Repair the storyboard or narration-alignment input before semantic QA; no image was regenerated."
+                    ],
+                    details={"failure_class": "input_data"},
+                    reviewer="deterministic",
+                    attempt=repair_attempt,
+                ),
+            )
+            return "FAIL"
+
+        expected_width, expected_height = expected_image_size()
+        image_findings: dict[int, str] = {}
+        image_hashes: list[int | None] = []
+        for index, scene in enumerate(scenes):
+            usage_metrics["deterministic_checked"] += 1
+            image_path = image_directory / f"{scene.scene_id}.png"
+            try:
+                inspection = inspect_image_asset(image_path)
+                if (
+                    inspection.width != expected_width
+                    or inspection.height != expected_height
+                    or inspection.width * 9 != inspection.height * 16
+                ):
+                    raise ValueError(
+                        f"expected {expected_width}x{expected_height} 16:9 PNG; "
+                        f"received {inspection.width}x{inspection.height}"
+                    )
+                image_hashes.append(inspection.difference_hash)
+            except (OSError, ValueError) as exc:
+                image_hashes.append(None)
+                image_findings[index] = (
+                    f"{scene.scene_id}: deterministic image check failed: {exc}"
+                )
+        try:
+            similarity_threshold = float(
+                os.getenv("RITZZ_QA_IMAGE_SIMILARITY_THRESHOLD", "0.97")
+            )
+            duplicate_window = int(
+                os.getenv("RITZZ_QA_NEAR_DUPLICATE_WINDOW", "2")
+            )
+        except ValueError as exc:
+            raise ValueError(
+                "QA image similarity threshold/window configuration is invalid."
+            ) from exc
+        duplicate_findings = duplicate_scene_findings(
+            scene_ids,
+            image_hashes,
+            threshold=similarity_threshold,
+            window=duplicate_window,
+        )
+        for index, finding in duplicate_findings.items():
+            image_findings[index] = finding
+        usage_metrics["deterministic_failed"] += len(image_findings)
 
         def editorial_candidates(index: int) -> list[dict[str, str]]:
             return [
@@ -529,8 +671,132 @@ class VideoProductionPipeline:
                 **kwargs,
             )
 
-        for index in range(len(scenes)):
-            first_reviews[index] = review_scene(index)
+        def cache_key(index: int) -> str:
+            image_path = image_directory / f"{scenes[index].scene_id}.png"
+            payload = {
+                "reviewer": (
+                    f"{type(reviewer).__module__}.{type(reviewer).__qualname__}:"
+                    f"{getattr(reviewer, 'model', 'default')}"
+                ),
+                "scene": scenes[index].model_dump(
+                    include={
+                        "scene_id",
+                        "narration",
+                        "visual_description",
+                        "image_prompt",
+                        "text_overlay",
+                        "callout_position",
+                    }
+                ),
+            }
+            digest = hashlib.sha256(image_path.read_bytes())
+            digest.update(json.dumps(payload, sort_keys=True).encode("utf-8"))
+            return digest.hexdigest()
+
+        def save_review_cache() -> None:
+            temporary_cache = cache_file.with_suffix(".tmp")
+            temporary_cache.write_text(
+                json.dumps(
+                    {"version": 1, "scenes": cached_reviews},
+                    indent=2,
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            temporary_cache.replace(cache_file)
+
+        def review_scenes(indexes: list[int]) -> dict[int, SceneQAResult]:
+            if not indexes:
+                return {}
+            batch_method = getattr(reviewer, "review_batch", None)
+            if not callable(batch_method):
+                return {index: review_scene(index) for index in indexes}
+            try:
+                batch_size = int(os.getenv(
+                    "RITZZ_SEMANTIC_QA_BATCH_SIZE",
+                    os.getenv("SEMANTIC_QA_BATCH_SIZE", "4"),
+                ))
+                concurrency = int(os.getenv("RITZZ_SEMANTIC_QA_CONCURRENCY", "2"))
+                batch_retries = int(os.getenv("RITZZ_SEMANTIC_QA_BATCH_RETRIES", "1"))
+            except ValueError as exc:
+                raise ValueError("Semantic QA batch settings must be positive integers.") from exc
+            if batch_size < 1 or concurrency < 1 or batch_retries < 0:
+                raise ValueError("Semantic QA batch settings must be positive integers.")
+            concurrency = min(concurrency, 4)
+            batches = [
+                indexes[offset:offset + batch_size]
+                for offset in range(0, len(indexes), batch_size)
+            ]
+            items_by_batch = [
+                [
+                    (
+                        image_directory / f"{scenes[index].scene_id}.png",
+                        scenes[index],
+                        editorial_candidates(index),
+                    )
+                    for index in batch
+                ]
+                for batch in batches
+            ]
+
+            def run_batch(items):
+                for attempt in range(batch_retries + 1):
+                    try:
+                        return batch_method(items)
+                    except Exception as exc:
+                        if attempt >= batch_retries:
+                            raise RuntimeError(
+                                "Semantic QA batch failed after "
+                                f"{attempt + 1} attempt(s): "
+                                f"{[scene.scene_id for _, scene, _ in items]}"
+                            ) from exc
+                        usage_metrics["ai_retry_count"] += 1
+                        time.sleep(min(1.0, 0.25 * (attempt + 1)))
+                raise RuntimeError("Semantic QA batch retry loop ended unexpectedly.")
+
+            with ThreadPoolExecutor(max_workers=concurrency) as executor:
+                batch_results = list(executor.map(run_batch, items_by_batch))
+            usage_metrics["ai_batch_count"] += len(batches)
+            usage_metrics["ai_reviewed_scenes"] += len(indexes)
+            return {
+                index: result
+                for batch, results in zip(batches, batch_results, strict=True)
+                for index, result in zip(batch, results, strict=True)
+            }
+
+        pending_reviews: list[int] = []
+        for index, scene in enumerate(scenes):
+            if index in image_findings:
+                first_reviews[index] = SceneQAResult(
+                    scene_id=scene.scene_id,
+                    status="FAIL",
+                    narration_image="FAIL",
+                    narration_description="PASS",
+                    editorial_context="PASS",
+                    rationale=image_findings[index],
+                    correction_prompt=image_findings[index],
+                )
+                continue
+            fingerprint = cache_key(index)
+            saved = cached_reviews.get(scene.scene_id)
+            if (
+                isinstance(saved, dict)
+                and saved.get("fingerprint") == fingerprint
+                and isinstance(saved.get("result"), dict)
+            ):
+                cached_result = SceneQAResult.model_validate(saved["result"])
+                if cached_result.status == "PASS":
+                    first_reviews[index] = cached_result
+                    continue
+            pending_reviews.append(index)
+        first_reviews.update(review_scenes(pending_reviews))
+        for index, review in first_reviews.items():
+            if review.status == "PASS":
+                cached_reviews[scenes[index].scene_id] = {
+                    "fingerprint": cache_key(index),
+                    "result": review.model_dump(mode="json"),
+                }
+        save_review_cache()
 
         moves: dict[int, int] = {}
         unresolved_editorial: list[str] = []
@@ -592,6 +858,14 @@ class VideoProductionPipeline:
                 }
             )
             affected_indices.update({index, target_index})
+            suggested_fixes[index] = (
+                "Remove the former editorial word from this scene and make the "
+                "illustration fit its narration without any text."
+            )
+            suggested_fixes[target_index] = (
+                f"Render the exact uppercase editorial word {word} clearly and "
+                "contextually in this scene."
+            )
 
         for index, review in first_reviews.items():
             review_statuses = (
@@ -735,6 +1009,17 @@ class VideoProductionPipeline:
                 )
             candidate_path = Path(result.file_path)
             _validate_png(candidate_path)
+            inspection = inspect_image_asset(candidate_path)
+            if (
+                inspection.width != expected_width
+                or inspection.height != expected_height
+                or inspection.width * 9 != inspection.height * 16
+            ):
+                raise RuntimeError(
+                    f"Repair for {scene.scene_id} produced "
+                    f"{inspection.width}x{inspection.height}; expected "
+                    f"{expected_width}x{expected_height}."
+                )
             if original_path.is_file():
                 originals_directory = attempt_directory / "originals"
                 originals_directory.mkdir(parents=True, exist_ok=True)
@@ -742,6 +1027,7 @@ class VideoProductionPipeline:
             os.replace(candidate_path, original_path)
             scenes[index] = scene.model_copy(update={"image_prompt": correction_prompt})
             retries[index] = correction_prompt
+            usage_metrics["images_regenerated"] += 1
 
         if affected_indices:
             updated_storyboard = storyboard.model_copy(update={"scenes": scenes})
@@ -761,12 +1047,57 @@ class VideoProductionPipeline:
                         )
                 ImageBatchEngine.save_manifest(assets, manifest_path)
 
-        retry_reviews = {
-            index: review_scene(index)
-            for index in sorted(affected_indices)
-        }
+        retry_reviews = review_scenes(sorted(affected_indices))
         final_reviews = dict(first_reviews)
         final_reviews.update(retry_reviews)
+        for index, review in retry_reviews.items():
+            if review.status == "PASS":
+                cached_reviews[scenes[index].scene_id] = {
+                    "fingerprint": cache_key(index),
+                    "result": review.model_dump(mode="json"),
+                }
+        save_review_cache()
+        final_hashes: list[int | None] = []
+        remaining_image_findings: dict[int, str] = {}
+        for index, scene in enumerate(scenes):
+            image_path = image_directory / f"{scene.scene_id}.png"
+            try:
+                inspection = inspect_image_asset(image_path)
+                if (
+                    inspection.width != expected_width
+                    or inspection.height != expected_height
+                    or inspection.width * 9 != inspection.height * 16
+                ):
+                    raise ValueError(
+                        f"expected {expected_width}x{expected_height} 16:9 PNG; "
+                        f"received {inspection.width}x{inspection.height}"
+                    )
+                final_hashes.append(inspection.difference_hash)
+            except (OSError, ValueError) as exc:
+                final_hashes.append(None)
+                remaining_image_findings[index] = (
+                    f"{scene.scene_id}: deterministic image check failed after repair: {exc}"
+                )
+        remaining_duplicate_findings = duplicate_scene_findings(
+            scene_ids,
+            final_hashes,
+            threshold=similarity_threshold,
+            window=duplicate_window,
+        )
+        remaining_image_findings.update(remaining_duplicate_findings)
+        for index, finding in remaining_image_findings.items():
+            final_reviews[index] = SceneQAResult(
+                scene_id=scenes[index].scene_id,
+                status="FAIL",
+                narration_image="FAIL",
+                narration_description="PASS",
+                editorial_context="PASS",
+                rationale=finding,
+                correction_prompt=finding,
+            )
+            if index not in affected_indices:
+                affected_indices.add(index)
+                suggested_fixes[index] = finding
         unresolved = list(unresolved_editorial)
         for index, review in final_reviews.items():
             if review.status == "FAIL" or review.narration_image == "FAIL" or review.narration_description == "FAIL" or review.editorial_context == "FAIL":
@@ -790,15 +1121,57 @@ class VideoProductionPipeline:
             else "PASS"
         )
         checks = {
+            f"{scenes[index].scene_id}.file_check": (
+                "FAIL" if index in remaining_image_findings else "PASS"
+            )
+            for index in range(len(scenes))
+        }
+        checks.update({
+            f"{scenes[index].scene_id}.image_readability": (
+                "FAIL" if index in remaining_image_findings else "PASS"
+            )
+            for index in range(len(scenes))
+        })
+        checks.update({
+            f"{scenes[index].scene_id}.dimension_check": (
+                "FAIL" if index in remaining_image_findings else "PASS"
+            )
+            for index in range(len(scenes))
+        })
+        checks.update({
+            f"{scenes[index].scene_id}.duplicate_check": (
+                "FAIL" if index in remaining_duplicate_findings else "PASS"
+            )
+            for index in range(len(scenes))
+        })
+        checks.update({
+            f"{scenes[index].scene_id}.narration_input": "PASS"
+            for index in range(len(scenes))
+        })
+        checks.update({
             f"{scenes[index].scene_id}.narration_image": review.narration_image
             for index, review in final_reviews.items()
-        }
+        })
         checks.update({
             f"{scenes[index].scene_id}.narration_description": review.narration_description
             for index, review in final_reviews.items()
         })
         checks.update({
             f"{scenes[index].scene_id}.editorial_context": review.editorial_context
+            for index, review in final_reviews.items()
+        })
+        checks.update({
+            f"{scenes[index].scene_id}.editorial_presence": (
+                review.editorial_context
+                if scenes[index].text_overlay.strip()
+                else "PASS"
+            )
+            for index, review in final_reviews.items()
+        })
+        checks.update({
+            f"{scenes[index].scene_id}.visual_intent_match": (
+                review.narration_description
+            )
             for index, review in final_reviews.items()
         })
         record_stage_qa(
@@ -822,6 +1195,44 @@ class VideoProductionPipeline:
                 ],
                 reviewer="openai_vision",
                 attempt=repair_attempt,
+                metrics={
+                    "total_scenes": len(scenes),
+                    "deterministic_checked": int(usage_metrics["deterministic_checked"]),
+                    "deterministic_failed": int(usage_metrics["deterministic_failed"]),
+                    "ai_reviewed_scenes": int(usage_metrics["ai_reviewed_scenes"]),
+                    "ai_batches": int(usage_metrics["ai_batch_count"]),
+                    "ai_retries": int(usage_metrics["ai_retry_count"]),
+                    "images_regenerated": int(usage_metrics["images_regenerated"]),
+                    "final_passed": sum(
+                        review.status == "PASS" for review in final_reviews.values()
+                    ),
+                    "requiring_review": sum(
+                        review.status == "REVIEW" for review in final_reviews.values()
+                    ),
+                    "failed_scenes": sum(
+                        review.status == "FAIL" for review in final_reviews.values()
+                    ),
+                    "elapsed_seconds": round(
+                        time.monotonic() - float(usage_metrics["started_monotonic"]),
+                        3,
+                    ),
+                },
+                details={
+                    "failure_class": (
+                        "image_asset"
+                        if remaining_image_findings
+                        else "semantic"
+                        if status != "PASS"
+                        else "none"
+                    ),
+                    "semantic_model": getattr(reviewer, "model", "custom"),
+                    **{
+                        f"{scene.scene_id}.editorial_presence": (
+                            "REQUIRED" if scene.text_overlay.strip() else "NOT_REQUIRED"
+                        )
+                        for scene in scenes
+                    },
+                },
                 recommendations=(
                     [
                         f"{scenes[index].scene_id}: proposed fix — {correction}"
@@ -843,6 +1254,8 @@ class VideoProductionPipeline:
                 request,
                 project_directory,
                 repair_attempt=repair_attempt + 1,
+                cached_reviews=cached_reviews,
+                usage_metrics=usage_metrics,
             )
         return status
 
@@ -859,7 +1272,11 @@ class VideoProductionPipeline:
         return self._build_motion_plan(request, synchronized_plan)
 
     @staticmethod
-    def _validate_assets(request: VideoProductionRequest) -> None:
+    def _validate_assets(
+        request: VideoProductionRequest,
+        *,
+        allow_image_repair: bool = False,
+    ) -> None:
         image_dir = Path(request.image_directory)
         if not image_dir.is_dir():
             raise FileNotFoundError(f"Image directory not found: {image_dir}")
@@ -870,13 +1287,14 @@ class VideoProductionPipeline:
             if not image.is_file() or image.stat().st_size == 0:
                 missing.append(str(image))
                 continue
-            data = image.read_bytes()
-            if data[:8] != b"\x89PNG\r\n\x1a\n":
+            with image.open("rb") as image_stream:
+                signature = image_stream.read(8)
+            if signature != b"\x89PNG\r\n\x1a\n":
                 missing.append(f"{image} (invalid PNG)")
         audio = Path(request.audio_file) if request.audio_file else None
         if audio is not None and (not audio.is_file() or audio.stat().st_size == 0):
             raise FileNotFoundError(f"Audio file not found or empty: {audio}")
-        if missing:
+        if missing and not allow_image_repair:
             raise ValueError("Asset validation failed: " + "; ".join(missing))
 
     @staticmethod

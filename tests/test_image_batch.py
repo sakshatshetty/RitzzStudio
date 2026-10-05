@@ -255,10 +255,9 @@ def test_prompts_use_prompt_builder(
         in prompt
     )
 
-    assert "exact word will be composited into the final image after generation" in prompt
-    assert "Keep clear negative space near the lower-left" in prompt
-    assert "Do not render letters, words, captions, labels, or any other typography." in prompt
-    assert "CURIOSITY" not in prompt
+    assert "Render the exact editorial word CURIOSITY inside the illustration." in prompt
+    assert "This word is intentionally part of the generated image" in prompt
+    assert "Do not add any other letters, words, captions, labels, or typography." in prompt
 
 
 def test_prompt_without_editorial_text_does_not_request_text(
@@ -341,7 +340,7 @@ def test_prompts_use_different_camera_motion(
     )
 
 
-def test_editorial_words_are_composited_after_generation(
+def test_editorial_words_are_included_in_image_generation_prompt(
     tmp_path: Path,
 ) -> None:
     provider = MockImageProvider()
@@ -355,13 +354,9 @@ def test_editorial_words_are_composited_after_generation(
         output_directory=tmp_path,
     )
 
-    assert "CURIOSITY" not in requests[0].prompt
-    assert "SURPRISE" not in requests[1].prompt
-    assert "INJURY" not in requests[2].prompt
-    assert all(
-        "composited into the final image after generation" in request.prompt
-        for request in requests
-    )
+    assert "exact editorial word CURIOSITY" in requests[0].prompt
+    assert "exact editorial word SURPRISE" in requests[1].prompt
+    assert "exact editorial word INJURY" in requests[2].prompt
 
 
 def test_prompts_are_generated_from_scene_data(
@@ -428,11 +423,6 @@ def test_generate_all_images(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    overlays = []
-    monkeypatch.setattr(
-        "modules.image.batch.embed_editorial_word",
-        lambda image_path, word, **_kwargs: overlays.append((Path(image_path).name, word)),
-    )
     provider = MockImageProvider()
     image_engine = ImageEngine(provider)
     batch_engine = ImageBatchEngine(image_engine)
@@ -450,13 +440,8 @@ def test_generate_all_images(
 
     assert len(assets) == 3
     assert len(provider.calls) == 3
-    assert overlays == [
-        ("scene_001.png", "CURIOSITY"),
-        ("scene_002.png", "SURPRISE"),
-        ("scene_003.png", "INJURY"),
-    ]
-    assert "CURIOSITY" not in provider.calls[0].prompt
-    assert "DO NOT DRAW EDITORIAL CALLOUT TEXT." in provider.calls[0].prompt
+    assert "CURIOSITY" in provider.calls[0].prompt
+    assert "DO NOT DRAW EDITORIAL CALLOUT TEXT." not in provider.calls[0].prompt
 
     for asset in assets:
         assert asset.status == "completed"
@@ -471,7 +456,6 @@ def test_scene_to_image_mapping(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("modules.image.batch.embed_editorial_word", lambda *_args, **_kwargs: None)
     provider = MockImageProvider()
     image_engine = ImageEngine(provider)
     batch_engine = ImageBatchEngine(image_engine)
@@ -497,7 +481,6 @@ def test_failed_scene_is_preserved(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("modules.image.batch.embed_editorial_word", lambda *_args, **_kwargs: None)
     provider = MockImageProvider(
         fail_scene_id="scene_002"
     )
@@ -528,7 +511,6 @@ def test_save_and_load_manifest(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("modules.image.batch.embed_editorial_word", lambda *_args, **_kwargs: None)
     provider = MockImageProvider()
     image_engine = ImageEngine(provider)
     batch_engine = ImageBatchEngine(image_engine)
@@ -578,7 +560,6 @@ def test_output_files_use_image_ids(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("modules.image.batch.embed_editorial_word", lambda *_args, **_kwargs: None)
     provider = MockImageProvider()
     image_engine = ImageEngine(provider)
     batch_engine = ImageBatchEngine(image_engine)

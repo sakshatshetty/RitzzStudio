@@ -204,15 +204,16 @@ class ImagePromptBuilder:
                 f"Props: {', '.join(scene.props[:3])}"
             )
 
-        has_editorial_text = bool(
-            scene.text_overlay.strip()
-        )
+        editorial_word = scene.text_overlay.strip()
+        has_editorial_text = bool(editorial_word)
 
         if has_editorial_text:
             parts.append(
-                "Keep clear negative space near the lower-left for one editorial word. "
-                "The exact word will be composited into the final image after generation. "
-                "Do not render letters, words, captions, labels, or any other typography."
+                f"Render the exact editorial word {editorial_word} inside the illustration. "
+                "The word must be uppercase, spelled exactly as provided, clearly legible, "
+                "and placed near the lower-left as a single editorial callout. "
+                "This word is intentionally part of the generated image, not a subtitle. "
+                "Do not add any other letters, words, captions, labels, or typography."
             )
             parts.append(
                 self.EDITORIAL_ILLUSTRATION_COLOR_INSTRUCTION
@@ -236,11 +237,7 @@ class ImagePromptBuilder:
 
         if has_editorial_text:
             parts.append(
-                self.RITZZ_NEGATIVE_STYLE
-            )
-
-            parts.append(
-                self.RITZZ_STRICT_NO_TEXT
+                self.RITZZ_NEGATIVE_STYLE_WITH_EDITORIAL_TEXT
             )
         else:
             parts.append(

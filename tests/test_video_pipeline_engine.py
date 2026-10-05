@@ -1,6 +1,8 @@
 import json
 import shutil
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -51,6 +53,7 @@ def create_images(
         "green",
         "blue",
     ]
+    image_size = "320x180"
 
     for index, color in enumerate(
         colors,
@@ -67,7 +70,7 @@ def create_images(
             "-f",
             "lavfi",
             "-i",
-            f"color=c={color}:s=320x180",
+            f"color=c={color}:s={image_size}",
             "-frames:v",
             "1",
             str(output_file),
@@ -413,7 +416,12 @@ def test_complete_three_scene_pipeline(
     assert state["stages"]["render"]["status"] == "completed"
 
 
-def test_image_ai_qa_moves_editorial_and_repairs_impacted_images(tmp_path: Path) -> None:
+def test_image_ai_qa_moves_editorial_and_repairs_impacted_images(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("RITZZ_QA_IMAGE_WIDTH", "320")
+    monkeypatch.setenv("RITZZ_QA_IMAGE_HEIGHT", "180")
     image_directory = create_images(tmp_path)
     audio_file = create_audio(tmp_path)
     storyboard_file = create_storyboard(tmp_path, audio_file)
@@ -464,7 +472,7 @@ def test_image_ai_qa_moves_editorial_and_repairs_impacted_images(tmp_path: Path)
 
         def generate(self, request):
             output = Path(request.output_directory) / f"{request.image_id}.png"
-            shutil.copyfile(image_directory / "scene_003.png", output)
+            shutil.copyfile(image_directory / f"{request.scene_id}.png", output)
             self.generated_scenes.append(request.scene_id)
             return ImageGenerationResult(
                 image_id=request.image_id,
@@ -504,9 +512,89 @@ def test_image_ai_qa_moves_editorial_and_repairs_impacted_images(tmp_path: Path)
     assert [attempt.status for attempt in report.stages["image_editorial_qa"]] == ["FAIL", "PASS"]
 
 
+def test_image_ai_qa_batches_with_bounded_concurrency_and_retries_failed_batch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("RITZZ_QA_IMAGE_WIDTH", "320")
+    monkeypatch.setenv("RITZZ_QA_IMAGE_HEIGHT", "180")
+    monkeypatch.setenv("RITZZ_SEMANTIC_QA_BATCH_SIZE", "1")
+    monkeypatch.setenv("RITZZ_SEMANTIC_QA_CONCURRENCY", "2")
+    monkeypatch.setenv("RITZZ_SEMANTIC_QA_BATCH_RETRIES", "1")
+    image_directory = create_images(tmp_path)
+    audio_file = create_audio(tmp_path)
+    storyboard_file = create_storyboard(tmp_path, audio_file)
+    alignment_file = create_alignment(tmp_path)
+
+    class Reviewer:
+        def __init__(self) -> None:
+            self.lock = threading.Lock()
+            self.active = 0
+            self.maximum_active = 0
+            self.calls_by_scene: dict[str, int] = {}
+
+        def review_batch(self, items):
+            with self.lock:
+                self.active += 1
+                self.maximum_active = max(self.maximum_active, self.active)
+                scene_ids = [scene.scene_id for _, scene, _ in items]
+                for scene_id in scene_ids:
+                    self.calls_by_scene[scene_id] = (
+                        self.calls_by_scene.get(scene_id, 0) + 1
+                    )
+                should_retry = (
+                    scene_ids == ["scene_002"]
+                    and self.calls_by_scene["scene_002"] == 1
+                )
+            try:
+                time.sleep(0.05)
+                if should_retry:
+                    raise RuntimeError("temporary reviewer failure")
+                return [
+                    SceneQAResult(
+                        scene_id=scene.scene_id,
+                        status="PASS",
+                        narration_image="PASS",
+                        narration_description="PASS",
+                        editorial_context="PASS",
+                        rationale=f"Reviewed full narration: {scene.narration}",
+                    )
+                    for _, scene, _ in items
+                ]
+            finally:
+                with self.lock:
+                    self.active -= 1
+
+    reviewer = Reviewer()
+    pipeline = VideoProductionPipeline(image_reviewer=reviewer)
+    request = pipeline.create_request(
+        storyboard_file=storyboard_file,
+        image_directory=image_directory,
+        narration_result_file=alignment_file,
+        audio_file=audio_file,
+        output_directory=tmp_path / "output",
+        enable_image_ai_qa=True,
+    )
+
+    assert pipeline._review_and_repair_images(request, tmp_path) == "PASS"
+    metrics = load_project_qa(tmp_path).stages["image_editorial_qa"][-1].metrics
+    assert reviewer.maximum_active == 2
+    assert reviewer.calls_by_scene == {
+        "scene_001": 1,
+        "scene_002": 2,
+        "scene_003": 1,
+    }
+    assert metrics["ai_batches"] == 3
+    assert metrics["ai_retries"] == 1
+    assert metrics["ai_reviewed_scenes"] == 3
+
+
 def test_image_ai_qa_preserves_uncertain_images_for_human_review(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("RITZZ_QA_IMAGE_WIDTH", "320")
+    monkeypatch.setenv("RITZZ_QA_IMAGE_HEIGHT", "180")
     image_directory = create_images(tmp_path)
     audio_file = create_audio(tmp_path)
     storyboard_file = create_storyboard(tmp_path, audio_file)
@@ -529,7 +617,7 @@ def test_image_ai_qa_preserves_uncertain_images_for_human_review(
 
         def generate(self, request):
             output = Path(request.output_directory) / f"{request.image_id}.png"
-            shutil.copyfile(image_directory / "scene_003.png", output)
+            shutil.copyfile(image_directory / f"{request.scene_id}.png", output)
             self.generated_scenes.append(request.scene_id)
             return ImageGenerationResult(
                 image_id=request.image_id,
@@ -561,19 +649,23 @@ def test_image_ai_qa_preserves_uncertain_images_for_human_review(
 
 def test_image_ai_qa_suggests_and_applies_fix_for_clear_failure(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("RITZZ_QA_IMAGE_WIDTH", "320")
+    monkeypatch.setenv("RITZZ_QA_IMAGE_HEIGHT", "180")
     image_directory = create_images(tmp_path)
     audio_file = create_audio(tmp_path)
     storyboard_file = create_storyboard(tmp_path, audio_file)
     alignment_file = create_alignment(tmp_path)
-    review_attempts = 0
+    review_attempts: dict[str, int] = {}
 
     class Reviewer:
         def review(self, image_path, scene, editorial_candidates=None):
-            nonlocal review_attempts
+            review_attempts[scene.scene_id] = (
+                review_attempts.get(scene.scene_id, 0) + 1
+            )
             if scene.scene_id == "scene_001":
-                review_attempts += 1
-                if review_attempts == 1:
+                if review_attempts[scene.scene_id] == 1:
                     return SceneQAResult(
                         scene_id=scene.scene_id,
                         status="FAIL",
@@ -598,7 +690,7 @@ def test_image_ai_qa_suggests_and_applies_fix_for_clear_failure(
 
         def generate(self, request):
             output = Path(request.output_directory) / f"{request.image_id}.png"
-            shutil.copyfile(image_directory / "scene_003.png", output)
+            shutil.copyfile(image_directory / f"{request.scene_id}.png", output)
             self.generated_scenes.append(request.scene_id)
             self.prompts.append(request.prompt)
             return ImageGenerationResult(
@@ -627,6 +719,11 @@ def test_image_ai_qa_suggests_and_applies_fix_for_clear_failure(
 
     assert status == "PASS"
     assert provider.generated_scenes == ["scene_001"]
+    assert review_attempts == {
+        "scene_001": 2,
+        "scene_002": 1,
+        "scene_003": 1,
+    }
     assert "The image shows a ship instead of the water source." in provider.prompts[0]
     attempts = load_project_qa(tmp_path).stages["image_editorial_qa"]
     assert [attempt.status for attempt in attempts] == ["FAIL", "PASS"]
