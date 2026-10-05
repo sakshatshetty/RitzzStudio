@@ -767,7 +767,7 @@ jobs:
         run: python -m pip install -r requirements.txt
 
       - name: Download failed content checkpoint for retry
-        if: ${{ needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '2' && endsWith(needs.restore-production.outputs.source_artifact, '-content_preparation') }}
+        if: ${{ needs.restore-production.outputs.effective_mode == 'RESUME' && endsWith(needs.restore-production.outputs.source_artifact, '-content_preparation') }}
         uses: actions/download-artifact@v4
         with:
           name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-content_preparation
@@ -776,6 +776,7 @@ jobs:
           path: .pipeline-artifacts/resume-checkpoint
 
       - name: Download approved topic
+        if: ${{ !(needs.restore-production.outputs.effective_mode == 'RESUME' && endsWith(needs.restore-production.outputs.source_artifact, '-content_preparation')) }}
         uses: actions/download-artifact@v4
         with:
           name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-topic_selection
@@ -1151,7 +1152,7 @@ jobs:
   metadata-packaging:
     name: Package metadata from completed video
     needs: [video-approval, render-video, restore-production]
-    if: ${{ always() && needs.restore-production.result == 'success' && ((needs.render-video.result == 'success' && needs.video-approval.result == 'success') || (needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index <= 7)) }}
+    if: ${{ always() && needs.restore-production.result == 'success' && ((needs.render-video.result == 'success' && needs.video-approval.result == 'success') || (needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '7')) }}
     runs-on: ubuntu-latest
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -1242,7 +1243,7 @@ jobs:
   thumbnail-packaging:
     name: Create and validate selected thumbnail
     needs: [metadata-packaging, restore-production]
-    if: ${{ always() && needs.restore-production.result == 'success' && ((needs.metadata-packaging.result == 'success' && needs.restore-production.outputs.effective_mode == 'NEW') || (needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index <= 8) || (needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.rerun_from_stage == 'thumbnail_packaging')) }}
+    if: ${{ always() && needs.restore-production.result == 'success' && (needs.metadata-packaging.result == 'success' || (needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '8') || (needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.rerun_from_stage == 'thumbnail_packaging')) }}
     runs-on: ubuntu-latest
     permissions:
       actions: read

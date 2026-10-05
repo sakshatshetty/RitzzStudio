@@ -151,3 +151,54 @@ def test_workflow_dispatch_exposes_project_id_and_rerun_stage_inputs():
     for stage in STAGE_INPUTS:
         assert f"          - {stage}" in workflow_text
     assert "  restore-production:" in workflow_text
+
+
+def test_failed_content_resume_uses_checkpoint_topic_artifacts():
+    workflow_path = (
+        Path(__file__).parents[1]
+        / ".github"
+        / "workflows"
+        / "ritzz-pipeline.yml"
+    )
+    workflow_text = workflow_path.read_text(encoding="utf-8")
+    content_job = workflow_text.split("  content-preparation:\n", 1)[1].split(
+        "\n  voice-generation:",
+        1,
+    )[0]
+
+    failed_checkpoint_condition = (
+        "if: ${{ needs.restore-production.outputs.effective_mode == 'RESUME' "
+        "&& endsWith(needs.restore-production.outputs.source_artifact, "
+        "'-content_preparation') }}"
+    )
+    assert failed_checkpoint_condition in content_job
+    assert (
+        "if: ${{ !(needs.restore-production.outputs.effective_mode == 'RESUME' "
+        "&& endsWith(needs.restore-production.outputs.source_artifact, "
+        "'-content_preparation')) }}"
+    ) in content_job
+    assert "resume-checkpoint" in content_job
+    assert 'cp -a "$checkpoint/." .pipeline-artifacts/' in content_job
+
+
+def test_later_packaging_jobs_only_run_at_their_resume_stage():
+    workflow_path = (
+        Path(__file__).parents[1]
+        / ".github"
+        / "workflows"
+        / "ritzz-pipeline.yml"
+    )
+    workflow_text = workflow_path.read_text(encoding="utf-8")
+    metadata_job = workflow_text.split("  metadata-packaging:\n", 1)[1].split(
+        "\n  thumbnail-packaging:",
+        1,
+    )[0]
+    thumbnail_job = workflow_text.split("  thumbnail-packaging:\n", 1)[1].split(
+        "\n  packaging-approval:",
+        1,
+    )[0]
+
+    assert "resume_from_index == '7'" in metadata_job
+    assert "resume_from_index <= 7" not in metadata_job
+    assert "resume_from_index == '8'" in thumbnail_job
+    assert "resume_from_index <= 8" not in thumbnail_job
