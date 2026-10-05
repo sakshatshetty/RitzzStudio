@@ -47,7 +47,13 @@ def test_editorial_word_is_composited_into_png(tmp_path: Path):
     make_png(image)
     original = image.read_bytes()
 
-    result = embed_editorial_word(image, "HISTORY", ffmpeg_path=FFMPEG, font_path=FONT)
+    result = embed_editorial_word(
+        image,
+        "HISTORY",
+        ffmpeg_path=FFMPEG,
+        font_path=FONT,
+        position="top_right",
+    )
 
     assert result == image
     assert image.read_bytes() != original

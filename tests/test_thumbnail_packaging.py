@@ -40,7 +40,7 @@ def _concepts():
             ),
             ThumbnailConcept(
                 concept_id="ignored-c",
-                visual_concept="A tiny stickman pirate dramatically swaps an eye patch.",
+                visual_concept="A large stickman pirate dramatically swaps an eye patch.",
                 main_character_or_object="A doodle pirate holding an eye patch",
                 situation="The pirate reacts to a sudden burst of sunlight.",
                 text="DARK TO LIGHT",
@@ -406,10 +406,30 @@ def test_ffmpeg_composer_receives_exact_approved_text_and_renders_jpeg(
     filter_text = captured["command"][captured["command"].index("-vf") + 1]
     assert "drawtext=" in filter_text
     assert "fontcolor=yellow" in filter_text
-    assert "borderw=6:bordercolor=black" in filter_text
+    assert "borderw=8:bordercolor=black" in filter_text
+    assert f"fontsize={thumbnail_packaging.THUMBNAIL_TEXT_FONT_SIZE}" in filter_text
+    assert "box=" not in filter_text
     assert captured["rendered_text"] == "TWO EYES?"
     assert result == output
     assert output.read_bytes() == b"composited-jpeg"
+
+
+def test_visually_similar_thumbnail_concepts_are_rejected(tmp_path):
+    project = _project(tmp_path)
+    draft = _concepts()
+    draft.concepts[1] = draft.concepts[0].model_copy(
+        update={
+            "concept_id": "near-duplicate",
+            "text": "PATCH SECRET",
+        }
+    )
+
+    with pytest.raises(ValueError, match="visually distinct|differ in focal object"):
+        _engine(concepts=FakeConceptGenerator(draft)).create_concepts(
+            project,
+            production_id="production-1",
+            project_id="20261005_001",
+        )
 
 
 def test_thumbnail_workflow_stage_is_after_metadata_and_before_final_approval():

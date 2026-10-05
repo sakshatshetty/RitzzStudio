@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import ClassVar
 
 from modules.image.prompt_builder import ImagePromptBuilder
 from modules.storyboard.editorial_planner import (
@@ -65,9 +66,15 @@ class DynamicStoryboardEngine:
         ("important", "CLUE"),
         ("historical sources", "HISTORY"),
         ("historical evidence", "EVIDENCE"),
+        ("historians and museums", "EVIDENCE"),
         ("well documented", "EVIDENCE"),
         ("myth spread", "MYTH"),
+        ("gets repeated in classrooms", "MYTH"),
         ("myth", "MYTH"),
+        ("assume", "ASSUMPTION"),
+        ("dark below deck", "DARKNESS"),
+        ("difference between", "CONTRAST"),
+        ("historical record", "RECORD"),
         ("before", "BEFORE"),
         ("after", "AFTER"),
         ("pirate culture", "CULTURE"),
@@ -96,7 +103,7 @@ class DynamicStoryboardEngine:
         ("common assumption", "ASSUMPTION"),
     )
 
-    HIGH_VALUE_WORDS = {
+    HIGH_VALUE_WORDS: ClassVar[set[str]] = {
         "mystery",
         "secret",
         "truth",
@@ -119,6 +126,9 @@ class DynamicStoryboardEngine:
         "adaptation",
         "belief",
         "stereotype",
+        "darkness",
+        "contrast",
+        "record",
         "culture",
         "practical",
         "reason",
@@ -136,7 +146,7 @@ class DynamicStoryboardEngine:
         "legend",
         "clue",
     }
-    EDITORIAL_CALLOUT_WORDS = {
+    EDITORIAL_CALLOUT_WORDS: ClassVar[set[str]] = {
         "adaptation",
         "archaeology",
         "artifact",
@@ -150,6 +160,7 @@ class DynamicStoryboardEngine:
         "contrast",
         "costume",
         "culture",
+        "darkness",
         "danger",
         "discovery",
         "escape",
@@ -169,6 +180,7 @@ class DynamicStoryboardEngine:
         "paradox",
         "relic",
         "proof",
+        "record",
         "rediscovery",
         "ruins",
         "secret",
@@ -182,7 +194,7 @@ class DynamicStoryboardEngine:
         "vision",
     }
 
-    STOP_WORDS = {
+    STOP_WORDS: ClassVar[set[str]] = {
         "the",
         "a",
         "an",
@@ -243,7 +255,7 @@ class DynamicStoryboardEngine:
         "how",
     }
 
-    BANNED_PRODUCTION_EDITORIAL = {
+    BANNED_PRODUCTION_EDITORIAL: ClassVar[set[str]] = {
         "WHY",
         "HOW",
         "WHAT",
@@ -258,7 +270,7 @@ class DynamicStoryboardEngine:
         "REASON",
     }
 
-    BANNED_LEGACY_EDITORIAL = {
+    BANNED_LEGACY_EDITORIAL: ClassVar[set[str]] = {
         "WHY",
         "HOW",
         "WHAT",
@@ -273,7 +285,7 @@ class DynamicStoryboardEngine:
         "NOT NEVER",
     }
 
-    OBVIOUS_BAD_FRAGMENTS = {
+    OBVIOUS_BAD_FRAGMENTS: ClassVar[set[str]] = {
         "PART LARGER PIRATE",
         "EYE LOST EYE",
         "PIRATE SHIP WORN",
@@ -837,6 +849,12 @@ class DynamicStoryboardEngine:
                     "text_overlay": decisions[index].text,
                     "callout_not_warranted": decisions[index].callout_not_warranted,
                     "callout_not_warranted_reason": decisions[index].reason,
+                    "callout_position": (
+                        decisions[index].position
+                        or self._contextual_callout_position(scene)
+                        if decisions[index].text
+                        else None
+                    ),
                 }
             )
             for index, scene in enumerate(scenes)
@@ -852,11 +870,22 @@ class DynamicStoryboardEngine:
         last_callout_index: int | None = None
 
         while next_candidate_start < len(scenes):
-            candidate_indices = [
-                index
-                for index in (next_candidate_start, next_candidate_start + 1)
-                if index < len(scenes)
-            ]
+            latest_candidate = (
+                min(
+                    len(scenes) - 1,
+                    last_callout_index + self.MAX_EDITORIAL_GAP_SCENES,
+                )
+                if last_callout_index is not None
+                else len(scenes) - 1
+            )
+            candidate_indices = list(
+                range(
+                    next_candidate_start,
+                    min(next_candidate_start + 2, latest_candidate + 1),
+                )
+            )
+            if not candidate_indices:
+                break
             candidates = [
                 (self._scene_editorial_candidate(scenes[index]), index)
                 for index in candidate_indices
@@ -893,14 +922,14 @@ class DynamicStoryboardEngine:
                 next_candidate_start = selected_index + self.MIN_EDITORIAL_GAP_SCENES
             else:
                 for index in candidate_indices:
-                    decisions[index] = EditorialDecision(
+                    decisions.setdefault(index, EditorialDecision(
                         callout_not_warranted=True,
                         reason=(
                             "No distinct, supported editorial idea is stronger "
                             "than the narration in this visual segment."
                         ),
-                    )
-                next_candidate_start += self.MAX_EDITORIAL_GAP_SCENES
+                    ))
+                next_candidate_start += 1
 
         for index in range(len(scenes)):
             decisions.setdefault(
@@ -972,9 +1001,7 @@ class DynamicStoryboardEngine:
                         if index > 0
                         else ""
                     ),
-                    current=(
-                        scenes[index].narration
-                    ),
+                    current=scene.narration,
                     next=(
                         scenes[index + 1].narration
                         if index + 1 < len(scenes)
@@ -982,6 +1009,8 @@ class DynamicStoryboardEngine:
                     ),
                     visual_description=scene.visual_description,
                     props=tuple(scene.props),
+                    character_action=scene.character_action,
+                    background=scene.background,
                 )
             )
 
@@ -994,6 +1023,28 @@ class DynamicStoryboardEngine:
             if decision.text and decision.callout_not_warranted:
                 result[index] = EditorialDecision(text=decision.text)
         return result
+
+    @staticmethod
+    def _contextual_callout_position(scene: StoryboardScene) -> str:
+        composition = " ".join(
+            (
+                scene.visual_description,
+                scene.character_action,
+                scene.background,
+                " ".join(scene.props),
+            )
+        ).casefold()
+        if re.search(r"\b(left|left-hand|left side)\b", composition):
+            return "top_right"
+        if re.search(r"\b(right|right-hand|right side)\b", composition):
+            return "top_left"
+        if re.search(r"\b(top|upper|above)\b", composition):
+            return "lower_left"
+        if re.search(r"\b(bottom|lower|below)\b", composition):
+            return "top_left"
+        if re.search(r"\b(center|centre|middle|foreground)\b", composition):
+            return "top_left"
+        return "top_right"
 
     def _enforce_callout_spacing(
         self,
@@ -1260,13 +1311,7 @@ class DynamicStoryboardEngine:
         ):
             return False
 
-        if (
-            cleaned
-            in self.BANNED_PRODUCTION_EDITORIAL
-        ):
-            return False
-
-        return True
+        return cleaned not in self.BANNED_PRODUCTION_EDITORIAL
 
     def _is_valid_editorial_text(
         self,
@@ -1301,10 +1346,7 @@ class DynamicStoryboardEngine:
         if cleaned in self.OBVIOUS_BAD_FRAGMENTS:
             return False
 
-        if "NOT NEVER" in cleaned:
-            return False
-
-        return True
+        return "NOT NEVER" not in cleaned
 
     # ======================================================================
     # EXACT DURATION
@@ -1659,15 +1701,14 @@ class DynamicStoryboardEngine:
                     f"{scene.scene_id} has empty image prompt."
                 )
 
-            if scene.text_overlay:
-                if not self._is_production_editorial_text(
-                    scene.text_overlay
-                ):
-                    raise ValueError(
-                        f"Invalid production editorial text in "
-                        f"{scene.scene_id}: "
-                        f"{scene.text_overlay!r}"
-                    )
+            if scene.text_overlay and not self._is_production_editorial_text(
+                scene.text_overlay
+            ):
+                raise ValueError(
+                    f"Invalid production editorial text in "
+                    f"{scene.scene_id}: "
+                    f"{scene.text_overlay!r}"
+                )
 
             previous_end = (
                 scene.start_seconds

@@ -2,7 +2,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-
 VisualStyle = Literal[
     "stickman",
     "illustration",
@@ -27,6 +26,24 @@ CameraMotion = Literal[
 TransitionType = Literal[
     "cut",
     "fade",
+]
+
+CalloutPosition = Literal[
+    "top_left",
+    "top_center",
+    "top_right",
+    "middle_left",
+    "middle_right",
+    "lower_left",
+    "lower_right",
+]
+
+TimingBoundary = Literal[
+    "audio_start",
+    "sentence",
+    "clause",
+    "pause",
+    "word_fallback",
 ]
 
 
@@ -65,6 +82,8 @@ class StoryboardScene(BaseModel):
     )
     callout_not_warranted: bool = False
     callout_not_warranted_reason: str | None = None
+    callout_position: CalloutPosition | None = None
+    timing_boundary: TimingBoundary = "audio_start"
 
     camera_motion: CameraMotion = "static"
 

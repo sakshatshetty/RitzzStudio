@@ -8,7 +8,6 @@ from pydantic import BaseModel
 
 from modules.storyboard.models import StoryboardScene
 
-
 EditorialCalloutStatus = Literal["PASS", "REVIEW"]
 
 
@@ -37,6 +36,15 @@ class EditorialCalloutQAResult(BaseModel):
 
 
 _VALID_CALLOUT = re.compile(r"^[A-Z0-9]+$")
+_VALID_POSITIONS = {
+    "top_left",
+    "top_center",
+    "top_right",
+    "middle_left",
+    "middle_right",
+    "lower_left",
+    "lower_right",
+}
 _BANNED_CALLOUTS = {
     "WHY",
     "HOW",
@@ -75,6 +83,7 @@ def review_editorial_callouts(
                 or skip_reason
                 or text != text.strip()
                 or not _is_valid_callout(text)
+                or scene.callout_position not in _VALID_POSITIONS
             ):
                 statuses[scene.scene_id] = "malformed_callout"
                 malformed += 1
@@ -107,9 +116,26 @@ def review_editorial_callouts(
             "Editorial callouts are more frequent than the 3-scene minimum "
             "target interval."
         )
+    if gaps and max(gaps) > 4:
+        findings.append(
+            "One or more callout gaps exceed the 3–4-scene pacing target; "
+            "review whether a meaningful emphasis was missed."
+        )
+    if len(scenes) >= 12 and present < max(2, len(scenes) // 8):
+        findings.append(
+            "The storyboard has very sparse editorial callouts; review the "
+            "intentional skips across the full video."
+        )
 
     return EditorialCalloutQAResult(
-        status="REVIEW" if unexpected or malformed or (gaps and min(gaps) < 3) else "PASS",
+        status=(
+            "REVIEW"
+            if unexpected
+            or malformed
+            or (gaps and (min(gaps) < 3 or max(gaps) > 4))
+            or (len(scenes) >= 12 and present < max(2, len(scenes) // 8))
+            else "PASS"
+        ),
         scene_statuses=statuses,
         total_scenes=len(scenes),
         callouts_present=present,

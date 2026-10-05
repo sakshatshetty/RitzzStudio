@@ -63,6 +63,7 @@ class ProductionStateStore:
             "updated_at": now,
             "approval_issue_number": None,
             "private_upload_intent": None,
+            "youtube_upload": None,
             "stages": {
                 stage: {
                     "status": "pending",
@@ -272,6 +273,30 @@ class ProductionStateStore:
                 "The saved upload intent belongs to another workflow attempt. "
                 "Check YouTube before authorizing another upload.",
             )
+
+    def record_youtube_upload(self, upload: dict[str, Any]) -> dict[str, Any]:
+        video_id = upload.get("video_id")
+        uploaded_at = upload.get("uploaded_at")
+        if (
+            not isinstance(video_id, str)
+            or not video_id.strip()
+            or not isinstance(uploaded_at, str)
+            or not uploaded_at.strip()
+            or upload.get("upload_status") != "UPLOAD_COMPLETE"
+        ):
+            raise ValueError(
+                "A completed YouTube upload requires a video ID, timestamp, and status."
+            )
+        state = self._read_state()
+        stage = state["stages"]["private_upload"]
+        if state.get("current_stage") != "private_upload" or stage["status"] != "running":
+            raise ProductionStateError(
+                "STATE_ARTIFACT_MISMATCH",
+                "YouTube upload details can only be recorded during the running private-upload stage.",
+            )
+        state["youtube_upload"] = upload
+        self._save(state)
+        return state
 
     def authorize_deleted_video_replacement(
         self,

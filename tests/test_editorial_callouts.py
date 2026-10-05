@@ -20,6 +20,7 @@ def make_scene(
         text_overlay=callout,
         callout_not_warranted=skipped,
         callout_not_warranted_reason=reason,
+        callout_position="top_left" if callout else None,
     )
 
 
@@ -92,3 +93,28 @@ def test_overfrequent_callouts_are_flagged_for_review():
 
     assert result.status == "REVIEW"
     assert any("more frequent" in finding for finding in result.findings)
+
+
+def test_long_callout_gap_is_flagged_for_review():
+    scenes = [
+        make_scene(index, callout="EVIDENCE", skipped=False, reason=None)
+        if index in {1, 7}
+        else make_scene(index)
+        for index in range(1, 9)
+    ]
+
+    result = review_editorial_callouts(scenes)
+
+    assert result.longest_gap_between_callouts == 6
+    assert result.status == "REVIEW"
+    assert any("gaps exceed" in finding for finding in result.findings)
+
+
+def test_callout_requires_contextual_position():
+    scene = make_scene(1, callout="EVIDENCE", skipped=False, reason=None)
+    scene.callout_position = None
+
+    result = review_editorial_callouts([scene])
+
+    assert result.status == "REVIEW"
+    assert result.malformed_callouts == 1

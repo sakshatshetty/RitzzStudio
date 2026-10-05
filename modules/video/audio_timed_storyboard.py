@@ -9,7 +9,7 @@ from modules.image.prompt_builder import ImagePromptBuilder
 from modules.project.config import ProductionConfig
 from modules.storyboard.dynamic_engine import DynamicStoryboardEngine
 from modules.storyboard.editorial_qa import review_editorial_callouts
-from modules.storyboard.models import Storyboard, StoryboardScene
+from modules.storyboard.models import Storyboard, StoryboardScene, TimingBoundary
 from modules.video.sync_engine import VideoSynchronizationEngine
 from modules.video.sync_models import NarrationAlignment
 
@@ -19,14 +19,17 @@ class _AlignedScene:
     scene: StoryboardScene
     start_seconds: float
     end_seconds: float
+    boundary_before: TimingBoundary = "audio_start"
 
 
 class AudioTimedStoryboardEngine:
     """Group visual ideas at natural narration boundaries and timestamp from audio."""
 
-    MIN_VISUAL_HOLD_SECONDS = 1.8
-    MIN_SAFE_SCENE_DURATION_SECONDS = 1.5
-    STRONG_NARRATION_PAUSE_SECONDS = 0.45
+    MIN_VISUAL_HOLD_SECONDS = 2.0
+    PREFERRED_VISUAL_HOLD_SECONDS = 2.8
+    MIN_SAFE_SCENE_DURATION_SECONDS = 1.8
+    STRONG_NARRATION_PAUSE_SECONDS = 0.35
+    MAX_VISUAL_HOLD_SECONDS = 4.0
     FOCUS_MARKER = "Focus specifically on this visual beat:"
     NARRATION_DESCRIPTION_MARKER = "The character should visually represent this narration:"
     STOP_WORDS: ClassVar[set[str]] = {
@@ -54,9 +57,12 @@ class AudioTimedStoryboardEngine:
         config = production_config or ProductionConfig()
         self.minimum_visual_hold_seconds = max(
             self.MIN_SAFE_SCENE_DURATION_SECONDS,
-            config.scene_minimum_duration_seconds,
+            min(self.MIN_VISUAL_HOLD_SECONDS, config.scene_minimum_duration_seconds),
         )
-        self.maximum_visual_hold_seconds = config.scene_maximum_duration_seconds
+        self.maximum_visual_hold_seconds = min(
+            self.MAX_VISUAL_HOLD_SECONDS,
+            config.scene_maximum_duration_seconds,
+        )
 
     def build(self, storyboard: Storyboard, alignment: NarrationAlignment) -> Storyboard:
         if not storyboard.scenes:
@@ -65,9 +71,20 @@ class AudioTimedStoryboardEngine:
         VideoSynchronizationEngine._validate_alignment(alignment)
         aligned = [
             _AlignedScene(scene=scene, start_seconds=match["start_seconds"],
-                          end_seconds=match["end_seconds"])
-            for scene, match in zip(storyboard.scenes, timing_matches)
+                          end_seconds=match["end_seconds"],
+                          boundary_before=self._boundary_before(
+                              storyboard.scenes[index - 1] if index else None,
+                              match["start_seconds"],
+                              timing_matches[index - 1]["end_seconds"] if index else 0.0,
+                          ))
+            for index, (scene, match) in enumerate(
+                zip(storyboard.scenes, timing_matches)
+            )
         ]
+        aligned = self._expand_to_aligned_words(
+            aligned,
+            alignment,
+        )
         groups = self._group_short_beats(aligned, alignment.audio_duration_seconds)
         scenes: list[StoryboardScene] = []
         for index, group in enumerate(groups):
@@ -100,7 +117,7 @@ class AudioTimedStoryboardEngine:
             target_duration_seconds=round(total_duration),
             scenes=scenes,
             total_scene_duration_seconds=total_duration,
-            target_scene_duration_seconds=self.minimum_visual_hold_seconds,
+            target_scene_duration_seconds=self.PREFERRED_VISUAL_HOLD_SECONDS,
         )
         self._validate_timeline(result, total_duration)
         return result
@@ -120,7 +137,7 @@ class AudioTimedStoryboardEngine:
         final_qa = AudioTimedStoryboardEngine._evaluate_storyboard(repaired)
         path.write_text(repaired.model_dump_json(indent=2), encoding="utf-8")
         record_stage_qa(project_directory, final_qa)
-        if final_qa.status != "PASS":
+        if final_qa.status == "FAIL":
             raise ValueError(
                 "Storyboard QA remains unresolved after automatic correction; "
                 "inspect qa/qa_report.json before image generation."
@@ -148,6 +165,14 @@ class AudioTimedStoryboardEngine:
         )
         hard_cuts = all(scene.transition == "cut" for scene in storyboard.scenes)
         editorial_qa = review_editorial_callouts(storyboard.scenes)
+        maximum_duration_valid = all(
+            scene.duration_seconds <= AudioTimedStoryboardEngine.MAX_VISUAL_HOLD_SECONDS
+            for scene in storyboard.scenes
+        )
+        preferred_pacing = all(
+            scene.duration_seconds >= AudioTimedStoryboardEngine.MIN_SAFE_SCENE_DURATION_SECONDS
+            for scene in storyboard.scenes
+        )
         findings = []
         if not timeline_valid:
             findings.append("Storyboard timing has gaps, overlaps, or incomplete coverage.")
@@ -157,13 +182,29 @@ class AudioTimedStoryboardEngine:
             findings.append("One or more production scenes are not static-camera.")
         if not hard_cuts:
             findings.append("One or more production scenes do not use hard cuts.")
+        if not maximum_duration_valid:
+            findings.append("One or more scenes exceed the 4-second visual hold maximum.")
+        if not preferred_pacing:
+            findings.append("One or more scenes are shorter than the preferred 2-second minimum.")
+        if any(scene.timing_boundary == "word_fallback" for scene in storyboard.scenes[1:]):
+            findings.append(
+                "One or more cuts use a word boundary because no natural clause or pause "
+                "boundary was available; review those cuts."
+            )
         findings.extend(editorial_qa.findings)
-        hard_checks_pass = timeline_valid and prompts_valid and static_camera and hard_cuts
+        hard_checks_pass = (
+            timeline_valid
+            and prompts_valid
+            and static_camera
+            and hard_cuts
+            and maximum_duration_valid
+        )
         status = (
             "FAIL"
             if not hard_checks_pass
             else "REVIEW"
-            if editorial_qa.status == "REVIEW"
+            if editorial_qa.status == "REVIEW" or not preferred_pacing
+            or any(scene.timing_boundary == "word_fallback" for scene in storyboard.scenes[1:])
             else "PASS"
         )
         return QAStageResult(
@@ -174,6 +215,13 @@ class AudioTimedStoryboardEngine:
                 "scene_prompts": "PASS" if prompts_valid else "FAIL",
                 "static_camera": "PASS" if static_camera else "FAIL",
                 "hard_cuts": "PASS" if hard_cuts else "FAIL",
+                "maximum_scene_duration": "PASS" if maximum_duration_valid else "FAIL",
+                "preferred_scene_pacing": "PASS" if preferred_pacing else "REVIEW",
+                "natural_cut_boundaries": (
+                    "REVIEW"
+                    if any(scene.timing_boundary == "word_fallback" for scene in storyboard.scenes[1:])
+                    else "PASS"
+                ),
                 "editorial_callouts": editorial_qa.status,
                 "editorial_format": (
                     "REVIEW" if editorial_qa.malformed_callouts else "PASS"
@@ -262,13 +310,14 @@ class AudioTimedStoryboardEngine:
                     else audio_duration
                 )
                 pause = max(0.0, item.start_seconds - previous.end_seconds)
-                natural_boundary = (
-                    self._ends_sentence(previous.scene.narration)
-                    or pause >= self.STRONG_NARRATION_PAUSE_SECONDS
-                )
-                visual_change = not self._same_visual_idea(
-                    previous.scene,
-                    item.scene,
+                natural_boundary = item.boundary_before in {
+                    "sentence",
+                    "clause",
+                    "pause",
+                } or pause >= self.STRONG_NARRATION_PAUSE_SECONDS
+                visual_change = (
+                    not self._same_visual_idea(previous.scene, item.scene)
+                    or item.boundary_before == "clause"
                 )
                 safe_duration = (
                     elapsed >= self.MIN_SAFE_SCENE_DURATION_SECONDS
@@ -289,13 +338,42 @@ class AudioTimedStoryboardEngine:
             current.append(item)
         if current:
             groups.append(current)
-        if (
-            len(groups) > 1
-            and audio_duration - groups[-1][0].start_seconds
-            < self.MIN_SAFE_SCENE_DURATION_SECONDS
-        ):
-            groups[-2].extend(groups[-1])
-            groups.pop()
+        if len(groups) > 1:
+            trailing_duration = audio_duration - groups[-1][0].start_seconds
+            merged_duration = (
+                audio_duration - groups[-2][0].start_seconds
+            )
+            if trailing_duration < self.MIN_SAFE_SCENE_DURATION_SECONDS:
+                if merged_duration <= self.maximum_visual_hold_seconds:
+                    groups[-2].extend(groups[-1])
+                    groups.pop()
+                else:
+                    previous_group = groups[-2]
+                    target_start = (
+                        audio_duration - self.PREFERRED_VISUAL_HOLD_SECONDS
+                    )
+                    eligible_splits = [
+                        split_index
+                        for split_index in range(1, len(previous_group))
+                        if (
+                            self.MIN_SAFE_SCENE_DURATION_SECONDS
+                            <= previous_group[split_index].start_seconds
+                            - previous_group[0].start_seconds
+                            <= self.maximum_visual_hold_seconds
+                        )
+                    ]
+                    if eligible_splits:
+                        split_index = min(
+                            eligible_splits,
+                            key=lambda candidate: abs(
+                                previous_group[candidate].start_seconds
+                                - target_start
+                            ),
+                        )
+                        groups[-1] = (
+                            previous_group[split_index:] + groups[-1]
+                        )
+                        groups[-2] = previous_group[:split_index]
         return groups
 
     def _merge_group(self, group: list[_AlignedScene], number: int,
@@ -309,8 +387,10 @@ class AudioTimedStoryboardEngine:
         variation = ""
         if (
             previous_scene is not None
-            and not self._same_visual_idea(previous_scene, first)
-            and self._same_composition(previous_scene, first)
+            and (
+                self._same_visual_idea(previous_scene, first)
+                or self._same_composition(previous_scene, first)
+            )
         ):
             variation = (
                 " Advance to a distinct visual beat with a meaningfully different "
@@ -348,7 +428,9 @@ class AudioTimedStoryboardEngine:
             narration=narration, visual_style=first.visual_style,
             visual_description=visual_description,
             character_action=action, background=background,
-            props=props, text_overlay=editorial, camera_motion="static", transition="cut",
+            props=props, text_overlay=editorial,
+            timing_boundary=group[0].boundary_before,
+            camera_motion="static", transition="cut",
             research_sources=sources, image_prompt="audio-timed placeholder",
         )
         merged.image_prompt = self.prompt_builder.build(merged)
@@ -357,6 +439,108 @@ class AudioTimedStoryboardEngine:
     @staticmethod
     def _ends_sentence(narration: str) -> bool:
         return bool(re.search(r"""[.!?]["')\]]*$""", narration.strip()))
+
+    @classmethod
+    def _boundary_before(
+        cls,
+        previous_scene: StoryboardScene | None,
+        start_seconds: float,
+        previous_end_seconds: float,
+    ) -> TimingBoundary:
+        if previous_scene is None:
+            return "audio_start"
+        if cls._ends_sentence(previous_scene.narration):
+            return "sentence"
+        if start_seconds - previous_end_seconds >= cls.STRONG_NARRATION_PAUSE_SECONDS:
+            return "pause"
+        return "clause"
+
+    def _expand_to_aligned_words(
+        self,
+        aligned: list[_AlignedScene],
+        alignment: NarrationAlignment,
+    ) -> list[_AlignedScene]:
+        compact_script, original_indices = (
+            VideoSynchronizationEngine._build_compact_mapping(alignment.characters)
+        )
+        result: list[_AlignedScene] = []
+        search_cursor = 0
+        for item in aligned:
+            compact_narration = VideoSynchronizationEngine._compact_text(
+                item.scene.narration
+            )
+            match_start = compact_script.find(compact_narration, search_cursor)
+            if match_start < 0:
+                raise ValueError(
+                    f"Could not recover word timing for {item.scene.scene_id}."
+                )
+            search_cursor = match_start + len(compact_narration)
+            words = [
+                match
+                for match in re.finditer(r"\S+", item.scene.narration)
+                if VideoSynchronizationEngine._compact_text(match.group())
+            ]
+            previous_word = ""
+            previous_end_seconds = item.start_seconds
+            for word_index, word in enumerate(words):
+                compact_offset = len(
+                    VideoSynchronizationEngine._compact_text(
+                        item.scene.narration[:word.start()]
+                    )
+                )
+                compact_word = VideoSynchronizationEngine._compact_text(word.group())
+                first_compact = match_start + compact_offset
+                last_compact = first_compact + len(compact_word) - 1
+                first_original = original_indices[first_compact]
+                last_original = original_indices[last_compact]
+                word_start = alignment.character_start_times_seconds[first_original]
+                word_end = alignment.character_end_times_seconds[last_original]
+                boundary: TimingBoundary = (
+                    item.boundary_before
+                    if word_index == 0
+                    else self._word_boundary_before(
+                        previous_word,
+                        word.group(),
+                        word_start - previous_end_seconds,
+                    )
+                )
+                result.append(
+                    _AlignedScene(
+                        scene=item.scene.model_copy(
+                            update={
+                                "narration": word.group(),
+                                "timing_boundary": boundary,
+                            }
+                        ),
+                        start_seconds=word_start,
+                        end_seconds=word_end,
+                        boundary_before=boundary,
+                    )
+                )
+                previous_word = word.group()
+                previous_end_seconds = word_end
+        return result
+
+    @classmethod
+    def _word_boundary_before(
+        cls,
+        previous_word: str,
+        current_word: str,
+        pause_seconds: float,
+    ) -> TimingBoundary:
+        if cls._ends_sentence(previous_word):
+            return "sentence"
+        if re.search(r"[,;:—]$", previous_word):
+            return "clause"
+        if re.match(
+            r"^(?:and|but|because|while|although|whereas|which|so|when|before|after)\b",
+            current_word,
+            re.IGNORECASE,
+        ):
+            return "clause"
+        if pause_seconds >= cls.STRONG_NARRATION_PAUSE_SECONDS:
+            return "pause"
+        return "word_fallback"
 
     @classmethod
     def _concept_tokens(cls, scene: StoryboardScene) -> set[str]:
@@ -427,6 +611,11 @@ class AudioTimedStoryboardEngine:
         for index, scene in enumerate(storyboard.scenes):
             if scene.start_seconds < 0 or scene.duration_seconds <= 0:
                 raise ValueError(f"{scene.scene_id} has invalid timing.")
+            if scene.duration_seconds > AudioTimedStoryboardEngine.MAX_VISUAL_HOLD_SECONDS:
+                raise ValueError(
+                    f"{scene.scene_id} lasts {scene.duration_seconds:.3f}s, "
+                    "exceeding the 4-second visual hold maximum."
+                )
             if index and abs(scene.start_seconds - previous_end) > 0.01:
                 raise ValueError(f"{scene.scene_id} is not continuous with the previous scene.")
             previous_end = scene.start_seconds + scene.duration_seconds

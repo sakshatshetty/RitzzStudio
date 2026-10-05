@@ -1,4 +1,5 @@
 import json
+from math import ceil
 from pathlib import Path
 
 from modules.project.config import ProductionConfig
@@ -148,7 +149,7 @@ class StoryboardEngine:
 
             section_scene_count = max(
                 1,
-                round(
+                ceil(
                     section_duration
                     / target_scene_duration
                 ),
@@ -168,9 +169,7 @@ class StoryboardEngine:
                 / actual_scene_count
             )
 
-            for index, words in enumerate(
-                word_groups
-            ):
+            for words in word_groups:
                 scene_duration = base_duration
 
                 scene_narration = " ".join(words)
@@ -217,14 +216,8 @@ class StoryboardEngine:
                 scene = StoryboardScene(
                     scene_id=scene_id,
                     section_id=section.section_id,
-                    start_seconds=round(
-                        current_time,
-                        2,
-                    ),
-                    duration_seconds=round(
-                        scene_duration,
-                        2,
-                    ),
+                    start_seconds=current_time,
+                    duration_seconds=scene_duration,
                     narration=scene_narration,
                     visual_style="stickman",
                     visual_description=visual_description,
@@ -249,7 +242,7 @@ class StoryboardEngine:
 
                 scenes.append(scene)
 
-                current_time += scene_duration
+                current_time = scene.start_seconds + scene.duration_seconds
                 scene_number += 1
 
         total_duration = sum(
@@ -465,12 +458,11 @@ class StoryboardEngine:
             # Editorial text is optional.
             # When present, Pydantic validates the maximum
             # length through StoryboardScene.text_overlay.
-            if scene.text_overlay:
-                if not scene.text_overlay.strip():
-                    raise ValueError(
-                        f"{scene.scene_id} has invalid "
-                        "editorial text."
-                    )
+            if scene.text_overlay and not scene.text_overlay.strip():
+                raise ValueError(
+                    f"{scene.scene_id} has invalid "
+                    "editorial text."
+                )
 
     # ---------------------------------------------------------
     # Persistence

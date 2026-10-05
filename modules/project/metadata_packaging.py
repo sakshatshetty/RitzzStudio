@@ -79,8 +79,12 @@ class OpenAIMetadataGenerator:
                         "audio-timed storyboard, rendered-video metadata, and QA results as "
                         "the content sources. The final script and storyboard are authoritative. "
                         "Do not invent facts or promise material not present in the video. "
-                        "Write 3-5 distinct, concise, accurate, curiosity-driven title options "
-                        "for an 8-10 minute general-audience explainer. Recommend one option; "
+                        "Write 3-5 distinct, concise, accurate title options that create a "
+                        "clear curiosity gap about a specific answer in the finished video. "
+                        "Consider natural structures such as 'How did...', 'Why did...', "
+                        "'What happened to...', and 'How was ... possible?' without forcing "
+                        "every title into a template. Avoid generic documentary wording. "
+                        "Write for an 8-10 minute general-audience explainer. Recommend one option; "
                         "keep titles within YouTube's 100-character hard limit, front-load the "
                         "specific subject so it survives short-feed truncation, do not choose "
                         "merely for keyword score, and do not copy the topic verbatim. "
@@ -337,12 +341,43 @@ class MetadataPackagingEngine:
         normalized_titles = [
             cls._normalize(option.title) for option in draft.title_options
         ]
+        source_words = set(
+            cls._words(
+                context["approved_topic"] + " " + context["final_script_text"]
+            )
+        )
+        source_numbers = set(
+            re.findall(
+                r"\b\d+(?:[.,]\d+)?%?\b",
+                json.dumps(context, ensure_ascii=False),
+            )
+        )
         for option in draft.title_options:
             first_words = re.findall(r"[a-z0-9']+", option.title.casefold())[:3]
             if first_words and all(
                 word in _TITLE_LEADING_FILLER for word in first_words
             ):
                 raise ValueError("Title does not front-load a specific subject.")
+            title_words = set(cls._words(option.title))
+            if not title_words.intersection(source_words):
+                raise ValueError(
+                    "Title must name a specific subject from the approved topic or final script."
+                )
+            if not cls._has_curiosity_signal(option.title):
+                raise ValueError(
+                    "Title must create a clear curiosity gap about the video's answer."
+                )
+            if re.search(r"\b\d+(?:[.,]\d+)?%?\b", option.title) and not set(
+                re.findall(r"\b\d+(?:[.,]\d+)?%?\b", option.title)
+            ).issubset(source_numbers):
+                raise ValueError("Title contains a number unsupported by production sources.")
+            if re.search(
+                r"\b(?:the story of|a documentary about|complete history of|"
+                r"ultimate guide to)\b",
+                option.title,
+                re.IGNORECASE,
+            ):
+                raise ValueError("Title uses generic documentary wording.")
         if len(set(normalized_titles)) != len(normalized_titles):
             raise ValueError("Title options must be distinct.")
         selected = cls._normalize(draft.recommended_title)
@@ -367,6 +402,11 @@ class MetadataPackagingEngine:
         ]
         if len({cls._normalize(part) for part in paragraphs}) != len(paragraphs):
             raise ValueError("Description contains duplicate paragraphs.")
+        if any(
+            cls._normalize(paragraph) == cls._normalize(draft.recommended_title)
+            for paragraph in paragraphs
+        ):
+            raise ValueError("Description contains a repeated title block.")
         opening_sentences = [
             sentence.strip()
             for sentence in re.split(r"(?<=[.!?])\s+", paragraphs[0])
@@ -375,6 +415,24 @@ class MetadataPackagingEngine:
         if len(opening_sentences) < 2:
             raise ValueError(
                 "Description opening must clearly explain the video in its first two lines."
+            )
+        if not set(cls._words(description)).intersection(source_words):
+            raise ValueError(
+                "Description does not clearly describe the approved topic or final script."
+            )
+        source_content_words = {
+            word
+            for word in cls._words(context["final_script_text"])
+            if len(word) >= 4
+        }
+        description_content_words = {
+            word
+            for word in cls._words(description)
+            if len(word) >= 4
+        }
+        if len(source_content_words.intersection(description_content_words)) < 2:
+            raise ValueError(
+                "Description does not reflect enough specific content from the final script."
             )
         sentences = [
             cls._normalize(part)
@@ -412,9 +470,6 @@ class MetadataPackagingEngine:
         }
         if any(sentence in script_sentences for sentence in sentences):
             raise ValueError("Description copies a complete script sentence.")
-        source_numbers = set(
-            re.findall(r"\b\d+(?:[.,]\d+)?%?\b", json.dumps(context, ensure_ascii=False))
-        )
         description_numbers = set(
             re.findall(r"\b\d+(?:[.,]\d+)?%?\b", description)
         )
@@ -425,6 +480,12 @@ class MetadataPackagingEngine:
         normalized_tags = [cls._normalize(tag) for tag in tags]
         if len(set(normalized_tags)) != len(normalized_tags):
             raise ValueError("Tags must not contain duplicates.")
+        tag_word_sets = [set(cls._words(tag)) for tag in tags]
+        for index, current in enumerate(tag_word_sets):
+            for previous in tag_word_sets[:index]:
+                union = current | previous
+                if union and len(current & previous) / len(union) >= 0.8:
+                    raise ValueError("Tags must not repeat semantically similar search phrases.")
         title_tokens = set(cls._words(draft.recommended_title))
         evidence_text = " ".join(
             [
@@ -612,6 +673,18 @@ class MetadataPackagingEngine:
     @staticmethod
     def _normalize(text: str) -> str:
         return " ".join(re.findall(r"[a-z0-9]+", text.casefold()))
+
+    @staticmethod
+    def _has_curiosity_signal(title: str) -> bool:
+        return bool(
+            "?" in title
+            or re.search(
+                r"\b(?:how|why|what|when|where|who|reason|secret|truth|"
+                r"possible|behind|works?|creates?|appear|happened|changed)\b",
+                title,
+                re.IGNORECASE,
+            )
+        )
 
     @staticmethod
     def _words(text: str) -> list[str]:

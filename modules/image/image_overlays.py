@@ -8,6 +8,11 @@ import tempfile
 from pathlib import Path
 
 FONT_CANDIDATES = (
+    Path("/usr/share/fonts/truetype/comic-neue/ComicNeue-Bold.ttf"),
+    Path("/usr/share/fonts/truetype/comic-neue/ComicNeue-Bold.otf"),
+    Path("C:/Windows/Fonts/comicbd.ttf"),
+    Path("C:/Windows/Fonts/comic.ttf"),
+    Path("/System/Library/Fonts/Supplemental/Chalkboard.ttc"),
     Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
     Path("/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf"),
     Path("C:/Windows/Fonts/arialbd.ttf"),
@@ -62,6 +67,8 @@ def _run_drawtext(
     resize_filter: str | None = None,
     ffmpeg_path: str | None = None,
     font_path: str | Path | None = None,
+    box: bool = True,
+    position: str = "lower_left",
 ) -> Path:
     if not source_image.is_file() or source_image.stat().st_size == 0:
         raise FileNotFoundError(f"Source image is missing or empty: {source_image}")
@@ -69,7 +76,14 @@ def _run_drawtext(
         raise ValueError("Overlay text cannot be blank.")
 
     ffmpeg = _resolve_ffmpeg(ffmpeg_path)
-    font = _resolve_font(font_path)
+    font = _resolve_font(
+        font_path
+        or (
+            os.getenv("RITZZ_EDITORIAL_FONT_PATH")
+            if not box
+            else None
+        )
+    )
     output_image.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="ritzz_image_overlay_") as temporary:
         temporary_path = Path(temporary)
@@ -79,15 +93,38 @@ def _run_drawtext(
         filters = []
         if resize_filter:
             filters.append(resize_filter)
-        filters.append(
-            "drawtext="
-            f"fontfile='{_escape_filter_path(font)}':"
-            f"textfile='{_escape_filter_path(text_file)}':"
-            "expansion=none:fontsize=h/12:fontcolor=white:"
-            "box=1:boxcolor=black@0.72:boxborderw=18:"
-            "borderw=2:bordercolor=black:"
-            "x=w/16:y=h-text_h-h/16"
-        )
+        if box:
+            drawtext = (
+                "drawtext="
+                f"fontfile='{_escape_filter_path(font)}':"
+                f"textfile='{_escape_filter_path(text_file)}':"
+                "expansion=none:fontsize=h/12:fontcolor=white:"
+                "box=1:boxcolor=black@0.72:boxborderw=18:"
+                "borderw=2:bordercolor=black:"
+                "x=w/16:y=h-text_h-h/16"
+            )
+        else:
+            positions = {
+                "top_left": ("w/14", "h/12"),
+                "top_center": ("(w-text_w)/2", "h/12"),
+                "top_right": ("w-text_w-w/14", "h/12"),
+                "middle_left": ("w/14", "(h-text_h)/2"),
+                "middle_right": ("w-text_w-w/14", "(h-text_h)/2"),
+                "lower_left": ("w/14", "h-text_h-h/12"),
+                "lower_right": ("w-text_w-w/14", "h-text_h-h/12"),
+            }
+            if position not in positions:
+                raise ValueError(f"Unsupported editorial callout position: {position}")
+            x, y = positions[position]
+            drawtext = (
+                "drawtext="
+                f"fontfile='{_escape_filter_path(font)}':"
+                f"textfile='{_escape_filter_path(text_file)}':"
+                "expansion=none:fontsize=h/10:fontcolor=yellow:"
+                "borderw=8:bordercolor=black:"
+                f"x={x}:y={y}"
+            )
+        filters.append(drawtext)
         command = [
             ffmpeg,
             "-v", "error",
@@ -120,6 +157,7 @@ def embed_editorial_word(
     *,
     ffmpeg_path: str | None = None,
     font_path: str | Path | None = None,
+    position: str = "top_left",
 ) -> Path:
     cleaned = word.strip()
     if (
@@ -139,6 +177,8 @@ def embed_editorial_word(
             cleaned,
             ffmpeg_path=ffmpeg_path,
             font_path=font_path,
+            box=False,
+            position=position,
         )
         candidate.replace(output)
     return output

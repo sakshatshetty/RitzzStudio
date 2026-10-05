@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,6 +40,12 @@ class PublishResult:
     url: str
     title: str
     scheduled_for: str | None = None
+    uploaded_at: str | None = None
+    upload_status: str = "UPLOAD_COMPLETE"
+    upload_details: dict[str, Any] | None = None
+    youtube_processing_status: str = "YOUTUBE_PROCESSING_UNVERIFIED"
+    youtube_processing_error: str | None = None
+    youtube_details: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -47,6 +54,12 @@ class PublishResult:
             "url": self.url,
             "title": self.title,
             "scheduled_for": self.scheduled_for,
+            "uploaded_at": self.uploaded_at,
+            "upload_status": self.upload_status,
+            "upload_details": self.upload_details,
+            "youtube_processing_status": self.youtube_processing_status,
+            "youtube_processing_error": self.youtube_processing_error,
+            "youtube_details": self.youtube_details,
         }
 
 
@@ -128,6 +141,7 @@ class PublishingEngine:
         description: str,
         metadata: dict[str, Any],
         scheduled_for: str | None = None,
+        upload_details: dict[str, Any] | None = None,
     ) -> PublishResult:
         approval = self._load_approval(project)
         if not approval.approved:
@@ -194,8 +208,10 @@ class PublishingEngine:
             url=response["url"],
             title=title,
             scheduled_for=schedule,
+            uploaded_at=datetime.now(timezone.utc).isoformat(),
+            upload_details=upload_details,
         )
-        result_path.write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")
+        self._write_json_atomically(result_path, result.to_dict())
         attempt_path.write_text(
             json.dumps(
                 {
@@ -246,6 +262,7 @@ class PublishingEngine:
         category: str = "Entertainment",
         language: str = "en",
         made_for_kids: bool = False,
+        upload_details: dict[str, Any] | None = None,
     ) -> PublishResult:
         approval = self._load_approval(project)
         if not approval.approved:
@@ -274,6 +291,7 @@ class PublishingEngine:
                 description=artifact.metadata.description.strip(),
                 metadata=metadata,
                 scheduled_for=scheduled_for,
+                upload_details=upload_details,
             )
 
         return self.publish_video(
@@ -282,6 +300,7 @@ class PublishingEngine:
             title=artifact.selected_title.strip(),
             description=artifact.metadata.description.strip(),
             metadata={**metadata, "privacy_status": "private"},
+            upload_details=upload_details,
         )
 
     def set_publish_schedule(self, project: Project, scheduled_for: str) -> str:
@@ -316,4 +335,28 @@ class PublishingEngine:
             url=payload["url"],
             title=payload["title"],
             scheduled_for=payload.get("scheduled_for"),
+            uploaded_at=payload.get("uploaded_at"),
+            upload_status=payload.get("upload_status", "UPLOAD_COMPLETE"),
+            upload_details=payload.get("upload_details"),
+            youtube_processing_status=payload.get(
+                "youtube_processing_status",
+                "YOUTUBE_PROCESSING_UNVERIFIED",
+            ),
+            youtube_processing_error=payload.get("youtube_processing_error"),
+            youtube_details=payload.get("youtube_details"),
         )
+
+    @staticmethod
+    def _write_json_atomically(path: Path, payload: dict[str, Any]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            suffix=".tmp",
+            delete=False,
+        ) as file:
+            json.dump(payload, file, indent=2)
+            file.write("\n")
+            temporary_path = Path(file.name)
+        temporary_path.replace(path)

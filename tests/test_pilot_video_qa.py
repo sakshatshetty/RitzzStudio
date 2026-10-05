@@ -44,6 +44,7 @@ def make_inputs(tmp_path):
                 visual_description="A pirate with an eye patch.",
                 image_prompt="Pirate illustration.",
                 text_overlay="ICONIC",
+                callout_position="lower_left",
             )
         ],
     )

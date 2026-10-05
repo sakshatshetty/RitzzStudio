@@ -97,7 +97,11 @@ class ImageBatchEngine:
                     raise RuntimeError(
                         f"Image provider returned no image path for {scene.scene_id}."
                     )
-                embed_editorial_word(asset.file_path, scene.text_overlay)
+                embed_editorial_word(
+                    asset.file_path,
+                    scene.text_overlay,
+                    position=scene.callout_position or "top_left",
+                )
             assets.append(asset)
 
         return assets
