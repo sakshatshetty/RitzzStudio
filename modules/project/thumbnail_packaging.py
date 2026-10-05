@@ -28,6 +28,7 @@ THUMBNAIL_IMAGE_FILENAME = "thumbnail.jpg"
 THUMBNAIL_ARTWORK_FILENAME = "thumbnail_artwork.png"
 THUMBNAIL_WIDTH = 1280
 THUMBNAIL_HEIGHT = 720
+THUMBNAIL_TEXT_FONT_SIZE = 96
 _PLACEHOLDER_PATTERN = re.compile(
     r"\b(?:todo|tbd|placeholder|lorem ipsum|insert (?:text|title))\b",
     re.IGNORECASE,
@@ -95,7 +96,8 @@ class OpenAIThumbnailConceptGenerator:
                         "Use a simple hand-drawn cartoon/doodle style: stickman or doodle "
                         "characters, marker/ink appearance, controlled imperfection, thick "
                         "black outlines, flat bright colors, exaggerated readable poses, one "
-                        "dominant idea, minimal clutter, playful educational tone. No "
+                        "dominant idea, a large focal character or object, minimal "
+                        "clutter, playful educational tone. No "
                         "photorealism, 3D, glossy/anime/vector polish, tiny details, or dark "
                         "complex backgrounds. Each concept must include a short uppercase "
                         "2-4 word text hook (maximum 5 words), complement rather than repeat "
@@ -168,9 +170,18 @@ class FFmpegThumbnailComposer:
                 "FFmpeg is required to compose the thumbnail text."
             )
         self.ffmpeg_path: str = resolved_ffmpeg
-        configured_font = font_path or os.getenv("RITZZ_FONT_PATH")
+        configured_font = (
+            font_path
+            or os.getenv("RITZZ_THUMBNAIL_FONT_PATH")
+            or os.getenv("RITZZ_FONT_PATH")
+        )
         font_candidates = (
             Path(configured_font) if configured_font else None,
+            Path("/usr/share/fonts/truetype/comic-neue/ComicNeue-Bold.ttf"),
+            Path("/usr/share/fonts/truetype/comic-neue/ComicNeue-Bold.otf"),
+            Path("C:/Windows/Fonts/comicbd.ttf"),
+            Path("C:/Windows/Fonts/comic.ttf"),
+            Path("/System/Library/Fonts/Supplemental/Chalkboard.ttc"),
             Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
             Path("/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf"),
             Path("C:/Windows/Fonts/arialbd.ttf"),
@@ -199,8 +210,8 @@ class FFmpegThumbnailComposer:
                 "drawtext="
                 f"fontfile='{_escape_filter_path(self.font_path)}':"
                 f"textfile='{_escape_filter_path(text_file)}':"
-                "expansion=none:fontsize=64:fontcolor=yellow:"
-                "borderw=6:bordercolor=black:"
+                f"expansion=none:fontsize={THUMBNAIL_TEXT_FONT_SIZE}:fontcolor=yellow:"
+                "borderw=8:bordercolor=black:"
                 "line_spacing=4:"
                 "x=(w-text_w)/2:y=h*0.76-text_h/2"
             )
@@ -489,6 +500,7 @@ class ThumbnailPackagingEngine:
         title_key = cls._normalize(selected_title)
         seen_text: set[str] = set()
         seen_visuals: set[str] = set()
+        visual_signatures: list[set[str]] = []
         validated = []
         for index, concept in enumerate(concepts, start=1):
             text = " ".join(concept.text.split()).upper()
@@ -513,6 +525,34 @@ class ThumbnailPackagingEngine:
             visual_key = cls._normalize(concept.visual_concept)
             if visual_key in seen_visuals:
                 raise ValueError("Thumbnail concepts must be visually distinct.")
+            if re.search(
+                r"\b(tiny|miniature|distant|small)\b",
+                concept.main_character_or_object.casefold(),
+            ):
+                raise ValueError(
+                    f"Thumbnail concept {index} uses a tiny or distant focal subject."
+                )
+            signature_text = (
+                f"{concept.visual_concept} {concept.main_character_or_object} "
+                f"{concept.situation} {concept.composition}"
+            )
+            signature = {
+                token
+                for token in cls._normalize(signature_text).split()
+                if token not in _TEXT_STOP_WORDS and len(token) > 2
+            }
+            for previous_signature in visual_signatures:
+                union = signature | previous_signature
+                similarity = (
+                    len(signature & previous_signature) / len(union)
+                    if union
+                    else 1.0
+                )
+                if similarity >= 0.72:
+                    raise ValueError(
+                        "Thumbnail concepts must differ in focal object, action, "
+                        "composition, and visual interpretation."
+                    )
             normalized_words = normalized_text.split()
             if len(set(normalized_words)) != len(normalized_words):
                 raise ValueError("Thumbnail hook contains accidental duplicate words.")
@@ -520,6 +560,7 @@ class ThumbnailPackagingEngine:
                 raise ValueError("Thumbnail hook must include a meaningful subject word.")
             seen_text.add(normalized_text)
             seen_visuals.add(visual_key)
+            visual_signatures.append(signature)
             validated.append(concept.model_copy(
                 update={
                     "concept_id": f"concept-{index}",
@@ -698,7 +739,7 @@ class ThumbnailPackagingEngine:
         return " ".join(re.findall(r"[a-z0-9]+", value.casefold()))
 
 
-def _wrap_thumbnail_text(text: str, width: int = 18) -> list[str]:
+def _wrap_thumbnail_text(text: str, width: int = 14) -> list[str]:
     return textwrap.wrap(text.upper(), width=width, break_long_words=False) or [text.upper()]
 
 

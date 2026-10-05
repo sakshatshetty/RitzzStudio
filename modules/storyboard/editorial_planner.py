@@ -3,12 +3,12 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, Sequence
+from typing import Protocol
 
 from openai import OpenAI
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = PROJECT_ROOT / ".env"
@@ -43,6 +43,8 @@ class EditorialContext:
     next: str
     visual_description: str = ""
     props: tuple[str, ...] = ()
+    character_action: str = ""
+    background: str = ""
 
 
 @dataclass(frozen=True)
@@ -50,6 +52,7 @@ class EditorialDecision:
     text: str = ""
     callout_not_warranted: bool = False
     reason: str | None = None
+    position: str | None = None
 
 
 class EditorialTextPlanner(Protocol):
@@ -150,6 +153,13 @@ this is a pacing target, not a timer. Do not force weak or repetitive text.
 For every scene, return either one callout or callout_not_warranted=true with
 a concrete reason. Keep callouts at least 3 scenes apart when context supports
 it. Longer gaps are acceptable when no scene warrants a word.
+For each selected callout, choose one position from top_left, top_center,
+top_right, middle_left, middle_right, lower_left, lower_right. Use the visual
+description, character action, and background to place it in likely negative
+space opposite the main character or important object. Never choose a position
+that would cover the described face, focal object, evidence, or labels. Do not
+cycle positions; choose each scene independently. If placement cannot be
+inferred safely, prefer a clear upper corner and flag the placement for review.
 
 Return JSON only:
 
@@ -159,7 +169,8 @@ Return JSON only:
       "scene_index": 1,
       "text": "",
       "callout_not_warranted": true,
-      "reason": "The scene is transitional and has no distinct editorial idea."
+      "reason": "The scene is transitional and has no distinct editorial idea.",
+      "position": null
     }
   ]
 }
@@ -187,6 +198,8 @@ The result must be:
 - not narration transcription
 - not a multi-word phrase
 - or explicitly mark the scene not warranted, with a concrete reason
+- for a callout, select one allowed position using composition and negative
+  space; do not use a mechanical rotation
 
 Contexts:
 
@@ -239,6 +252,8 @@ Contexts:
                 "next": context.next,
                 "visual_description": context.visual_description,
                 "props": context.props,
+                "character_action": context.character_action,
+                "background": context.background,
             }
             for context in contexts
         ]
@@ -318,9 +333,23 @@ Contexts:
 
             not_warranted = item.get("callout_not_warranted")
             reason = item.get("reason")
+            position = item.get("position")
             if not isinstance(not_warranted, bool):
                 continue
             if reason is not None and not isinstance(reason, str):
+                continue
+            allowed_positions = {
+                "top_left",
+                "top_center",
+                "top_right",
+                "middle_left",
+                "middle_right",
+                "lower_left",
+                "lower_right",
+            }
+            if position is not None and (
+                not isinstance(position, str) or position not in allowed_positions
+            ):
                 continue
 
             cleaned = text.strip()
@@ -333,6 +362,7 @@ Contexts:
                         if not_warranted and isinstance(reason, str)
                         else None
                     ),
+                    position=position,
                 )
                 continue
 
@@ -408,7 +438,4 @@ Contexts:
             "REASON",
         }
 
-        if cleaned in banned:
-            return False
-
-        return True
+        return cleaned not in banned

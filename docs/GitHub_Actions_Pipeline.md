@@ -99,6 +99,15 @@ Configure these GitHub repository secrets:
 - `GOOGLE_CLIENT_SECRETS_B64`
 - `GOOGLE_TOKEN_B64`
 
+The OAuth token must include both YouTube upload and read-only scopes so the
+pipeline can perform one non-blocking processing-status check after upload.
+If the token was authorized before this change, reauthorize it with
+`scripts/authorize_youtube.py` and update `GOOGLE_TOKEN_B64`.
+
+The `RITZZ_VIDEO_BITRATE` Actions variable is optional and defaults to `10M`.
+The render and upload jobs use the same value; the upload gate rejects targets
+or measured masters outside 8–12 Mbps.
+
 Create these GitHub environments and require reviewers for each environment:
 
 - `ritzz-topic-approval`

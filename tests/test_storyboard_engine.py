@@ -81,8 +81,9 @@ def test_storyboard_has_expected_scene_count():
         SCRIPT_FILE
     )
 
-    # 480 seconds / 5 seconds = 96 scenes.
-    assert len(storyboard.scenes) == 96
+    # Four seconds is the configured ceiling for production scenes.
+    assert len(storyboard.scenes) >= 120
+    assert all(scene.duration_seconds <= 4 for scene in storyboard.scenes)
 
 
 def test_storyboard_duration():
@@ -310,7 +311,8 @@ def test_saved_storyboard_contains_valid_json(
         "Why Do Pirates Wear Eye Patches?"
     )
 
-    assert len(data["scenes"]) == 96
+    assert len(data["scenes"]) >= 120
+    assert all(scene["duration_seconds"] <= 4 for scene in data["scenes"])
 
 
 def test_topic_mismatch_fails(

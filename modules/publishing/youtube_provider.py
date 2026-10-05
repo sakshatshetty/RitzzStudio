@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, ClassVar
 
 
 class YouTubeProvider:
     """Uploads videos through the YouTube Data API using local OAuth credentials."""
 
-    SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+    SCOPES: ClassVar[list[str]] = [
+        "https://www.googleapis.com/auth/youtube.upload",
+        "https://www.googleapis.com/auth/youtube.readonly",
+    ]
 
     def __init__(
         self,
@@ -93,6 +97,68 @@ class YouTubeProvider:
             media_body=self._media_upload_builder(str(thumbnail_path)),
         )
         return request.execute()
+
+    def get_video_processing_status(self, video_id: str) -> dict[str, Any]:
+        if not video_id.strip():
+            raise ValueError("A YouTube video ID is required for status verification.")
+        try:
+            from google.auth.exceptions import TransportError
+            from googleapiclient.errors import HttpError
+        except ImportError as exc:
+            raise RuntimeError(
+                "YouTube status verification requires google-auth and "
+                "google-api-python-client."
+            ) from exc
+        try:
+            response = (
+                self.service.videos()
+                .list(
+                    part="contentDetails,processingDetails,snippet,status",
+                    id=video_id,
+                )
+                .execute()
+            )
+        except (HttpError, TransportError, OSError) as exc:
+            return {
+                "processing_status": "YOUTUBE_PROCESSING_UNAVAILABLE",
+                "verification_error": str(exc),
+            }
+
+        items = response.get("items", [])
+        if not items:
+            return {
+                "processing_status": "YOUTUBE_PROCESSING_UNAVAILABLE",
+                "verification_error": "YouTube returned no video details.",
+            }
+        video = items[0]
+        processing = video.get("processingDetails", {})
+        raw_status = processing.get("processingStatus")
+        status_mapping = {
+            "processing": "YOUTUBE_PROCESSING_PENDING",
+            "succeeded": "YOUTUBE_PROCESSING_SUCCEEDED",
+            "failed": "YOUTUBE_PROCESSING_FAILED",
+            "terminated": "YOUTUBE_PROCESSING_FAILED",
+        }
+        result: dict[str, Any] = {
+            "processing_status": status_mapping.get(
+                raw_status,
+                "YOUTUBE_PROCESSING_UNAVAILABLE",
+            ),
+            "video_id": video.get("id", video_id),
+            "title": video.get("snippet", {}).get("title"),
+            "privacy_status": video.get("status", {}).get("privacyStatus"),
+            "duration": video.get("contentDetails", {}).get("duration"),
+        }
+        if result["processing_status"] == "YOUTUBE_PROCESSING_FAILED":
+            result["processing_error"] = processing.get(
+                "processingFailureReason",
+                "YouTube reported video processing failure.",
+            )
+        elif result["processing_status"] == "YOUTUBE_PROCESSING_UNAVAILABLE":
+            result["verification_error"] = (
+                f"YouTube returned an unknown processing status: {raw_status!r}."
+            )
+        return result
 
     @staticmethod
     def _build_media_upload(video_file: str) -> Any:

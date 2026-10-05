@@ -431,7 +431,7 @@ def test_generate_all_images(
     overlays = []
     monkeypatch.setattr(
         "modules.image.batch.embed_editorial_word",
-        lambda image_path, word: overlays.append((Path(image_path).name, word)),
+        lambda image_path, word, **_kwargs: overlays.append((Path(image_path).name, word)),
     )
     provider = MockImageProvider()
     image_engine = ImageEngine(provider)
@@ -471,7 +471,7 @@ def test_scene_to_image_mapping(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("modules.image.batch.embed_editorial_word", lambda *_args: None)
+    monkeypatch.setattr("modules.image.batch.embed_editorial_word", lambda *_args, **_kwargs: None)
     provider = MockImageProvider()
     image_engine = ImageEngine(provider)
     batch_engine = ImageBatchEngine(image_engine)
@@ -497,7 +497,7 @@ def test_failed_scene_is_preserved(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("modules.image.batch.embed_editorial_word", lambda *_args: None)
+    monkeypatch.setattr("modules.image.batch.embed_editorial_word", lambda *_args, **_kwargs: None)
     provider = MockImageProvider(
         fail_scene_id="scene_002"
     )
@@ -528,7 +528,7 @@ def test_save_and_load_manifest(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("modules.image.batch.embed_editorial_word", lambda *_args: None)
+    monkeypatch.setattr("modules.image.batch.embed_editorial_word", lambda *_args, **_kwargs: None)
     provider = MockImageProvider()
     image_engine = ImageEngine(provider)
     batch_engine = ImageBatchEngine(image_engine)
@@ -578,7 +578,7 @@ def test_output_files_use_image_ids(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr("modules.image.batch.embed_editorial_word", lambda *_args: None)
+    monkeypatch.setattr("modules.image.batch.embed_editorial_word", lambda *_args, **_kwargs: None)
     provider = MockImageProvider()
     image_engine = ImageEngine(provider)
     batch_engine = ImageBatchEngine(image_engine)

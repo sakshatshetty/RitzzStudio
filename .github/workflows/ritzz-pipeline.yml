@@ -1032,6 +1032,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      RITZZ_VIDEO_BITRATE: ${{ vars.RITZZ_VIDEO_BITRATE || '10M' }}
       RITZZ_PRODUCTION_ID: ${{ needs.restore-production.outputs.production_id }}
       RITZZ_PIPELINE_ARTIFACTS: .pipeline-artifacts
     steps:
@@ -1527,6 +1528,7 @@ jobs:
     env:
       GOOGLE_CLIENT_SECRETS_B64: ${{ secrets.GOOGLE_CLIENT_SECRETS_B64 }}
       GOOGLE_TOKEN_B64: ${{ secrets.GOOGLE_TOKEN_B64 }}
+      RITZZ_VIDEO_BITRATE: ${{ vars.RITZZ_VIDEO_BITRATE || '10M' }}
       RITZZ_PRODUCTION_ID: ${{ needs.restore-production.outputs.production_id }}
       RITZZ_PIPELINE_ARTIFACTS: .pipeline-artifacts
       GH_TOKEN: ${{ github.token }}
