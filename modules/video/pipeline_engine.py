@@ -210,9 +210,8 @@ class VideoProductionPipeline:
                 )
                 if image_ai_status != "PASS":
                     raise RuntimeError(
-                        "Image/editorial QA did not pass after "
-                        f"{self.MAX_QA_REPAIR_ATTEMPTS} repair attempts; "
-                        "video assembly cannot proceed."
+                        f"Image/editorial QA status was {image_ai_status}; "
+                        "video assembly cannot proceed. Review qa/qa_report.json."
                     )
 
             video_plan_file = output_directory / self.VIDEO_PLAN_FILENAME
@@ -572,6 +571,8 @@ class VideoProductionPipeline:
             moves[index] = target_index
 
         affected_indices: set[int] = set()
+        manual_review_findings: list[str] = []
+        suggested_fixes: dict[int, str] = {}
         for index, target_index in moves.items():
             word = scenes[index].text_overlay
             scenes[index] = scenes[index].model_copy(
@@ -593,16 +594,50 @@ class VideoProductionPipeline:
             affected_indices.update({index, target_index})
 
         for index, review in first_reviews.items():
-            if any(
-                status != "PASS"
-                for status in (
-                    review.status,
+            review_statuses = (
+                review.status,
+                review.narration_image,
+                review.narration_description,
+                review.editorial_context,
+            )
+            editorial_move_resolves_review = (
+                index in moves
+                and review.narration_image == "PASS"
+                and review.narration_description == "PASS"
+            )
+            issue_statuses = (
+                (
                     review.narration_image,
                     review.narration_description,
-                    review.editorial_context,
                 )
-            ):
+                if editorial_move_resolves_review
+                else review_statuses
+            )
+            has_clear_failure = any(status == "FAIL" for status in issue_statuses)
+            has_actionable_review = (
+                any(status == "REVIEW" for status in issue_statuses)
+                and bool((review.correction_prompt or "").strip())
+            )
+            needs_visual_repair = has_clear_failure or has_actionable_review
+            has_unresolved_issue = any(
+                status in {"FAIL", "REVIEW"} for status in issue_statuses
+            )
+            if needs_visual_repair:
                 affected_indices.add(index)
+                correction = (review.correction_prompt or "").strip()
+                if not correction and has_clear_failure:
+                    correction = (
+                        f"Correct the clear QA mismatch: {review.rationale}. "
+                        "Make the scene visibly match its narration and visual description, "
+                        "while preserving the established character and illustration style."
+                    )
+                if correction:
+                    suggested_fixes[index] = correction
+            elif has_unresolved_issue:
+                manual_review_findings.append(
+                    f"{scenes[index].scene_id}: no actionable image correction was "
+                    "supplied, so the original image was preserved for review."
+                )
             if (
                 review.editorial_context == "FAIL"
                 and index not in moves
@@ -647,7 +682,10 @@ class VideoProductionPipeline:
                         for review_index, first_review in first_reviews.items()
                         if first_review.status != "PASS"
                     ],
-                    recommendations=["Applying bounded automatic image/editorial corrections."],
+                    recommendations=[
+                        f"{scenes[index].scene_id}: proposed fix — {correction}"
+                        for index, correction in suggested_fixes.items()
+                    ] or ["Applying bounded automatic image/editorial corrections."],
                     reviewer="openai_vision",
                 ),
             )
@@ -665,7 +703,7 @@ class VideoProductionPipeline:
             scene = scenes[index]
             original_path = image_directory / f"{scene.scene_id}.png"
             review = first_reviews.get(index)
-            correction = review.correction_prompt if review else None
+            correction = suggested_fixes.get(index)
             if not correction:
                 correction = (
                     f"Correct this image QA finding: {review.rationale}. "
@@ -769,7 +807,7 @@ class VideoProductionPipeline:
                 stage="image_editorial_qa",
                 status=status,
                 checks=checks,
-                findings=unresolved + [
+                findings=unresolved + manual_review_findings + [
                     f"{scenes[index].scene_id}: {review.rationale}"
                     for index, review in final_reviews.items()
                     if any(
@@ -782,15 +820,23 @@ class VideoProductionPipeline:
                         )
                     )
                 ],
-                recommendations=[] if status == "PASS" else [
-                    "Inspect the preserved originals and QA report before approval."
-                ],
                 reviewer="openai_vision",
                 attempt=repair_attempt,
+                recommendations=(
+                    [
+                        f"{scenes[index].scene_id}: proposed fix — {correction}"
+                        for index, correction in suggested_fixes.items()
+                    ]
+                    if status != "PASS" and suggested_fixes
+                    else ["Inspect the preserved originals and QA report before approval."]
+                    if status != "PASS"
+                    else []
+                ),
             ),
         )
         if (
             status != "PASS"
+            and affected_indices
             and repair_attempt < self.MAX_QA_REPAIR_ATTEMPTS
         ):
             return self._review_and_repair_images(

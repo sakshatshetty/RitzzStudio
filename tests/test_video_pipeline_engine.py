@@ -504,7 +504,9 @@ def test_image_ai_qa_moves_editorial_and_repairs_impacted_images(tmp_path: Path)
     assert [attempt.status for attempt in report.stages["image_editorial_qa"]] == ["FAIL", "PASS"]
 
 
-def test_image_ai_qa_keeps_repairing_and_blocks_until_pass(tmp_path: Path) -> None:
+def test_image_ai_qa_preserves_uncertain_images_for_human_review(
+    tmp_path: Path,
+) -> None:
     image_directory = create_images(tmp_path)
     audio_file = create_audio(tmp_path)
     storyboard_file = create_storyboard(tmp_path, audio_file)
@@ -551,13 +553,87 @@ def test_image_ai_qa_keeps_repairing_and_blocks_until_pass(tmp_path: Path) -> No
     status = pipeline._review_and_repair_images(request, tmp_path)
 
     assert status == "REVIEW"
-    assert provider.generated_scenes == [
-        scene_id
-        for _ in range(VideoProductionPipeline.MAX_QA_REPAIR_ATTEMPTS)
-        for scene_id in ("scene_001", "scene_002", "scene_003")
-    ]
+    assert provider.generated_scenes == []
     qa_attempts = load_project_qa(tmp_path).stages["image_editorial_qa"]
-    assert [attempt.status for attempt in qa_attempts] == ["REVIEW"] * 6
+    assert [attempt.status for attempt in qa_attempts] == ["REVIEW"]
+    assert "no actionable image correction was supplied" in qa_attempts[0].findings[0]
+
+
+def test_image_ai_qa_suggests_and_applies_fix_for_clear_failure(
+    tmp_path: Path,
+) -> None:
+    image_directory = create_images(tmp_path)
+    audio_file = create_audio(tmp_path)
+    storyboard_file = create_storyboard(tmp_path, audio_file)
+    alignment_file = create_alignment(tmp_path)
+    review_attempts = 0
+
+    class Reviewer:
+        def review(self, image_path, scene, editorial_candidates=None):
+            nonlocal review_attempts
+            if scene.scene_id == "scene_001":
+                review_attempts += 1
+                if review_attempts == 1:
+                    return SceneQAResult(
+                        scene_id=scene.scene_id,
+                        status="FAIL",
+                        narration_image="FAIL",
+                        narration_description="PASS",
+                        editorial_context="PASS",
+                        rationale="The image shows a ship instead of the water source.",
+                    )
+            return SceneQAResult(
+                scene_id=scene.scene_id,
+                status="PASS",
+                narration_image="PASS",
+                narration_description="PASS",
+                editorial_context="PASS",
+                rationale="The image matches the scene.",
+            )
+
+    class ImageProvider:
+        def __init__(self):
+            self.generated_scenes: list[str] = []
+            self.prompts: list[str] = []
+
+        def generate(self, request):
+            output = Path(request.output_directory) / f"{request.image_id}.png"
+            shutil.copyfile(image_directory / "scene_003.png", output)
+            self.generated_scenes.append(request.scene_id)
+            self.prompts.append(request.prompt)
+            return ImageGenerationResult(
+                image_id=request.image_id,
+                scene_id=request.scene_id,
+                provider="openai",
+                status="completed",
+                file_path=str(output),
+            )
+
+    provider = ImageProvider()
+    pipeline = VideoProductionPipeline(
+        image_reviewer=Reviewer(),
+        image_provider=provider,
+    )
+    request = pipeline.create_request(
+        storyboard_file=storyboard_file,
+        image_directory=image_directory,
+        narration_result_file=alignment_file,
+        audio_file=audio_file,
+        output_directory=tmp_path / "output",
+        enable_image_ai_qa=True,
+    )
+
+    status = pipeline._review_and_repair_images(request, tmp_path)
+
+    assert status == "PASS"
+    assert provider.generated_scenes == ["scene_001"]
+    assert "The image shows a ship instead of the water source." in provider.prompts[0]
+    attempts = load_project_qa(tmp_path).stages["image_editorial_qa"]
+    assert [attempt.status for attempt in attempts] == ["FAIL", "PASS"]
+    assert any(
+        "scene_001: proposed fix" in recommendation
+        for recommendation in attempts[0].recommendations
+    )
 
 
 def test_unresolved_image_qa_blocks_video_render_pipeline(
@@ -588,7 +664,7 @@ def test_unresolved_image_qa_blocks_video_render_pipeline(
     assert result.status == "failed"
     assert result.technical_qa_status == "FAIL"
     assert result.image_ai_qa_status == "REVIEW"
-    assert "did not pass after 3 repair attempts" in (result.error_message or "")
+    assert "status was REVIEW" in (result.error_message or "")
     assert result.output_video_file is None
 
 

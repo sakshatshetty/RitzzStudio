@@ -244,3 +244,17 @@ def test_render_and_upload_jobs_share_configured_master_bitrate():
     )
     setting = "RITZZ_VIDEO_BITRATE: ${{ vars.RITZZ_VIDEO_BITRATE || '10M' }}"
     assert workflow.count(setting) == 2
+
+
+def test_render_failure_preserves_image_qa_report_before_technical_qa():
+    workflow = Path(".github/workflows/ritzz-pipeline.yml").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        "grep -Eq '\"(image_editorial_qa|technical_qa)\"' \"$qa_report\""
+        in workflow
+    )
+    assert (
+        "path: .pipeline-artifacts/render_qa_report.json"
+        in workflow
+    )
