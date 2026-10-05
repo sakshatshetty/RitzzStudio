@@ -623,6 +623,7 @@ def test_pipeline_resynchronizes_and_renders_again_on_timeline_drift_review(
             "video": "PASS",
             "timestamp_coverage": "PASS",
             "timeline_drift": "REVIEW" if status == "REVIEW" else "PASS",
+            "audio_loudness": "REVIEW" if status == "REVIEW" else "PASS",
         }
         return TechnicalQAResult(
             status=status,
@@ -632,15 +633,21 @@ def test_pipeline_resynchronizes_and_renders_again_on_timeline_drift_review(
             audio_duration_seconds=3.0,
             video_duration_seconds=3.0,
             maximum_timeline_drift_seconds=1.0 if status == "REVIEW" else 0.0,
+            integrated_lufs=-15.1 if status == "REVIEW" else -14.0,
+            true_peak_dbtp=-0.7 if status == "REVIEW" else -1.1,
         )
 
     monkeypatch.setattr("modules.video.pipeline_engine.PilotVideoQA.run_technical", run_technical)
     pipeline = VideoProductionPipeline()
     original_render = pipeline.renderer.render
+    peak_targets: list[float] = []
 
     def count_render(*args, **kwargs):
         nonlocal render_attempts
         render_attempts += 1
+        peak_targets.append(
+            pipeline.renderer.audio_filter_true_peak_target_dbtp
+        )
         return original_render(*args, **kwargs)
 
     monkeypatch.setattr(pipeline.renderer, "render", count_render)
@@ -658,12 +665,16 @@ def test_pipeline_resynchronizes_and_renders_again_on_timeline_drift_review(
     assert result.technical_qa_status == "PASS"
     assert technical_attempts == 2
     assert render_attempts == 2
+    assert peak_targets == [-2.0, pytest.approx(-2.7)]
     qa_report = load_project_qa(tmp_path)
     assert [item.status for item in qa_report.stages["technical_qa"]] == [
         "REVIEW",
         "PASS",
     ]
     assert qa_report.stages["technical_qa_repair"][-1].status == "PASS"
+    assert "loudnorm true-peak target -2.0 -> -2.7 dBTP" in (
+        qa_report.stages["technical_qa_repair"][0].recommendations[0]
+    )
     pipeline_state = json.loads(
         (tmp_path / "output" / "pipeline_state.json").read_text(encoding="utf-8")
     )

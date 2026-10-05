@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from openai.types.responses import ResponseTextConfigParam
 
+from modules.storyboard.editorial_qa import review_editorial_callouts
 from modules.storyboard.models import Storyboard
 from modules.video.models import VideoAssemblyPlan
 from modules.video.qa_models import (
@@ -26,7 +27,6 @@ from modules.video.qa_models import (
     SceneQAResult,
     TechnicalQAResult,
 )
-from modules.storyboard.editorial_qa import review_editorial_callouts
 
 load_dotenv()
 
@@ -473,12 +473,12 @@ class PilotVideoQA:
                 if loudness_check != "PASS":
                     issues.append(
                         "Rendered audio loudness or true peak is outside the "
-                        "configured target range; human review is required."
+                        "configured target range."
                     )
             except (FileNotFoundError, RuntimeError, ValueError) as exc:
                 issues.append(
                     "Integrated loudness and true peak could not be measured; "
-                    f"human review is required. {exc}"
+                    f"automatic audio correction cannot use a measurement. {exc}"
                 )
         editorial_qa = review_editorial_callouts(storyboard.scenes)
         if editorial_qa.status == "REVIEW":

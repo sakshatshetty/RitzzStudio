@@ -360,6 +360,26 @@ class VideoProductionPipeline:
                     save_pipeline_state(state, state_file)
                     break
 
+                repair_recommendations = [
+                    "Repair the reported technical QA issues and rerender."
+                ]
+                if technical.checks.get("audio_loudness") != "PASS":
+                    audio_adjustments = (
+                        self.renderer.adjust_audio_filter_from_measurement(
+                            integrated_lufs=technical.integrated_lufs,
+                            true_peak_dbtp=technical.true_peak_dbtp,
+                            loudness_tolerance_lu=(
+                                PilotVideoQA.LOUDNESS_TOLERANCE_LU
+                            ),
+                            true_peak_tolerance_db=(
+                                PilotVideoQA.TRUE_PEAK_MEASUREMENT_TOLERANCE_DB
+                            ),
+                        )
+                    )
+                    repair_recommendations = audio_adjustments or [
+                        "Audio QA could not provide a measurable value to adjust; "
+                        + "rerendering once before reporting any unresolved finding."
+                    ]
                 record_stage_qa(
                     project_directory,
                     QAStageResult(
@@ -367,9 +387,7 @@ class VideoProductionPipeline:
                         status=technical.status,
                         checks=technical.checks,
                         findings=technical.issues,
-                        recommendations=[
-                            "Repair the reported technical QA issues and rerender."
-                        ],
+                        recommendations=repair_recommendations,
                         attempt=qa_attempt,
                     ),
                 )

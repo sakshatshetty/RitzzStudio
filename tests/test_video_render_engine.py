@@ -279,6 +279,24 @@ def test_audio_loudness_settings_are_configurable(monkeypatch):
     )
 
 
+def test_audio_filter_tightens_true_peak_target_from_measured_qa():
+    renderer = FFmpegVideoRenderer()
+
+    adjustments = renderer.adjust_audio_filter_from_measurement(
+        integrated_lufs=-15.1,
+        true_peak_dbtp=-0.7,
+        loudness_tolerance_lu=1.5,
+        true_peak_tolerance_db=0.1,
+    )
+
+    assert renderer.audio_target_lufs == -14.0
+    assert renderer.audio_filter_target_lufs == -14.0
+    assert renderer.audio_true_peak_ceiling_dbtp == -1.0
+    assert renderer.audio_filter_true_peak_target_dbtp == pytest.approx(-2.7)
+    assert adjustments == ["loudnorm true-peak target -2.0 -> -2.7 dBTP"]
+    assert "loudnorm=I=-14:TP=-2.7:LRA=11" in renderer.build_audio_filter()
+
+
 @pytest.mark.parametrize(
     ("name", "value"),
     [
