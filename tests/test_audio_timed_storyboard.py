@@ -2,6 +2,7 @@ from itertools import pairwise
 
 import pytest
 
+from modules.project.config import ProductionConfig
 from modules.qa.engine import load_project_qa
 from modules.storyboard.dynamic_engine import DynamicStoryboardEngine
 from modules.storyboard.editorial_planner import EditorialDecision
@@ -176,6 +177,32 @@ def test_same_visual_idea_spans_multiple_sentences_without_timer_cut():
     assert len(timed.scenes) == 1
     assert timed.scenes[0].duration_seconds == 10
     assert all(scene.transition == "cut" for scene in timed.scenes)
+
+
+def test_audio_timed_scene_splits_to_enforce_maximum_hold_without_natural_pause():
+    lines = [
+        "A continuing water treatment detail"
+        for _ in range(20)
+    ]
+    storyboard = make_storyboard(lines, ["The same water treatment"] * len(lines))
+    text = " ".join(lines)
+    engine = AudioTimedStoryboardEngine(
+        production_config=ProductionConfig(
+            target_duration_seconds=480,
+            minimum_duration_seconds=480,
+            scene_maximum_duration_seconds=10,
+        )
+    )
+
+    timed = engine.build(
+        storyboard,
+        alignment_for(text, 36, interval=36 / len(text)),
+    )
+
+    assert len(timed.scenes) > 1
+    assert all(scene.duration_seconds <= 10 for scene in timed.scenes)
+    assert timed.scenes[0].narration.startswith(lines[0])
+    assert timed.scenes[-1].narration.endswith(lines[-1])
 
 
 def test_sentence_end_and_visual_idea_change_create_a_scene():

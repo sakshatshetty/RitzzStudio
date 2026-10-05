@@ -78,7 +78,9 @@ class AudioTimedStoryboardEngine:
                 raise ValueError(f"Audio-timed scene {index + 1} has non-positive duration.")
             if duration > self.maximum_visual_hold_seconds:
                 raise ValueError(
-                    f"Audio-timed scene {index + 1} exceeds the configured maximum hold."
+                    f"Audio-timed scene {index + 1} lasts {duration:.3f}s, "
+                    f"exceeding the configured maximum hold of "
+                    f"{self.maximum_visual_hold_seconds:.3f}s."
                 )
             scenes.append(
                 self._merge_group(
@@ -198,9 +200,11 @@ class AudioTimedStoryboardEngine:
                     >= self.maximum_visual_hold_seconds
                 )
                 if (
-                    natural_boundary
-                    and safe_duration
-                    and (visual_change or maximum_reached)
+                    safe_duration
+                    and (
+                        maximum_reached
+                        or (natural_boundary and visual_change)
+                    )
                 ):
                     groups.append(current)
                     current = []
