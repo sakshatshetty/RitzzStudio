@@ -143,7 +143,7 @@ def test_technical_qa_reviews_audio_outside_loudness_limits(
 
     assert result.checks["audio_loudness"] == "REVIEW"
     assert result.status == "REVIEW"
-    assert any("human review is required" in issue for issue in result.issues)
+    assert any("outside the configured target range" in issue for issue in result.issues)
 
 
 def test_technical_qa_reviews_unmeasurable_audio(tmp_path, monkeypatch):
@@ -171,7 +171,7 @@ def test_technical_qa_reviews_unmeasurable_audio(tmp_path, monkeypatch):
     assert result.checks["audio_loudness"] == "REVIEW"
     assert result.integrated_lufs is None
     assert result.true_peak_dbtp is None
-    assert any("audio is silent" in issue for issue in result.issues)
+    assert any("automatic audio correction" in issue for issue in result.issues)
 
 
 def test_technical_qa_flags_corrupt_image(tmp_path):

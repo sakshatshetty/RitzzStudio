@@ -84,6 +84,12 @@ class FFmpegVideoRenderer:
             minimum=-9.0,
             maximum=0.0,
         )
+        self.audio_filter_target_lufs = self.audio_target_lufs
+        self.audio_filter_true_peak_target_dbtp = max(
+            -9.0,
+            self.audio_true_peak_ceiling_dbtp
+            - self.AUDIO_TRUE_PEAK_CODEC_HEADROOM_DB,
+        )
 
         if not self.ffmpeg_path:
             raise FileNotFoundError(
@@ -440,17 +446,55 @@ class FFmpegVideoRenderer:
         return output_path
 
     def build_audio_filter(self) -> str:
-        encoding_peak_target = max(
-            -9.0,
-            self.audio_true_peak_ceiling_dbtp
-            - self.AUDIO_TRUE_PEAK_CODEC_HEADROOM_DB,
-        )
         return (
             "acompressor=threshold=0.05:ratio=20:attack=5:release=100:makeup=1,"
-            f"loudnorm=I={self.audio_target_lufs:g}:"
-            f"TP={encoding_peak_target:g}:"
+            f"loudnorm=I={self.audio_filter_target_lufs:g}:"
+            f"TP={self.audio_filter_true_peak_target_dbtp:g}:"
             f"LRA={self.AUDIO_LOUDNESS_RANGE_LU:g}"
         )
+
+    def adjust_audio_filter_from_measurement(
+        self,
+        *,
+        integrated_lufs: float | None,
+        true_peak_dbtp: float | None,
+        loudness_tolerance_lu: float,
+        true_peak_tolerance_db: float,
+    ) -> list[str]:
+        """Tighten filter targets from measured render QA for the next attempt."""
+        adjustments: list[str] = []
+        if integrated_lufs is not None and math.isfinite(integrated_lufs):
+            deviation = self.audio_target_lufs - integrated_lufs
+            if abs(deviation) > loudness_tolerance_lu:
+                previous = self.audio_filter_target_lufs
+                self.audio_filter_target_lufs = min(
+                    -5.0,
+                    max(-70.0, previous + deviation),
+                )
+                adjustments.append(
+                    "loudnorm target "
+                    f"{previous:.1f} -> {self.audio_filter_target_lufs:.1f} LUFS"
+                )
+
+        if true_peak_dbtp is not None and math.isfinite(true_peak_dbtp):
+            maximum_peak = (
+                self.audio_true_peak_ceiling_dbtp + true_peak_tolerance_db
+            )
+            excess = true_peak_dbtp - maximum_peak
+            if excess > 0:
+                previous = self.audio_filter_true_peak_target_dbtp
+                reduction = max(0.5, excess + 0.5)
+                self.audio_filter_true_peak_target_dbtp = max(
+                    -9.0,
+                    previous - reduction,
+                )
+                if self.audio_filter_true_peak_target_dbtp < previous:
+                    adjustments.append(
+                        "loudnorm true-peak target "
+                        f"{previous:.1f} -> "
+                        f"{self.audio_filter_true_peak_target_dbtp:.1f} dBTP"
+                    )
+        return adjustments
 
     def measure_audio_loudness(
         self,
