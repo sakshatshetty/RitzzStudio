@@ -265,10 +265,27 @@ jobs:
             const productionArtifacts = allArtifacts.filter(
               artifact => artifact.name.startsWith(prefix)
             );
+            const currentRunArtifactIds = new Set();
+            if (mode === 'NEW') {
+              const currentRunArtifacts = await github.paginate(
+                github.rest.actions.listWorkflowRunArtifacts,
+                {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: context.runId,
+                  per_page: 100
+                }
+              );
+              for (const artifact of currentRunArtifacts) {
+                if (artifact.name.startsWith(prefix)) {
+                  currentRunArtifactIds.add(artifact.id);
+                }
+              }
+            }
             let effectiveMode = mode;
             if (mode === 'NEW') {
               const artifactsFromOtherRuns = productionArtifacts.filter(
-                artifact => artifact.workflow_run.id !== context.runId
+                artifact => !currentRunArtifactIds.has(artifact.id)
               );
               const approvalTitle = `RITZZ topic approval - production ${productionId}`;
               const matchingIssues = await github.rest.search.issuesAndPullRequests({
@@ -283,7 +300,7 @@ jobs:
                 return;
               }
               if (issueExists && !productionArtifacts.some(artifact =>
-                artifact.workflow_run.id === context.runId
+                currentRunArtifactIds.has(artifact.id)
               )) {
                 core.setFailed(`PRODUCTION_ALREADY_EXISTS: ${productionId}`);
                 return;
@@ -328,8 +345,58 @@ jobs:
               core.setFailed(`PRODUCTION_NOT_FOUND: no saved checkpoint for ${productionId}.`);
               return;
             }
+            let sourceRunId = checkpoint.workflow_run?.id;
+            if (!sourceRunId) {
+              const checkpointCreatedAt = Date.parse(checkpoint.created_at || '');
+              let page = 1;
+              while (!sourceRunId) {
+                const runs = await github.rest.actions.listWorkflowRuns({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  workflow_id: 'ritzz-pipeline.yml',
+                  per_page: 100,
+                  page
+                });
+                const workflowRuns = runs.data.workflow_runs || [];
+                for (const run of workflowRuns) {
+                  if (
+                    Number.isFinite(checkpointCreatedAt)
+                    && Date.parse(run.created_at) > checkpointCreatedAt
+                  ) {
+                    continue;
+                  }
+                  const runArtifacts = await github.paginate(
+                    github.rest.actions.listWorkflowRunArtifacts,
+                    {
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      run_id: run.id,
+                      per_page: 100
+                    }
+                  );
+                  if (runArtifacts.some(artifact => artifact.id === checkpoint.id)) {
+                    sourceRunId = run.id;
+                    break;
+                  }
+                }
+                if (
+                  sourceRunId
+                  || workflowRuns.length < 100
+                ) {
+                  break;
+                }
+                page++;
+              }
+            }
+            if (!sourceRunId) {
+              core.setFailed(
+                `PRODUCTION_CHECKPOINT_RUN_UNKNOWN: could not associate artifact ${checkpoint.name} `
+                + `(${checkpoint.id}) with a workflow run.`
+              );
+              return;
+            }
             core.setOutput('production_id', productionId);
-            core.setOutput('source_run_id', String(checkpoint.workflow_run.id));
+            core.setOutput('source_run_id', String(sourceRunId));
             core.setOutput('source_artifact', checkpoint.name);
             core.setOutput('resume_from_index', String(checkpointIndex + 1));
             core.setOutput('checkpoint_index', String(checkpointIndex));
