@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shutil
 import tempfile
 from collections.abc import Iterable
 from datetime import datetime, timezone
@@ -93,6 +94,7 @@ class ProductionStateStore:
             ) from exc
         migrated = self._migrate_state(state)
         self._validate_state(state, production_id)
+        migrated = self._migrate_legacy_metadata_archive(state) or migrated
         if migrated:
             self._save(state)
         self._validate_artifacts(state)
@@ -441,6 +443,73 @@ class ProductionStateStore:
                         "STATE_ARTIFACT_MISMATCH",
                         f"Artifact missing or changed for stage {stage}: {relative_path}.",
                     )
+
+    def _migrate_legacy_metadata_archive(self, state: dict[str, Any]) -> bool:
+        render_stage = state["stages"]["render_video"]
+        metadata_stage = state["stages"]["metadata_packaging"]
+        shared_archive = "rendered-project.tar.gz"
+        if (
+            render_stage["status"] != "completed"
+            or metadata_stage["status"] != "completed"
+        ):
+            return False
+
+        render_artifact = next(
+            (
+                artifact
+                for artifact in render_stage["artifacts"]
+                if artifact.get("path") == shared_archive
+            ),
+            None,
+        )
+        metadata_artifact = next(
+            (
+                artifact
+                for artifact in metadata_stage["artifacts"]
+                if artifact.get("path") == shared_archive
+            ),
+            None,
+        )
+        if render_artifact is None or metadata_artifact is None:
+            return False
+
+        source = self.artifact_root / shared_archive
+        if not source.is_file():
+            return False
+        artifact_root = self.artifact_root.resolve()
+        try:
+            source.resolve().relative_to(artifact_root)
+        except ValueError as exc:
+            raise ProductionStateError(
+                "STATE_ARTIFACT_MISMATCH",
+                f"Unsafe legacy project archive path: {shared_archive}.",
+            ) from exc
+        actual_hash = self._sha256(source)
+        if metadata_artifact.get("sha256") != actual_hash:
+            return False
+
+        metadata_archive = "metadata-project.tar.gz"
+        destination = self.artifact_root / metadata_archive
+        try:
+            destination.resolve().relative_to(artifact_root)
+        except ValueError as exc:
+            raise ProductionStateError(
+                "STATE_ARTIFACT_MISMATCH",
+                f"Unsafe legacy project archive path: {metadata_archive}.",
+            ) from exc
+        if destination.exists():
+            if not destination.is_file() or self._sha256(destination) != actual_hash:
+                raise ProductionStateError(
+                    "STATE_ARTIFACT_MISMATCH",
+                    "Cannot migrate the legacy metadata archive because "
+                    f"{metadata_archive} already exists with different contents.",
+                )
+        else:
+            shutil.copy2(source, destination)
+
+        metadata_artifact["path"] = metadata_archive
+        render_artifact["sha256"] = actual_hash
+        return True
 
     def _validate_artifact_contracts(self, state: dict[str, Any]) -> None:
         try:
