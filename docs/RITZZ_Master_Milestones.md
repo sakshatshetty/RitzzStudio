@@ -39,8 +39,8 @@ flow, and end-to-end tests have passed.
 
 The selected CI/CD control plane is GitHub Actions. Video production is started
 from the GitHub Actions web interface, not from a local command line. Each run
-discovers four trending candidates and presents numbered choices 1, 2, 3, and 4
-for human selection before production continues. The current browser selection
+discovers 3–5 qualified competitor-inspired candidates and presents numbered
+choices for human selection before production continues. The current browser selection
 mechanism is a run-specific GitHub issue where a trusted collaborator replies
 with the selected number.
 
@@ -189,7 +189,9 @@ Project: `20260820_001_why_do_pirates_wear_eye_patches`
 ### Acceptance criteria
 
 - No recommended candidate substantially overlaps an existing RITZZ topic unless explicitly allowed.
-- Discovery returns exactly four distinct candidates.
+- Pipeline discovery returns 3–5 distinct candidates that pass inventory,
+  editorial, recommendation, and vidIQ validation gates; fewer than three stops
+  discovery rather than triggering an unscoped fallback.
 - Missing provider signals remain missing and are visible.
 - Competitor success is treated as evidence, not a guarantee.
 - A human explicitly selects one candidate.
@@ -537,8 +539,8 @@ explicit approval gates that protect the channel and published output.
 - M7 learning data can be consumed as read-only input when available.
 - A new video can be started from the GitHub Actions web UI without running a
   local command-line command.
-- Trending discovery presents exactly four selectable candidates labeled 1, 2,
-  3, and 4, and the selected choice is persisted with the project.
+- Pipeline discovery presents 3–5 selectable candidates with consecutive
+  numbered labels, and the selected choice is persisted with the project.
 - The workflow pauses at each required human approval checkpoint and resumes
   only after the approval is recorded.
 

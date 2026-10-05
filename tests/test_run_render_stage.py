@@ -1,5 +1,10 @@
+import json
+from types import SimpleNamespace
+
 import pytest
 
+from modules.project.manager import ProjectManager
+from scripts import run_render_stage
 from scripts.run_render_stage import (
     _reject_semantic_qa_fail,
     _reuse_or_create_thumbnail,
@@ -94,3 +99,70 @@ def test_invalid_existing_thumbnail_is_not_silently_replaced(tmp_path, monkeypat
             "Title",
             probe_media=lambda _path: {"width": 640, "height": 360},
         )
+
+
+def test_main_generates_thumbnail_after_successful_render(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    project_manager = ProjectManager(tmp_path / "projects")
+    project = project_manager.create_project("Thumbnail generation test")
+    project_directory = project_manager.get_project_path(project)
+    storyboard_directory = project_directory / "storyboard"
+    image_directory = project_directory / "images"
+    storyboard_directory.mkdir(parents=True, exist_ok=True)
+    image_directory.mkdir(parents=True, exist_ok=True)
+    (storyboard_directory / "storyboard_audio_timed.json").write_text(
+        json.dumps(
+            {
+                "topic": "Test topic",
+                "target_duration_seconds": 5,
+                "total_scene_duration_seconds": 5,
+                "scenes": [
+                    {
+                        "scene_id": "scene_001",
+                        "section_id": "intro",
+                        "start_seconds": 0,
+                        "duration_seconds": 5,
+                        "narration": "A test scene.",
+                        "visual_description": "A clearly described test scene.",
+                        "image_prompt": "A simple test scene illustration.",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (image_directory / "scene_001.png").write_bytes(b"scene image")
+    (project_directory / "packaging.json").write_text(
+        json.dumps({"selected_title": "Test Thumbnail Title"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("RITZZ_PROJECT_ID", project.project_id)
+
+    class FakePipeline:
+        def __init__(self):
+            self.renderer = SimpleNamespace(
+                _probe_media=lambda _path: {"width": 1280, "height": 720}
+            )
+
+        def create_request(self, **_kwargs):
+            return object()
+
+        def run(self, _request):
+            return SimpleNamespace(
+                status="completed",
+                technical_qa_status="PASS",
+                output_video_file="video/ritzz_test.mp4",
+                error_message=None,
+            )
+
+    monkeypatch.setattr(run_render_stage, "VideoProductionPipeline", FakePipeline)
+
+    def create_thumbnail(_source, output, _title):
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"thumbnail")
+        return output
+
+    monkeypatch.setattr(run_render_stage, "create_thumbnail", create_thumbnail)
+
+    assert run_render_stage.main() == 0
+    assert (project_directory / "video" / "thumbnail.jpg").read_bytes() == b"thumbnail"

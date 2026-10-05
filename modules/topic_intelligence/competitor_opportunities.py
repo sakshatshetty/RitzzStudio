@@ -105,6 +105,7 @@ class CompetitorOpportunityGenerator:
         diagnostics = {
             "videos_inspected": len(report.outliers),
             "successful_outlier_videos": len(videos),
+            "gpt_topic_ideas_returned": 0,
             "topic_patterns_extracted": 0,
             "generated_candidates": 0,
             "rejected_copied_angles": 0,
@@ -135,6 +136,7 @@ class CompetitorOpportunityGenerator:
         if parsed is None:
             raise RuntimeError("OpenAI returned no structured competitor-topic patterns.")
 
+        diagnostics["gpt_topic_ideas_returned"] = len(parsed.opportunities)
         patterns = self._validated_patterns(parsed.patterns, evidence_by_id)
         diagnostics["topic_patterns_extracted"] = len(patterns)
         candidates, rejected, rejection_details = self._validated_candidates(
@@ -178,7 +180,9 @@ class CompetitorOpportunityGenerator:
             "Reject broad essay premises, school-essay topics, generic categories, and titles "
             "that could describe many unrelated videos. If no evidenced concrete subject "
             "supports an original idea, return no opportunity. "
-            "Build an internal pool targeting " + str(candidate_limit) + " concrete "
+            "Generate approximately 8–12 original candidate ideas, and validate "
+            "only ideas that pass the evidence and originality rules. Build an "
+            "internal pool targeting " + str(candidate_limit) + " concrete "
             "opportunities, not merely four. Reach that target only when the evidence "
             "supports it; never relax a quality gate to fill the pool. Do not copy or paraphrase competitor titles, "
             "and do not reuse the same subject with a trivial wording change. Include a "
@@ -334,6 +338,7 @@ class CompetitorOpportunityGenerator:
                 proposed_title=topic,
                 angle=proposal.angle,
                 why_interesting=proposal.why_interesting,
+                curiosity_hook=proposal.why_interesting,
                 primary_keyword=topic,
                 opportunity_type="TREND_TO_EVERGREEN",
                 provider="vidIQ MCP competitor research",

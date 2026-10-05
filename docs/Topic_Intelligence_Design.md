@@ -401,11 +401,14 @@ provider queries groups separately, starting with format competitors, and
 retains the group on channel and video evidence. It queries only capabilities
 and arguments advertised by the vidIQ MCP schema: channel-scoped outliers
 first, then channel-scoped recent/popular videos when supported.
-TRENDING/rising/evergreen discovery remains a clearly labeled secondary path
-when competitor evidence is absent or does not fill the configured candidate
-pool. It is never treated as competitor evidence. The separate multi-source
-discovery path remains bounded by `RITZZ_CANDIDATE_POOL_TARGET` (15–30,
-default 30). The adapter does not invent vidIQ fields or metrics.
+The active pipeline topic gate uses configured competitor outliers as the sole
+ideation evidence: GPT generates original proposals from that evidence, then
+vidIQ validates each proposal with keyword research. It stops with diagnostics
+if competitor evidence or the minimum of three qualified ideas is unavailable;
+it does not backfill with unscoped trending, rising, or evergreen results.
+General-purpose topic discovery remains a separate path, bounded by
+`RITZZ_CANDIDATE_POOL_TARGET` (15–30, default 30). The adapter does not invent
+vidIQ fields or metrics.
 
 Candidate processing normalizes and removes exact duplicates, checks the
 authoritative RITZZ inventory, applies cheap niche and RITZZ-fit prefilters,
@@ -414,8 +417,9 @@ only for candidates that remain plausible. Editorial `PASS` alone is not
 sufficient: candidates must also pass the explicit RITZZ-fit threshold, final
 duplicate validation, opportunity score, and evidence-completeness checks.
 Competitor or historical signals cannot override these gates. The final
-pipeline issue still contains exactly four candidates or discovery safely
-fails with JSON and Markdown diagnostics.
+pipeline issue contains three to five candidates that pass the recommendation
+gate; discovery safely fails with JSON and Markdown diagnostics if fewer than
+three qualify.
 
 The RITZZ-fit result records `PASS`/`REVIEW`/`FAIL`, score, story type, fit
 dimensions, trend dependency, and rationale. Cheap deterministic checks hold

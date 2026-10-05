@@ -66,6 +66,7 @@ class OpportunityCandidate(BaseModel):
     proposed_title: str | None = None
     angle: str | None = None
     why_interesting: str | None = None
+    curiosity_hook: str | None = None
     primary_keyword: str | None = None
     related_keywords: list[str] = Field(default_factory=list)
     related_questions: list[str] = Field(default_factory=list)

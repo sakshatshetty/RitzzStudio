@@ -44,6 +44,7 @@ class CompetitorTopicPattern(BaseModel):
 class OutlierVideo(BaseModel):
     video_id: str
     title: str
+    url: str | None = None
     topic: str | None = None
     channel_id: str | None = None
     channel_title: str | None = None
@@ -171,6 +172,7 @@ def normalize_outlier(
     return OutlierVideo(
         video_id=str(get("videoId", "id") or ""),
         title=title,
+        url=_optional_string(get("videoUrl", "url", "link")),
         topic=topic,
         channel_id=_optional_string(get("channelId", "channel_id")),
         channel_title=_optional_string(get("channelTitle", "channelName", "channel")),
@@ -223,9 +225,9 @@ def build_market_intelligence_report(
         views = channel_views.get(channel_key, [])
         baseline_views = preliminary.baseline_views
         sample_size = None
-        if baseline_views is None and len(views) >= 3:
+        if baseline_views is None and len(views) >= 4:
             peer_views = [value for peer_index, value in views if peer_index != index]
-            if len(peer_views) >= 2:
+            if len(peer_views) >= 3:
                 baseline_views = float(statistics.median(peer_views))
                 sample_size = len(peer_views)
         item = normalize_outlier(
@@ -324,7 +326,9 @@ def competitor_evidence_for_video(video: OutlierVideo, source: str, collected_at
         for key, value in {
             "id": video.video_id or None,
             "title": video.title or None,
+            "url": video.url,
             "published_at": video.published_at,
+            "age_days": _video_age_days(video.published_at, collected_at),
             "duration": video.duration,
             "tags": video.tags,
             "topics": video.topics,
@@ -342,6 +346,41 @@ def competitor_evidence_for_video(video: OutlierVideo, source: str, collected_at
         source=source,
         collected_at=collected_at,
     )
+
+
+def _video_age_days(
+    published_at: int | str | None,
+    collected_at: str,
+) -> int | None:
+    if published_at is None:
+        return None
+    try:
+        collected = datetime.fromisoformat(collected_at.replace("Z", "+00:00"))
+        numeric_published_at = (
+            float(published_at)
+            if isinstance(published_at, str)
+            and re.fullmatch(r"\d+(?:\.\d+)?", published_at.strip())
+            else published_at
+        )
+        if isinstance(numeric_published_at, (int, float)):
+            seconds = (
+                numeric_published_at / 1000
+                if numeric_published_at > 10_000_000_000
+                else numeric_published_at
+            )
+            published = datetime.fromtimestamp(seconds, tz=timezone.utc)
+        else:
+            published = datetime.fromisoformat(
+                str(numeric_published_at).replace("Z", "+00:00")
+            )
+        if collected.tzinfo is None:
+            collected = collected.replace(tzinfo=timezone.utc)
+        if published.tzinfo is None:
+            published = published.replace(tzinfo=timezone.utc)
+    except (OverflowError, OSError, TypeError, ValueError):
+        return None
+    age_days = (collected - published).total_seconds() / 86400
+    return round(age_days) if age_days >= 0 else None
 
 
 def relevant_competitor_evidence(
