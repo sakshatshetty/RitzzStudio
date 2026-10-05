@@ -167,6 +167,33 @@ def test_concepts_are_accurate_short_and_cached_without_regeneration(tmp_path):
     assert second == first
 
 
+def test_invalid_thumbnail_concepts_get_one_feedback_guided_retry(tmp_path):
+    project = _project(tmp_path)
+    invalid = _concepts()
+    invalid.concepts[1] = invalid.concepts[1].model_copy(
+        update={"text": invalid.concepts[0].text}
+    )
+
+    class RetryingGenerator:
+        def __init__(self):
+            self.contexts = []
+
+        def generate(self, context):
+            self.contexts.append(context)
+            return invalid if len(self.contexts) == 1 else _concepts()
+
+    generator = RetryingGenerator()
+    result = _engine(concepts=generator).create_concepts(
+        project,
+        production_id="production-1",
+        project_id="20261005_001",
+    )
+
+    assert result["status"] == "AWAITING_CONCEPT_SELECTION"
+    assert len(generator.contexts) == 2
+    assert "validation issues" in generator.contexts[1]["qa_feedback"]
+
+
 def test_selected_concept_generates_one_clean_artwork_and_composites_exact_text(tmp_path):
     project = _project(tmp_path)
     concept_generator = FakeConceptGenerator()

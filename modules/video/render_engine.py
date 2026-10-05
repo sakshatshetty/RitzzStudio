@@ -39,6 +39,7 @@ class FFmpegVideoRenderer:
     DEFAULT_AUDIO_TARGET_LUFS = -14.0
     DEFAULT_AUDIO_TRUE_PEAK_CEILING_DBTP = -1.0
     AUDIO_LOUDNESS_RANGE_LU = 11.0
+    AUDIO_TRUE_PEAK_CODEC_HEADROOM_DB = 1.0
     VIDEO_BITRATE_TOLERANCE = 0.20
 
     DURATION_TOLERANCE_SECONDS = 0.25
@@ -439,9 +440,15 @@ class FFmpegVideoRenderer:
         return output_path
 
     def build_audio_filter(self) -> str:
+        encoding_peak_target = max(
+            -9.0,
+            self.audio_true_peak_ceiling_dbtp
+            - self.AUDIO_TRUE_PEAK_CODEC_HEADROOM_DB,
+        )
         return (
+            "acompressor=threshold=0.05:ratio=20:attack=5:release=100:makeup=1,"
             f"loudnorm=I={self.audio_target_lufs:g}:"
-            f"TP={self.audio_true_peak_ceiling_dbtp:g}:"
+            f"TP={encoding_peak_target:g}:"
             f"LRA={self.AUDIO_LOUDNESS_RANGE_LU:g}"
         )
 

@@ -108,7 +108,7 @@ def main() -> int:
         output_directory=output_directory,
         output_video_file=output_video_file,
         resume=True,
-        enable_image_ai_qa=False,
+        enable_image_ai_qa=True,
     )
     result = pipeline.run(request)
     print(f"Render status: {result.status}")

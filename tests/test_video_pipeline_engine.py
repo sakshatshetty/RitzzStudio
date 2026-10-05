@@ -5,19 +5,17 @@ from pathlib import Path
 
 import pytest
 
+from modules.image.models import ImageGenerationResult
+from modules.qa.engine import load_project_qa
+from modules.storyboard.engine import StoryboardEngine
 from modules.video.pipeline_engine import (
     VideoProductionPipeline,
 )
-
 from modules.video.pipeline_models import (
     VideoProductionRequest,
     VideoProductionResult,
 )
 from modules.video.qa_models import QAStatus, SceneQAResult, TechnicalQAResult
-from modules.qa.engine import load_project_qa
-from modules.image.models import ImageGenerationResult
-from modules.storyboard.engine import StoryboardEngine
-
 
 FFMPEG_AVAILABLE = (
     shutil.which("ffmpeg") is not None
@@ -504,6 +502,38 @@ def test_image_ai_qa_moves_editorial_and_repairs_impacted_images(tmp_path: Path)
     assert "scene_002.editorial_context" in image_checks.checks
     assert "scene_002.narration_description" in image_checks.checks
     assert [attempt.status for attempt in report.stages["image_editorial_qa"]] == ["FAIL", "PASS"]
+
+
+def test_image_ai_qa_stops_on_unresolved_review(tmp_path: Path) -> None:
+    image_directory = create_images(tmp_path)
+    audio_file = create_audio(tmp_path)
+    storyboard_file = create_storyboard(tmp_path, audio_file)
+    alignment_file = create_alignment(tmp_path)
+
+    class Reviewer:
+        def review(self, image_path, scene, editorial_candidates=None):
+            return SceneQAResult(
+                scene_id=scene.scene_id,
+                status="REVIEW",
+                narration_image="REVIEW",
+                narration_description="PASS",
+                editorial_context="PASS",
+                rationale="The visual relation is uncertain.",
+            )
+
+    pipeline = VideoProductionPipeline(image_reviewer=Reviewer())
+    request = pipeline.create_request(
+        storyboard_file=storyboard_file,
+        image_directory=image_directory,
+        narration_result_file=alignment_file,
+        audio_file=audio_file,
+        output_directory=tmp_path / "output",
+        enable_image_ai_qa=True,
+    )
+
+    with pytest.raises(RuntimeError, match="remains unresolved"):
+        pipeline._review_and_repair_images(request, tmp_path)
+    assert load_project_qa(tmp_path).stages["image_editorial_qa"][-1].status == "REVIEW"
 
 
 def test_pipeline_requests_bounded_sync_repair_for_timeline_drift_review() -> None:

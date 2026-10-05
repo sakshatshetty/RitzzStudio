@@ -273,7 +273,10 @@ def test_audio_loudness_settings_are_configurable(monkeypatch):
 
     assert renderer.audio_target_lufs == -16.5
     assert renderer.audio_true_peak_ceiling_dbtp == -1.5
-    assert renderer.build_audio_filter() == "loudnorm=I=-16.5:TP=-1.5:LRA=11"
+    assert renderer.build_audio_filter() == (
+        "acompressor=threshold=0.05:ratio=20:attack=5:release=100:makeup=1,"
+        "loudnorm=I=-16.5:TP=-2.5:LRA=11"
+    )
 
 
 @pytest.mark.parametrize(

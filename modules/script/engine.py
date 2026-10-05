@@ -47,6 +47,7 @@ class ScriptEngine:
         script_directory: Path,
         force_refresh: bool = False,
         production_config: ProductionConfig | None = None,
+        qa_feedback: str | None = None,
     ) -> Script:
         """Generate a narration script from research and outline."""
 
@@ -141,6 +142,12 @@ class ScriptEngine:
                     outline,
                     last_word_count,
                     config,
+                )
+            if qa_feedback:
+                user_prompt = (
+                    f"{user_prompt}\n\n"
+                    "QA issues to correct in this revision:\n"
+                    f"{qa_feedback}"
                 )
 
             # ---------------------------------------------
@@ -507,8 +514,7 @@ class ScriptEngine:
             - current_word_count
         )
 
-        if additional_words < 0:
-            additional_words = 0
+        additional_words = max(additional_words, 0)
 
         requested_additional_words = (
             additional_words + 100

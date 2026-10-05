@@ -109,21 +109,43 @@ class AudioTimedStoryboardEngine:
     def save_storyboard(storyboard: Storyboard, output_file: str | Path) -> Path:
         path = Path(output_file)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(storyboard.model_dump_json(indent=2), encoding="utf-8")
+        from modules.qa.engine import record_stage_qa
 
-        timeline_valid = True
+        project_directory = path.parent.parent if path.parent.name == "storyboard" else path.parent
+        initial_qa = AudioTimedStoryboardEngine._evaluate_storyboard(storyboard)
+        if initial_qa.status != "PASS":
+            record_stage_qa(project_directory, initial_qa)
+
+        repaired = AudioTimedStoryboardEngine._repair_storyboard(storyboard)
+        final_qa = AudioTimedStoryboardEngine._evaluate_storyboard(repaired)
+        path.write_text(repaired.model_dump_json(indent=2), encoding="utf-8")
+        record_stage_qa(project_directory, final_qa)
+        if final_qa.status != "PASS":
+            raise ValueError(
+                "Storyboard QA remains unresolved after automatic correction; "
+                "inspect qa/qa_report.json before image generation."
+            )
+        return path
+
+    @staticmethod
+    def _evaluate_storyboard(storyboard: Storyboard):
+        from modules.qa.models import QAStageResult
+
         try:
             AudioTimedStoryboardEngine._validate_timeline(
                 storyboard,
                 storyboard.total_scene_duration_seconds,
             )
+            timeline_valid = True
         except ValueError:
             timeline_valid = False
 
         prompts_valid = bool(storyboard.scenes) and all(
             scene.image_prompt.strip() for scene in storyboard.scenes
         )
-        static_camera = all(scene.camera_motion == "static" for scene in storyboard.scenes)
+        static_camera = all(
+            scene.camera_motion == "static" for scene in storyboard.scenes
+        )
         hard_cuts = all(scene.transition == "cut" for scene in storyboard.scenes)
         editorial_qa = review_editorial_callouts(storyboard.scenes)
         findings = []
@@ -136,40 +158,96 @@ class AudioTimedStoryboardEngine:
         if not hard_cuts:
             findings.append("One or more production scenes do not use hard cuts.")
         findings.extend(editorial_qa.findings)
-
-        from modules.qa.engine import record_stage_qa
-        from modules.qa.models import QAStageResult
-
-        project_directory = path.parent.parent if path.parent.name == "storyboard" else path.parent
         hard_checks_pass = timeline_valid and prompts_valid and static_camera and hard_cuts
-        record_stage_qa(
-            project_directory,
-            QAStageResult(
-                stage="storyboard",
-                status=(
-                    "FAIL"
-                    if not hard_checks_pass
-                    else "REVIEW"
-                    if editorial_qa.status == "REVIEW"
-                    else "PASS"
-                ),
-                checks={
-                    "timeline_coverage": "PASS" if timeline_valid else "FAIL",
-                    "scene_prompts": "PASS" if prompts_valid else "FAIL",
-                    "static_camera": "PASS" if static_camera else "FAIL",
-                    "hard_cuts": "PASS" if hard_cuts else "FAIL",
-                    "editorial_callouts": editorial_qa.status,
-                    "editorial_format": (
-                        "REVIEW" if editorial_qa.malformed_callouts else "PASS"
-                    ),
-                },
-                findings=findings,
-                recommendations=["Correct the flagged storyboard scenes before image generation."] if findings else [],
-                metrics=editorial_qa.metrics(),
-                details=editorial_qa.scene_statuses,
-            ),
+        status = (
+            "FAIL"
+            if not hard_checks_pass
+            else "REVIEW"
+            if editorial_qa.status == "REVIEW"
+            else "PASS"
         )
-        return path
+        return QAStageResult(
+            stage="storyboard",
+            status=status,
+            checks={
+                "timeline_coverage": "PASS" if timeline_valid else "FAIL",
+                "scene_prompts": "PASS" if prompts_valid else "FAIL",
+                "static_camera": "PASS" if static_camera else "FAIL",
+                "hard_cuts": "PASS" if hard_cuts else "FAIL",
+                "editorial_callouts": editorial_qa.status,
+                "editorial_format": (
+                    "REVIEW" if editorial_qa.malformed_callouts else "PASS"
+                ),
+            },
+            findings=findings,
+            recommendations=(
+                ["Applying safe storyboard corrections."]
+                if findings
+                else []
+            ),
+            metrics=editorial_qa.metrics(),
+            details=editorial_qa.scene_statuses,
+        )
+
+    @staticmethod
+    def _repair_storyboard(storyboard: Storyboard) -> Storyboard:
+        scenes = [
+            scene.model_copy(
+                update={
+                    "camera_motion": "static",
+                    "transition": "cut",
+                }
+            )
+            for scene in storyboard.scenes
+        ]
+        prompt_builder = ImagePromptBuilder()
+        scenes = [
+            scene.model_copy(
+                update={"image_prompt": prompt_builder.build(scene)}
+            )
+            if not scene.image_prompt.strip()
+            else scene
+            for scene in scenes
+        ]
+
+        previous_end = 0.0
+        timeline_valid = True
+        for index, scene in enumerate(scenes):
+            if index and abs(scene.start_seconds - previous_end) > 0.01:
+                timeline_valid = False
+            previous_end = scene.start_seconds + scene.duration_seconds
+        if abs(previous_end - storyboard.total_scene_duration_seconds) > 0.01:
+            timeline_valid = False
+        if not timeline_valid and scenes:
+            total_duration = storyboard.total_scene_duration_seconds
+            final_duration = total_duration - sum(
+                scene.duration_seconds for scene in scenes[:-1]
+            )
+            if 0 < final_duration <= 30:
+                repaired_scenes = []
+                next_start = 0.0
+                for index, scene in enumerate(scenes):
+                    duration = (
+                        final_duration
+                        if index == len(scenes) - 1
+                        else scene.duration_seconds
+                    )
+                    repaired_scenes.append(
+                        scene.model_copy(
+                            update={
+                                "start_seconds": next_start,
+                                "duration_seconds": duration,
+                            }
+                        )
+                    )
+                    next_start += duration
+                scenes = repaired_scenes
+
+        if review_editorial_callouts(scenes).status == "REVIEW":
+            scenes = DynamicStoryboardEngine().apply_production_editorial_callouts(
+                scenes
+            )
+        return storyboard.model_copy(update={"scenes": scenes})
 
     def _group_short_beats(self, aligned: list[_AlignedScene], audio_duration: float) -> list[list[_AlignedScene]]:
         groups: list[list[_AlignedScene]] = []

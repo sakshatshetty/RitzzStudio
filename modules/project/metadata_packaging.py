@@ -16,6 +16,8 @@ from modules.project.packaging import (
     PackagingMetadata,
     TitleOption,
 )
+from modules.qa.engine import record_stage_qa
+from modules.qa.models import QAStageResult
 
 METADATA_VERSION = "ritzz-video-metadata-v1"
 METADATA_FILENAME = "metadata_packaging.json"
@@ -194,7 +196,7 @@ class MetadataPackagingEngine:
             artifact["approved_topic"] = context["approved_topic"]
             artifact["vidiq_evidence"] = context["vidiq_evidence"]
             artifact["qa_status"] = context["qa_status"]
-            generated = self._generate_with_validation(context)
+            generated = self._generate_with_validation(context, project_path)
             artifact.update(
                 {
                     "title_options": [
@@ -284,17 +286,44 @@ class MetadataPackagingEngine:
     def _generate_with_validation(
         self,
         context: dict[str, Any],
+        project_directory: Path,
     ) -> GeneratedVideoMetadata:
         failures: list[str] = []
         for _ in range(2):
             try:
-                draft = self.generator.generate(context)
+                attempt_context = dict(context)
+                if failures:
+                    attempt_context["qa_feedback"] = (
+                        "Correct these validation failures from the previous "
+                        "metadata draft:\n" + "\n".join(failures)
+                    )
+                draft = self.generator.generate(attempt_context)
                 if not isinstance(draft, GeneratedVideoMetadata):
                     draft = GeneratedVideoMetadata.model_validate(draft)
                 self._validate_draft(draft, context)
+                record_stage_qa(
+                    project_directory,
+                    QAStageResult(
+                        stage="metadata_packaging",
+                        status="PASS",
+                        checks={"metadata_validation": "PASS"},
+                    ),
+                )
                 return draft
             except (ValueError, TypeError) as exc:
                 failures.append(str(exc))
+                record_stage_qa(
+                    project_directory,
+                    QAStageResult(
+                        stage="metadata_packaging",
+                        status="FAIL",
+                        checks={"metadata_validation": "FAIL"},
+                        findings=[str(exc)],
+                        recommendations=[
+                            "Correct every listed metadata validation issue."
+                        ],
+                    ),
+                )
         raise ValueError(
             "Generated metadata failed validation twice: " + " | ".join(failures)
         )

@@ -21,6 +21,10 @@ from modules.topic_intelligence.inventory import (
 from modules.topic_intelligence.models import OpportunityReport, TopicSelection
 
 
+class _QARepairExhausted(RuntimeError):
+    """Raised after a generated artifact fails its bounded QA repair loop."""
+
+
 @dataclass
 class ContentWorkflowResult:
     project: Project
@@ -117,138 +121,66 @@ class ContentWorkflow:
         qa_recorded = False
         try:
             research_dir = project_path / "research"
-            research_result = self._run_configured(
+            research_result = self._run_with_qa_feedback(
+                "research",
                 research_engine.research,
-                topic, research_dir,
-                force_refresh=force_refresh or force_refresh_research,
-                production_config=production_config,
+                (topic, research_dir),
+                {
+                    "force_refresh": force_refresh or force_refresh_research,
+                    "production_config": production_config,
+                },
+                project_path,
+                lambda artifact: self._research_qa_result(artifact, research_dir),
+                "Research validation failed after automatic correction; "
+                "inspect research_validation.json.",
             )
+            qa_recorded = isinstance(research_result, Research)
             self._complete_if_needed(project.project_id, "research")
             if isinstance(research_result, Research):
-                validation = validate_research(research_result)
-                validation_path = research_dir / "research_validation.json"
-                validation_path.write_text(validation.model_dump_json(indent=2), encoding="utf-8")
-                validation_findings = list(validation.issues)
-                validation_findings.extend(
-                    f"{claim.claim}: {issue}"
-                    for claim in validation.claims
-                    for issue in claim.issues
-                )
-                record_stage_qa(
-                    project_path,
-                    QAStageResult(
-                        stage="research",
-                        status=validation.status,
-                        checks={"claim_source_coverage": validation.status},
-                        findings=validation_findings,
-                        recommendations=(
-                            ["Resolve unsupported important claims before continuing."]
-                            if validation.status == "FAIL"
-                            else ["Use cautious wording for claims marked REVIEW."]
-                            if validation.status == "REVIEW"
-                            else []
-                        ),
-                    ),
-                )
-                qa_recorded = True
-                if validation.status == "FAIL":
-                    raise ValueError("Research validation failed; inspect research_validation.json before outlining.")
                 self._complete_if_needed(project.project_id, "research_validation")
 
             research_file = research_dir / "research.json"
             outline_dir = project_path / "outline"
             current_stage = "outline"
             qa_recorded = False
-            outline_result = self._run_configured(
+            outline_result = self._run_with_qa_feedback(
+                "outline",
                 outline_engine.create_outline,
-                research_file, outline_dir,
-                force_refresh=force_refresh,
-                production_config=production_config,
+                (research_file, outline_dir),
+                {
+                    "force_refresh": force_refresh,
+                    "production_config": production_config,
+                },
+                project_path,
+                lambda artifact: self._outline_qa_result(artifact, production_config),
+                "Outline QA failed after automatic correction; "
+                "inspect qa/qa_report.json before script generation.",
             )
-            if isinstance(outline_result, Outline):
-                section_total = sum(section.estimated_seconds for section in outline_result.sections)
-                section_sum_ok = section_total == outline_result.total_estimated_seconds
-                duration_ok = (
-                    production_config.minimum_acceptable_duration_seconds
-                    <= section_total
-                    <= production_config.maximum_acceptable_duration_seconds
-                )
-                outline_status = "PASS" if section_sum_ok and duration_ok else "FAIL"
-                findings = []
-                if not section_sum_ok:
-                    findings.append("Section durations do not sum to the reported outline duration.")
-                if not duration_ok:
-                    findings.append(
-                        "Outline duration is outside the configured minimum and "
-                        "±60-second target range."
-                    )
-                record_stage_qa(
-                    project_path,
-                    QAStageResult(
-                        stage="outline",
-                        status=outline_status,
-                        checks={"section_duration_sum": "PASS" if section_sum_ok else "FAIL",
-                                "target_duration_range": "PASS" if duration_ok else "FAIL"},
-                        findings=findings,
-                        recommendations=["Regenerate the outline with the configured duration as a hard constraint."] if findings else [],
-                    ),
-                )
-                qa_recorded = True
-                if outline_status == "FAIL":
-                    raise ValueError("Outline QA failed; inspect qa/qa_report.json before script generation.")
+            qa_recorded = isinstance(outline_result, Outline)
             self._complete_if_needed(project.project_id, "outline")
 
             script_dir = project_path / "script"
             current_stage = "script"
             qa_recorded = False
-            script_result = self._run_configured(
+            script_result = self._run_with_qa_feedback(
+                "script",
                 script_engine.create_script,
-                research_file, outline_dir / "outline.json", script_dir,
-                force_refresh=force_refresh,
-                production_config=production_config,
-            )
-            if isinstance(script_result, Script) and isinstance(outline_result, Outline) and isinstance(research_result, Research):
-                from modules.script.engine import ScriptEngine
-
-                ScriptEngine._validate_script(
-                    script_result,
+                (research_file, outline_dir / "outline.json", script_dir),
+                {
+                    "force_refresh": force_refresh,
+                    "production_config": production_config,
+                },
+                project_path,
+                lambda artifact: self._script_qa_result(
+                    artifact,
                     research_result,
                     outline_result,
-                    minimum_word_count=production_config.minimum_word_count,
-                    minimum_duration_seconds=production_config.minimum_duration_seconds,
-                )
-                findings: list[str] = []
-                recommendations: list[str] = []
-                hook_section = next(
-                    (section for section in script_result.sections if section.section_type == "hook"),
-                    script_result.sections[0] if script_result.sections else None,
-                )
-                hook_matches_opening = bool(
-                    hook_section
-                    and script_result.hook.strip()
-                    and hook_section.narration.lstrip().casefold().startswith(script_result.hook.strip().casefold())
-                )
-                hook_words = ScriptEngine._count_words(script_result.hook)
-                hook_ok = hook_matches_opening and 13 <= hook_words <= 38
-                if not hook_matches_opening:
-                    findings.append("Script.hook does not match the opening narration in the first hook section.")
-                    recommendations.append("Rewrite the first spoken section so it begins with the hook exactly once.")
-                if not 13 <= hook_words <= 38:
-                    findings.append(f"Opening hook has {hook_words} words; target is approximately 25 words (about 10 seconds).")
-                    recommendations.append("Adjust the opening hook toward approximately 25 spoken words.")
-                record_stage_qa(
-                    project_path,
-                    QAStageResult(
-                        stage="script",
-                        status="PASS" if hook_ok else "REVIEW",
-                        checks={"script_structure_and_duration": "PASS",
-                                "hook_matches_spoken_opening": "PASS" if hook_matches_opening else "REVIEW",
-                                "hook_duration": "PASS" if 13 <= hook_words <= 38 else "REVIEW"},
-                        findings=findings,
-                        recommendations=recommendations,
-                    ),
-                )
-                qa_recorded = True
+                    production_config,
+                ),
+                "Script QA failed after automatic correction; "
+                "inspect qa/qa_report.json.",
+            )
+            qa_recorded = isinstance(script_result, Script)
             self._complete_if_needed(project.project_id, "script")
 
             opportunity_context = (
@@ -271,6 +203,8 @@ class ContentWorkflow:
                 encoding="utf-8",
             )
         except Exception as exc:
+            if isinstance(exc, _QARepairExhausted):
+                qa_recorded = True
             if not qa_recorded:
                 record_stage_qa(
                     project_path,
@@ -340,6 +274,211 @@ class ContentWorkflow:
         return function(*args, **supported_kwargs)
 
     @staticmethod
+    def _run_with_qa_feedback(
+        stage: str,
+        generate,
+        args: tuple,
+        kwargs: dict,
+        project_directory: str | Path,
+        validate,
+        unresolved_message: str,
+    ):
+        feedback = None
+        for attempt in range(2):
+            generation_kwargs = dict(kwargs)
+            generation_kwargs["force_refresh"] = (
+                bool(kwargs.get("force_refresh")) or attempt > 0
+            )
+            if feedback:
+                generation_kwargs["qa_feedback"] = feedback
+            artifact = ContentWorkflow._run_configured(
+                generate,
+                *args,
+                **generation_kwargs,
+            )
+            qa_result = validate(artifact)
+            if qa_result is None:
+                return artifact
+            if qa_result.stage != stage:
+                raise ValueError(
+                    f"QA validator for '{stage}' returned stage "
+                    f"'{qa_result.stage}'."
+                )
+            record_stage_qa(project_directory, qa_result)
+            if qa_result.status == "PASS":
+                return artifact
+            if attempt == 1:
+                raise _QARepairExhausted(unresolved_message)
+            feedback = "\n".join(
+                (*qa_result.findings, *qa_result.recommendations)
+            ).strip()
+            if not feedback:
+                feedback = (
+                    f"Correct all failing checks reported for the {stage} stage "
+                    "and return a verifiably compliant artifact."
+                )
+        return artifact
+
+    @staticmethod
+    def _research_qa_result(
+        artifact,
+        research_directory: Path,
+    ) -> QAStageResult | None:
+        if not isinstance(artifact, Research):
+            return None
+        validation = validate_research(artifact)
+        (research_directory / "research_validation.json").write_text(
+            validation.model_dump_json(indent=2),
+            encoding="utf-8",
+        )
+        findings = list(validation.issues)
+        findings.extend(
+            f"{claim.claim}: {issue}"
+            for claim in validation.claims
+            for issue in claim.issues
+        )
+        recommendations = (
+            ["Resolve unsupported important claims and cite only listed sources."]
+            if validation.status != "PASS"
+            else []
+        )
+        return QAStageResult(
+            stage="research",
+            status=validation.status,
+            checks={"claim_source_coverage": validation.status},
+            findings=findings,
+            recommendations=recommendations,
+        )
+
+    @staticmethod
+    def _outline_qa_result(
+        artifact,
+        production_config: ProductionConfig,
+    ) -> QAStageResult | None:
+        if not isinstance(artifact, Outline):
+            return None
+        section_total = sum(
+            section.estimated_seconds for section in artifact.sections
+        )
+        section_sum_ok = section_total == artifact.total_estimated_seconds
+        duration_ok = (
+            production_config.minimum_acceptable_duration_seconds
+            <= section_total
+            <= production_config.maximum_acceptable_duration_seconds
+        )
+        findings = []
+        if not section_sum_ok:
+            findings.append(
+                "Section durations do not sum to the reported outline duration."
+            )
+        if not duration_ok:
+            findings.append(
+                "Outline duration is outside the configured minimum and "
+                "±60-second target range."
+            )
+        return QAStageResult(
+            stage="outline",
+            status="PASS" if section_sum_ok and duration_ok else "FAIL",
+            checks={
+                "section_duration_sum": "PASS" if section_sum_ok else "FAIL",
+                "target_duration_range": "PASS" if duration_ok else "FAIL",
+            },
+            findings=findings,
+            recommendations=(
+                ["Regenerate the outline with the duration range as a hard constraint."]
+                if findings
+                else []
+            ),
+        )
+
+    @staticmethod
+    def _script_qa_result(
+        artifact,
+        research_result,
+        outline_result,
+        production_config: ProductionConfig,
+    ) -> QAStageResult | None:
+        if not (
+            isinstance(artifact, Script)
+            and isinstance(outline_result, Outline)
+            and isinstance(research_result, Research)
+        ):
+            return None
+
+        from modules.script.engine import ScriptEngine
+
+        try:
+            ScriptEngine._validate_script(
+                artifact,
+                research_result,
+                outline_result,
+                minimum_word_count=production_config.minimum_word_count,
+                minimum_duration_seconds=production_config.minimum_duration_seconds,
+            )
+        except ValueError as exc:
+            return QAStageResult(
+                stage="script",
+                status="FAIL",
+                checks={"script_structure_and_duration": "FAIL"},
+                findings=[str(exc)],
+                recommendations=[
+                    (
+                        "Regenerate the complete script to satisfy its structure, "
+                        "evidence, and duration constraints."
+                    )
+                ],
+            )
+
+        hook_section = next(
+            (
+                section
+                for section in artifact.sections
+                if section.section_type == "hook"
+            ),
+            artifact.sections[0] if artifact.sections else None,
+        )
+        hook_matches_opening = bool(
+            hook_section
+            and artifact.hook.strip()
+            and hook_section.narration.lstrip().casefold().startswith(
+                artifact.hook.strip().casefold()
+            )
+        )
+        hook_words = ScriptEngine._count_words(artifact.hook)
+        hook_duration_ok = 13 <= hook_words <= 38
+        findings = []
+        recommendations = []
+        if not hook_matches_opening:
+            findings.append(
+                "Script.hook does not match the opening narration in the first hook section."
+            )
+            recommendations.append(
+                "Rewrite the first spoken section so it begins with the hook exactly once."
+            )
+        if not hook_duration_ok:
+            findings.append(
+                f"Opening hook has {hook_words} words; target is approximately "
+                "25 words (about 10 seconds)."
+            )
+            recommendations.append(
+                "Adjust the opening hook to 13–38 words and match its spoken opening."
+            )
+        hook_ok = hook_matches_opening and hook_duration_ok
+        return QAStageResult(
+            stage="script",
+            status="PASS" if hook_ok else "REVIEW",
+            checks={
+                "script_structure_and_duration": "PASS",
+                "hook_matches_spoken_opening": (
+                    "PASS" if hook_matches_opening else "REVIEW"
+                ),
+                "hook_duration": "PASS" if hook_duration_ok else "REVIEW",
+            },
+            findings=findings,
+            recommendations=recommendations,
+        )
+
+    @staticmethod
     def _run_ai_reviewed(
         stage: str,
         generate,
@@ -353,11 +492,12 @@ class ContentWorkflow:
         for attempt in range(2):
             result = reviewer.review(stage, evidence, artifact)
             record_stage_qa(project_directory, result)
-            if result.status != "FAIL":
+            if result.status == "PASS":
                 return artifact
             if attempt == 1:
                 raise RuntimeError(
-                    f"AI review failed after one feedback-guided retry for stage '{stage}'."
+                    f"AI review remained {result.status} after one "
+                    f"feedback-guided retry for stage '{stage}'."
                 )
             feedback = "\n".join(
                 result.recommendations or result.findings

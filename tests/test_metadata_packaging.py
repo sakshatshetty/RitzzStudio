@@ -365,6 +365,8 @@ def test_invalid_generated_metadata_is_retried_then_rejected(
         )
 
     assert len(generator.contexts) == 2
+    assert "qa_feedback" not in generator.contexts[0]
+    assert "validation failures" in generator.contexts[1]["qa_feedback"]
     artifact = json.loads((project_path / METADATA_FILENAME).read_text())
     assert artifact["status"] == "FAILED"
 

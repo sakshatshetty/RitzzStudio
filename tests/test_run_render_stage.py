@@ -144,7 +144,8 @@ def test_main_generates_thumbnail_after_successful_render(tmp_path, monkeypatch)
                 _probe_media=lambda _path: {"width": 1280, "height": 720}
             )
 
-        def create_request(self, **_kwargs):
+        def create_request(self, **kwargs):
+            assert kwargs["enable_image_ai_qa"] is True
             return object()
 
         def run(self, _request):

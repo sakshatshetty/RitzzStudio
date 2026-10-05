@@ -21,6 +21,7 @@ class ResearchEngine:
         research_directory: Path,
         force_refresh: bool = False,
         production_config: ProductionConfig | None = None,
+        qa_feedback: str | None = None,
     ) -> Research:
         """
         Research a topic and save the structured result.
@@ -67,6 +68,11 @@ class ResearchEngine:
                         f"{topic}\n\n"
                         f"Target video duration: {config.target_duration_seconds} seconds.\n"
                         f"Production constraints: {', '.join(config.constraints) or 'none'}"
+                        + (
+                            f"\n\nQA issues to correct in this revision:\n{qa_feedback}"
+                            if qa_feedback
+                            else ""
+                        )
                     ),
                 },
             ],

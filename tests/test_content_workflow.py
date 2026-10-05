@@ -217,11 +217,12 @@ def test_failed_research_validation_stops_before_outline(tmp_path):
     app = workflow(tmp_path, events, research=ValidatingResearch(events, status="FAIL"))
     with pytest.raises(RuntimeError, match="Research validation failed"):
         app.run("A topic")
-    assert events == ["research"]
+    assert events == ["research", "research"]
     project_path = next((tmp_path / "projects").iterdir())
     assert (project_path / "research" / "research_validation.json").exists()
     qa_report = json.loads((project_path / "qa" / "qa_report.json").read_text())
     assert qa_report["stages"]["research"][0]["status"] == "FAIL"
+    assert qa_report["stages"]["research"][1]["status"] == "FAIL"
 
 
 def test_content_workflow_persists_only_provisional_metadata_until_render(tmp_path):
@@ -277,3 +278,111 @@ def test_ai_qa_failure_gets_one_feedback_guided_retry(tmp_path):
     assert "Rewrite the first spoken lines" in calls[1][1]
     attempts = load_project_qa(tmp_path).stages["script_ai"]
     assert [item.status for item in attempts] == ["FAIL", "PASS"]
+
+
+def test_ai_qa_review_gets_retry_and_must_pass(tmp_path):
+    review_calls = []
+    generated_feedback = []
+
+    class Reviewer:
+        def review(self, stage, evidence, artifact):
+            review_calls.append(artifact)
+            return QAStageResult(
+                stage=f"{stage}_ai",
+                status="REVIEW" if len(review_calls) == 1 else "PASS",
+                findings=["The conclusion is too abrupt."]
+                if len(review_calls) == 1
+                else [],
+                recommendations=["Add a concise final payoff."]
+                if len(review_calls) == 1
+                else [],
+            )
+
+    def generate(*, force_refresh=False, qa_feedback=None):
+        generated_feedback.append(qa_feedback)
+        return {"draft": len(generated_feedback)}
+
+    result = ContentWorkflow._run_ai_reviewed(
+        "script",
+        generate,
+        (),
+        {"force_refresh": False},
+        {},
+        tmp_path,
+        Reviewer(),
+    )
+
+    assert result == {"draft": 2}
+    assert generated_feedback[0] is None
+    assert "Add a concise final payoff." in generated_feedback[1]
+    assert [
+        attempt.status
+        for attempt in load_project_qa(tmp_path).stages["script_ai"]
+    ] == ["REVIEW", "PASS"]
+
+
+def test_deterministic_qa_failure_gets_feedback_guided_retry(tmp_path):
+    calls = []
+
+    def generate(*, force_refresh=False, qa_feedback=None):
+        calls.append((force_refresh, qa_feedback))
+        return {"valid": len(calls) == 2}
+
+    def validate(artifact):
+        return QAStageResult(
+            stage="outline",
+            status="PASS" if artifact["valid"] else "FAIL",
+            checks={"duration": "PASS" if artifact["valid"] else "FAIL"},
+            findings=[] if artifact["valid"] else ["Outline is below the minimum duration."],
+            recommendations=[] if artifact["valid"] else ["Expand section durations."],
+        )
+
+    result = ContentWorkflow._run_with_qa_feedback(
+        "outline",
+        generate,
+        (),
+        {"force_refresh": False},
+        tmp_path,
+        validate,
+        "Outline QA failed after automatic correction.",
+    )
+
+    assert result == {"valid": True}
+    assert calls[0] == (False, None)
+    assert calls[1][0] is True
+    assert "Expand section durations." in calls[1][1]
+    assert [
+        attempt.status
+        for attempt in load_project_qa(tmp_path).stages["outline"]
+    ] == ["FAIL", "PASS"]
+
+
+def test_deterministic_qa_stops_after_bounded_retries(tmp_path):
+    calls = []
+
+    def generate(*, force_refresh=False, qa_feedback=None):
+        calls.append((force_refresh, qa_feedback))
+        return {"valid": False}
+
+    def validate(_artifact):
+        return QAStageResult(
+            stage="outline",
+            status="FAIL",
+            checks={"duration": "FAIL"},
+            findings=["Outline is below the minimum duration."],
+        )
+
+    with pytest.raises(RuntimeError, match="bounded automatic correction"):
+        ContentWorkflow._run_with_qa_feedback(
+            "outline",
+            generate,
+            (),
+            {"force_refresh": False},
+            tmp_path,
+            validate,
+            "Outline QA failed after bounded automatic correction.",
+        )
+
+    assert len(calls) == 2
+    assert all(call[0] is True for call in calls[1:])
+    assert len(load_project_qa(tmp_path).stages["outline"]) == 2

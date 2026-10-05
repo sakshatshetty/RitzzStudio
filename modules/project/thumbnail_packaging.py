@@ -19,6 +19,8 @@ from openai import OpenAI
 from pydantic import BaseModel, Field
 
 from config import OPENAI_API_KEY, OPENAI_MODEL
+from modules.qa.engine import record_stage_qa
+from modules.qa.models import QAStageResult
 
 THUMBNAIL_VERSION = "ritzz-thumbnail-v1"
 THUMBNAIL_FILENAME = "thumbnail_packaging.json"
@@ -156,11 +158,16 @@ class FFmpegThumbnailComposer:
         ffmpeg_path: str | None = None,
         font_path: str | Path | None = None,
     ) -> None:
-        self.ffmpeg_path = ffmpeg_path or os.getenv("RITZZ_FFMPEG_PATH") or shutil.which("ffmpeg")
-        if not self.ffmpeg_path:
+        resolved_ffmpeg = (
+            ffmpeg_path
+            or os.getenv("RITZZ_FFMPEG_PATH")
+            or shutil.which("ffmpeg")
+        )
+        if not resolved_ffmpeg:
             raise FileNotFoundError(
                 "FFmpeg is required to compose the thumbnail text."
             )
+        self.ffmpeg_path: str = resolved_ffmpeg
         configured_font = font_path or os.getenv("RITZZ_FONT_PATH")
         font_candidates = (
             Path(configured_font) if configured_font else None,
@@ -168,14 +175,15 @@ class FFmpegThumbnailComposer:
             Path("/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf"),
             Path("C:/Windows/Fonts/arialbd.ttf"),
         )
-        self.font_path = next(
+        resolved_font = next(
             (candidate for candidate in font_candidates if candidate and candidate.is_file()),
             None,
         )
-        if self.font_path is None:
+        if resolved_font is None:
             raise FileNotFoundError(
                 "No supported bold font was found. Set RITZZ_FONT_PATH to a font file."
             )
+        self.font_path: Path = resolved_font
 
     def compose(self, artwork_path: Path, output_path: Path, text: str) -> Path:
         if not artwork_path.is_file() or artwork_path.stat().st_size == 0:
@@ -266,11 +274,53 @@ class ThumbnailPackagingEngine:
             project_id=project_id,
         )
         generator = self.concept_generator or OpenAIThumbnailConceptGenerator()
-        draft = generator.generate(context)
-        concepts = self._validate_concepts(
-            draft.concepts,
-            selected_title=context["final_title"],
-        )
+        validation_error: ValueError | None = None
+        for attempt in range(2):
+            attempt_context = dict(context)
+            if validation_error:
+                attempt_context["qa_feedback"] = (
+                    "Correct these thumbnail concept validation issues:\n"
+                    f"{validation_error}"
+                )
+            draft = generator.generate(attempt_context)
+            try:
+                concepts = self._validate_concepts(
+                    draft.concepts,
+                    selected_title=context["final_title"],
+                )
+                record_stage_qa(
+                    project_path,
+                    QAStageResult(
+                        stage="thumbnail_concepts",
+                        status="PASS",
+                        checks={"concept_validation": "PASS"},
+                    ),
+                )
+                break
+            except ValueError as exc:
+                validation_error = exc
+                record_stage_qa(
+                    project_path,
+                    QAStageResult(
+                        stage="thumbnail_concepts",
+                        status="FAIL",
+                        checks={"concept_validation": "FAIL"},
+                        findings=[str(exc)],
+                        recommendations=[
+                            "Regenerate distinct, accurate thumbnail concepts "
+                            + "that satisfy the stated text constraints."
+                        ],
+                    ),
+                )
+                if attempt == 1:
+                    raise ValueError(
+                        "Thumbnail concept QA failed after one automatic "
+                        f"correction: {exc}"
+                    ) from exc
+        else:
+            raise RuntimeError(
+                "Thumbnail concept QA correction loop ended unexpectedly."
+            ) from validation_error
         artifact = {
             "thumbnail_version": THUMBNAIL_VERSION,
             "production_id": production_id,

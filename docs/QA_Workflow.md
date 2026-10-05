@@ -4,39 +4,31 @@ Every project records stage QA history at `projects/<project>/qa/qa_report.json`
 
 ## Always-on checks
 
-- Research: source-reference coverage, claim confidence, and possible contradictions. `FAIL` blocks outlining; `REVIEW` is preserved for cautious wording and human judgment.
-- Outline: section-duration sum and configured duration band.
-- Script: structure, research/outline topic alignment, word count, duration, and the opening hook's match to the spoken first section and approximate 10-second length.
-- Packaging: required title, description, and tags.
-- Voice: measured minimum duration and character alignment when generated into a project audio directory. Too-short audio is rejected before scene timing; it is not stretched.
-- Audio-timed storyboard: continuous timeline, prompts, static camera, hard cuts, and an explicit editorial decision for every grouped scene. The planner targets one meaningful, one-word uppercase callout about every 3–4 scenes, but marks a scene `callout_not_warranted` with a reason when no editorial emphasis is justified. QA distinguishes valid, intentionally skipped, unexpectedly missing, and malformed callouts; it reports scene coverage, average callout interval, and longest interval. The image prompt prohibits drawing the callout, and FFmpeg composites the exact approved uppercase word after image generation.
+- Research: source-reference coverage, claim confidence, and possible contradictions. A `FAIL` or `REVIEW` triggers one forced regeneration with the exact findings and recommendations; outlining proceeds only after `PASS`.
+- Outline: section-duration sum and configured duration band. A failed check triggers one forced regeneration with the failed checks as guidance; script generation proceeds only after `PASS`.
+- Script: structure, research/outline topic alignment, word count, duration, and the opening hook's match to the spoken first section and approximate 10-second length. A `FAIL` or `REVIEW` triggers one forced regeneration with the exact findings; voice generation proceeds only after `PASS`.
+- Packaging: required title, description, and tags. Invalid metadata drafts are regenerated once with their validation errors included as correction guidance.
+- Voice: measured minimum duration and character alignment when generated into a project audio directory. Too-short audio prompts one script regeneration from the saved research and outline, then one replacement narration. Invalid character alignment triggers one narration retry. Audio is never stretched; if the bounded repair still fails, scene timing is blocked.
+- Audio-timed storyboard: continuous timeline, prompts, static camera, hard cuts, and an explicit editorial decision for every grouped scene. QA applies safe deterministic repairs to camera/cut settings, missing prompts, recoverable timeline continuity, and editorial callout planning, then reruns the checks. An unresolved issue blocks image generation. The planner targets one meaningful, one-word uppercase callout about every 3–4 scenes, but marks a scene `callout_not_warranted` with a reason when no editorial emphasis is justified. QA distinguishes valid, intentionally skipped, unexpectedly missing, and malformed callouts; it reports scene coverage, average callout interval, and longest interval. The image prompt prohibits drawing the callout, and FFmpeg composites the exact approved uppercase word after image generation.
 - Render: image validity, scene order, gaps/overlaps, duration consistency, video/audio streams, and timeline coverage.
-- Production pipeline rendered-video review: after technical QA, OpenAI Vision checks one midpoint frame per rendered scene against synchronized narration, visual description, and any editorial word. A clear `FAIL` blocks video approval; uncertain results remain `REVIEW` for a human.
+- Production pipeline image review: before rendering, OpenAI Vision checks every generated image against its narration, visual description, and any editorial word. An actionable mismatch receives one targeted image correction and a second review; unresolved findings block rendering.
 
-## Optional AI review
+## Bounded automatic correction
 
-The content CLI asks whether to run additional AI review for research, outline, script, and packaging. AI `FAIL` on Research, Outline, or Script triggers at most one forced regeneration with findings/recommendations added as correction guidance; a second `FAIL` stops the workflow. `REVIEW` is recorded and does not silently change the artifact. Packaging is reviewed but not automatically rewritten.
+Every supported automatic correction is bounded to one repair attempt. Initial findings and the verification result are both retained in QA history; only a verified `PASS` clears a previous attempt. An unresolved `FAIL` or `REVIEW` stops the dependent stage instead of silently accepting the artifact. AI-review helper paths follow the same rule: both `FAIL` and `REVIEW` receive one feedback-guided regeneration, and the workflow stops unless the retry passes.
 
-The production-video CLI separately offers opt-in OpenAI vision review before rendering. It checks each generated image against its narration and visual description, and checks whether a requested composited editorial word fits that scene. A clear mismatch triggers one targeted image regeneration for that scene; a `REVIEW` with a concrete correction prompt also triggers that bounded repair. An editorial word may move to an adjacent scene only when spacing is retained. Original images are retained under `qa/image_repair/`, the initial findings and repair verification are both recorded in QA history, the updated storyboard and image manifest are saved, and each changed scene is reviewed again. A remaining `FAIL` stops rendering; ambiguous `REVIEW` findings without a concrete fix remain for human judgment rather than prompting speculative regeneration. This optional pre-render path incurs per-scene review cost and possible image-generation cost.
+The production render stage runs OpenAI Vision review on every generated image against its narration and visual description, and checks whether a requested composited editorial word fits that scene. A clear mismatch triggers one targeted image regeneration for that scene; a `REVIEW` with a concrete correction prompt also triggers that bounded repair. An editorial word may move to an adjacent scene only when spacing is retained. Original images are retained under `qa/image_repair/`, the initial findings and repair verification are both recorded in QA history, the updated storyboard and image manifest are saved, and each changed scene is reviewed again. A remaining `FAIL` or `REVIEW` stops rendering; ambiguous findings without a concrete fix remain for human judgment rather than prompting speculative regeneration. This adds per-scene vision requests, and image-generation cost for each targeted repair.
 
-The GitHub production pipeline additionally runs the rendered-video midpoint
-review after technical QA, before human approval. It records
-`qa/rendered_video_semantic_qa.json` and checks the frame that will actually be
-seen after image compositing and rendering. One OpenAI Vision call is made per
-scene using strict JSON-schema output. Empty, incomplete, or malformed model
-output fails the QA stage with response-status context instead of being
-accepted as a result. This check is not a substitute for listening to the
-complete audio or watching the video.
+`PilotVideoQA.run_rendered_video_semantic` is available for explicit rendered-frame review, but is not currently wired as an automatic production stage. The production workflow uses the bounded pre-render image review and deterministic post-render technical QA. Neither check replaces listening to the complete audio or watching the video.
 
 ## Current limits
 
-- AI reviews are advisory judgments, not proof that facts or images are correct. `REVIEW` requires human judgment.
+- AI reviews are advisory judgments, not proof that facts or images are correct. Editorial ambiguity, uncertain facts, and human approval are not auto-marked `PASS`; unresolved review findings stay visible and block dependent automation where applicable.
 - Voice QA is deterministic duration/alignment validation; it does not use an AI audio-quality reviewer.
-- Deterministic render QA runs after video generation. It checks image readability, scene order, gaps/overlaps, timestamp coverage, scene-plan/audio duration, rendered audio/video streams, and rendered-video/audio duration (within 0.25 seconds). On a synchronization-related `FAIL` or timeline-drift `REVIEW`, the pipeline rebuilds the synchronized plan and rerenders once, then records the final result.
-- The production frame review checks representative scene midpoints, not every frame. It associates narration through the synchronized scene plan; it does not transcribe or listen to the final audio waveform. It can catch an obvious image/narration mismatch but cannot prove precise lip-sync or detect every cut-timing error. Human review of the actual video is still required. It incurs one OpenAI Vision request per rendered scene.
+- Deterministic render QA runs after video generation. It checks image readability, scene order, gaps/overlaps, timestamp coverage, scene-plan/audio duration, rendered audio/video streams, loudness, editorial callouts, and rendered-video/audio duration (within 0.25 seconds). On a synchronization-related `FAIL` or timeline-drift `REVIEW`, the pipeline rebuilds the synchronized plan and rerenders once. Any remaining non-PASS result stops the render stage and is preserved for diagnosis; the pipeline never reports a repair as successful without a passing check.
 - The separate `run_pilot_audio_image_match.py` check compares each current audio-timed scene image with that scene's narration and timestamp range. It is an AI relevance check, not waveform alignment; the deterministic post-render QA is the audio/video synchronization check.
-- Full image/narration AI review is opt-in and has not been recorded as complete for the current pilot. Preserve outputs and QA findings; do not treat an unrun reviewer as PASS.
-- `enable_ai_qa` on `ContentWorkflow.run` and `enable_image_ai_qa` on the video pipeline request control whether these reviews run.
+- The optional content CLI AI review remains opt-in. Production rendering enables image/narration review automatically.
+- Human approval, uncertain factual claims, and visual ambiguity without a concrete correction remain human decisions. The system does not silently convert those findings to `PASS`.
 
 ## Current pilot QA status
 
