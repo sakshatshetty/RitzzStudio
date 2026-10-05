@@ -6,9 +6,9 @@ from openai import OpenAI
 
 from config import OPENAI_API_KEY, OPENAI_MODEL
 from modules.outline.models import Outline
+from modules.project.config import ProductionConfig
 from modules.research.models import Research
 from modules.script.models import Script
-from modules.project.config import ProductionConfig
 
 
 class ScriptEngine:
@@ -98,9 +98,7 @@ class ScriptEngine:
 
         config = production_config or ProductionConfig()
         minimum_word_count = config.minimum_word_count
-        maximum_duration_seconds = int(
-            config.target_duration_seconds * 1.15
-        )
+        maximum_duration_seconds = config.maximum_acceptable_duration_seconds
         last_word_count = 0
 
         for attempt in range(
@@ -282,8 +280,7 @@ class ScriptEngine:
             / 60
         )
         maximum_words = round(
-            config.target_duration_seconds
-            * 1.15
+            config.maximum_acceptable_duration_seconds
             * ScriptEngine.WORDS_PER_MINUTE
             / 60
         )
@@ -383,8 +380,7 @@ class ScriptEngine:
             / 60
         )
         maximum_words = round(
-            config.target_duration_seconds
-            * 1.15
+            config.maximum_acceptable_duration_seconds
             * cls.WORDS_PER_MINUTE
             / 60
         )
@@ -417,7 +413,7 @@ class ScriptEngine:
             "=================================================\n\n"
 
             f"TARGET: approximately {target_words} spoken words ({config.target_duration_seconds} seconds).\n"
-            f"HARD UPPER LIMIT: {maximum_words} words ({int(config.target_duration_seconds * 1.15)} seconds).\n"
+            f"HARD UPPER LIMIT: {maximum_words} words ({config.maximum_acceptable_duration_seconds} seconds).\n"
             f"The narration must meet the configured minimum of {config.minimum_word_count} words.\n\n"
 
             f"OPENING HOOK: The first spoken words of the first hook section must be a compelling, fact-grounded hook of about {cls.TEN_SECOND_HOOK_WORDS} spoken words (roughly 10 seconds). Use a specific curiosity gap, surprising contrast, or question; do not give away the full answer. No greeting, channel introduction, generic setup, or unsupported/exaggerated claim. The Script.hook field must match this opening text exactly; narration speaks it once, so do not repeat the hook later.\n\n"
@@ -471,8 +467,7 @@ class ScriptEngine:
         config: ProductionConfig,
     ) -> str:
         maximum_words = round(
-            config.target_duration_seconds
-            * 1.15
+            config.maximum_acceptable_duration_seconds
             * cls.WORDS_PER_MINUTE
             / 60
         )

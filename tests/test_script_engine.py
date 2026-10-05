@@ -283,9 +283,15 @@ def test_script_prompt_targets_configured_two_minute_length():
         minimum_duration_seconds=120,
     )
     prompt = ScriptEngine._system_prompt(config)
+    user_prompt = ScriptEngine._build_user_prompt(
+        create_research(),
+        create_outline(),
+        config,
+    )
 
     assert "Aim for about 280 spoken words" in prompt
-    assert "do not exceed 322 words" in prompt
+    assert "do not exceed 420 words" in prompt
+    assert "420 words (180 seconds)" in user_prompt
 
 
 def test_script_prompts_require_a_ten_second_spoken_hook():
