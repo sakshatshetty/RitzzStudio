@@ -57,15 +57,20 @@ def validate_research(research: Research) -> ResearchValidationReport:
     for fact in research.key_facts:
         issues: list[str] = []
         missing = [source_id for source_id in fact.sources if source_id not in source_ids]
+        known_sources = [source_id for source_id in fact.sources if source_id in source_ids]
         if not fact.sources:
             issues.append("Important claim has no source reference.")
         if missing:
             issues.append(f"Unknown source reference(s): {', '.join(missing)}.")
         if fact.confidence == "low":
             issues.append("Claim confidence is low; use cautious wording or review.")
-        status: ValidationStatus = "FAIL" if fact.importance == "high" and any(
-            issue.startswith("Important claim") or issue.startswith("Unknown source") for issue in issues
-        ) else "REVIEW" if issues else "PASS"
+        status: ValidationStatus = (
+            "FAIL"
+            if fact.importance == "high" and not known_sources
+            else "REVIEW"
+            if issues
+            else "PASS"
+        )
         results.append(ClaimValidation(
             claim=fact.fact,
             importance=fact.importance,
