@@ -118,3 +118,29 @@ def test_callout_requires_contextual_position():
 
     assert result.status == "REVIEW"
     assert result.malformed_callouts == 1
+
+
+def test_every_safe_zone_is_valid_and_not_tied_to_one_global_position():
+    positions = (
+        "top_left",
+        "top_center",
+        "top_right",
+        "middle_left",
+        "middle_center",
+        "middle_right",
+        "lower_left",
+        "lower_center",
+        "lower_right",
+    )
+    scenes = [
+        make_scene(index, callout="EVIDENCE", skipped=False, reason=None).model_copy(
+            update={"callout_position": position}
+        )
+        for index, position in enumerate(positions, start=1)
+    ]
+
+    results = [review_editorial_callouts([scene]) for scene in scenes]
+
+    assert all(result.malformed_callouts == 0 for result in results)
+    assert all(result.status == "PASS" for result in results)
+    assert {scene.callout_position for scene in scenes} == set(positions)

@@ -1,9 +1,13 @@
-from typing import cast
+import pytest
 
 from modules.image.prompt_builder import ImagePromptBuilder
 from modules.storyboard.models import (
-    CameraMotion,
     StoryboardScene,
+)
+from modules.storyboard.visual_models import (
+    SceneVisualContract,
+    VisualRestriction,
+    VisualWorldBible,
 )
 
 
@@ -215,10 +219,7 @@ def test_prompt_contains_camera_motion() -> None:
 
     prompt = builder.build(scene)
 
-    assert (
-        "Slow gentle zoom in."
-        in prompt
-    )
+    assert "Static camera; the video uses hard cuts between still images." in prompt
 
 
 def test_prompt_adds_editorial_text_when_present() -> None:
@@ -226,12 +227,58 @@ def test_prompt_adds_editorial_text_when_present() -> None:
 
     scene = sample_scene()
     scene.text_overlay = "MYSTERY"
+    scene.callout_position = "lower_left"
 
     prompt = builder.build(scene)
 
     assert "exact editorial word MYSTERY" in prompt
     assert "intentionally part of the generated image" in prompt
     assert "Do not add any other letters" in prompt
+    assert "Reserve the lower-left negative space" in prompt
+    assert "clean, uncluttered plane" in prompt
+    assert "Keep all faces, eyes, hands, important objects, evidence" in prompt
+    assert "recompose it while preserving the same narrative meaning" in prompt
+    assert prompt.count("MYSTERY") == 1
+
+
+def test_editorial_prompt_protects_visual_contract_elements():
+    scene = sample_scene().model_copy(
+        update={
+            "text_overlay": "SURVIVAL",
+            "callout_position": "middle_right",
+            "visual_contract": SceneVisualContract(
+                scene_id="scene_001",
+                purpose="SHOW_PROCESS",
+                subject="A sailor's face and hand",
+                action="raises a lantern",
+                environment="A ship deck",
+                historical_context="A historical sailing vessel",
+                required_objects=["wooden lantern", "ship wheel"],
+                ambiguity_resolution="Show a physical lantern.",
+            ),
+        }
+    )
+
+    prompt = ImagePromptBuilder().build(scene)
+
+    assert "middle-right negative space" in prompt
+    assert "A sailor's face and hand; raises a lantern; wooden lantern; ship wheel" in prompt
+    assert "Do not place lettering on, across, behind" in prompt
+    assert "Render the exact editorial word SURVIVAL" in prompt
+
+
+def test_editorial_position_map_includes_all_clear_safe_zones():
+    assert set(ImagePromptBuilder.EDITORIAL_POSITION_MAP) == {
+        "top_left",
+        "top_center",
+        "top_right",
+        "middle_left",
+        "middle_center",
+        "middle_right",
+        "lower_left",
+        "lower_center",
+        "lower_right",
+    }
 
 
 def test_editorial_text_is_included_in_image_generation_prompt() -> None:
@@ -255,7 +302,60 @@ def test_editorial_text_does_not_change_the_colored_illustration_style() -> None
     prompt = builder.build(scene)
 
     assert "Keep the illustration fully colored" in prompt
-    assert "Do not make the illustration monochrome" in prompt
+    assert "normal RITZZ flat-color palette" in prompt
+
+
+def test_prompt_includes_project_world_and_scene_contract() -> None:
+    world = VisualWorldBible(
+        topic="Test Topic",
+        historical=True,
+        time_period="Around 1200 CE",
+        geography="Coastal settlements",
+        civilization_or_society="A medieval coastal society",
+        technology_level="Hand-powered tools",
+        built_environment="Timber buildings",
+        clothing="Wool and linen garments",
+        transportation="Sailing vessels",
+        tools_and_weapons="Hand-forged tools",
+        containers_and_materials="Wood and pottery",
+        architecture="Timber structures",
+        natural_environment="Rocky coast",
+        social_context="Small port communities",
+        visual_style="Simple hand-drawn 2D cartoon",
+        technology_ceiling="No powered machinery or modern materials",
+        forbidden_visuals=[
+            VisualRestriction(
+                category="anachronism",
+                description="No electric lighting.",
+                research_basis="The approved research places the scene in 1200 CE.",
+            )
+        ],
+    )
+    scene = sample_scene().model_copy(
+        update={
+            "visual_contract": SceneVisualContract(
+                scene_id="scene_001",
+                purpose="SHOW_PROCESS",
+                subject="A sailor",
+                action="raises a wooden lantern",
+                environment="The deck of a timber sailing ship",
+                historical_context="A medieval coastal setting",
+                required_objects=["wooden lantern"],
+                forbidden_objects=["electric lamp"],
+                ambiguity_resolution="Show a physical lantern, not a metaphor.",
+            )
+        }
+    )
+
+    prompt = ImagePromptBuilder(visual_world=world).build(scene)
+
+    assert "PROJECT VISUAL WORLD" in prompt
+    assert "No powered machinery or modern materials" in prompt
+    assert "No electric lighting." in prompt
+    assert "SCENE PURPOSE: SHOW_PROCESS" in prompt
+    assert "SCENE ACTION: raises a wooden lantern" in prompt
+    assert "REQUIRED OBJECTS: wooden lantern" in prompt
+    assert "FORBIDDEN OBJECTS: electric lamp" in prompt
 
 
 def test_editorial_text_prompt_allows_only_the_assigned_word() -> None:
@@ -275,10 +375,11 @@ def test_editorial_text_prompt_preserves_negative_space_for_callout() -> None:
 
     scene = sample_scene()
     scene.text_overlay = "MYSTERY"
+    scene.callout_position = "lower_left"
 
     prompt = builder.build(scene)
 
-    assert "near the lower-left" in prompt
+    assert "lower-left negative space" in prompt
     assert "exact editorial word MYSTERY" in prompt
 
 
@@ -374,134 +475,27 @@ def test_prompt_does_not_turn_scene_into_infographic() -> None:
     )
 
 
-def test_static_camera() -> None:
-    builder = ImagePromptBuilder()
-
+@pytest.mark.parametrize(
+    "camera_motion",
+    [
+        "static",
+        "slow_zoom_in",
+        "slow_zoom_out",
+        "pan_left",
+        "pan_right",
+        "pan_up",
+        "pan_down",
+    ],
+)
+def test_legacy_camera_motion_metadata_keeps_prompt_static(camera_motion) -> None:
     scene = sample_scene()
-    scene.camera_motion = "static"
+    scene.camera_motion = camera_motion
 
-    prompt = builder.build(scene)
+    prompt = ImagePromptBuilder().build(scene)
 
-    assert (
-        "Static camera."
-        in prompt
-    )
-
-
-def test_slow_zoom_in_camera() -> None:
-    builder = ImagePromptBuilder()
-
-    scene = sample_scene()
-    scene.camera_motion = "slow_zoom_in"
-
-    prompt = builder.build(scene)
-
-    assert (
-        "Slow gentle zoom in."
-        in prompt
-    )
-
-
-def test_slow_zoom_out_camera() -> None:
-    builder = ImagePromptBuilder()
-
-    scene = sample_scene()
-    scene.camera_motion = "slow_zoom_out"
-
-    prompt = builder.build(scene)
-
-    assert (
-        "Slow gentle zoom out."
-        in prompt
-    )
-
-
-def test_pan_left_camera() -> None:
-    builder = ImagePromptBuilder()
-
-    scene = sample_scene()
-    scene.camera_motion = "pan_left"
-
-    prompt = builder.build(scene)
-
-    assert (
-        "Gentle camera pan left."
-        in prompt
-    )
-
-
-def test_pan_right_camera() -> None:
-    builder = ImagePromptBuilder()
-
-    scene = sample_scene()
-    scene.camera_motion = "pan_right"
-
-    prompt = builder.build(scene)
-
-    assert (
-        "Gentle camera pan right."
-        in prompt
-    )
-
-
-def test_pan_up_camera() -> None:
-    builder = ImagePromptBuilder()
-
-    scene = sample_scene()
-    scene.camera_motion = "pan_up"
-
-    prompt = builder.build(scene)
-
-    assert (
-        "Gentle camera pan upward."
-        in prompt
-    )
-
-
-def test_pan_down_camera() -> None:
-    builder = ImagePromptBuilder()
-
-    scene = sample_scene()
-    scene.camera_motion = "pan_down"
-
-    prompt = builder.build(scene)
-
-    assert (
-        "Gentle camera pan downward."
-        in prompt
-    )
-
-
-def test_all_camera_motion_variants_are_supported() -> None:
-    builder = ImagePromptBuilder()
-
-    expected: dict[
-        CameraMotion,
-        str,
-    ] = {
-        "static": "Static camera.",
-        "slow_zoom_in": "Slow gentle zoom in.",
-        "slow_zoom_out": "Slow gentle zoom out.",
-        "pan_left": "Gentle camera pan left.",
-        "pan_right": "Gentle camera pan right.",
-        "pan_up": "Gentle camera pan upward.",
-        "pan_down": "Gentle camera pan downward.",
-    }
-
-    for motion, expected_text in expected.items():
-        scene = sample_scene()
-
-        scene.camera_motion = cast(
-            CameraMotion,
-            motion,
-        )
-
-        prompt = builder.build(scene)
-
-        assert (
-            expected_text
-            in prompt
-        )
+    assert "Static camera; the video uses hard cuts between still images." in prompt
+    assert "gentle zoom" not in prompt
+    assert "camera pan" not in prompt
 
 
 def test_custom_base_style_is_supported() -> None:

@@ -428,6 +428,8 @@ def test_image_ai_qa_moves_editorial_and_repairs_impacted_images(
     alignment_file = create_alignment(tmp_path)
     storyboard = StoryboardEngine.load_storyboard(storyboard_file)
     storyboard.scenes[0].text_overlay = "ICONIC"
+    storyboard.scenes[0].callout_not_warranted = False
+    storyboard.scenes[0].callout_not_warranted_reason = None
     StoryboardEngine.save_storyboard(storyboard, storyboard_file)
     review_attempts: dict[str, int] = {}
 
@@ -443,9 +445,16 @@ def test_image_ai_qa_moves_editorial_and_repairs_impacted_images(
                     status="FAIL",
                     narration_image="PASS",
                     narration_description="PASS",
-                    editorial_context="FAIL",
-                    rationale="The callout better fits the next scene.",
+                    editorial_context="PASS",
+                    editorial_obstruction="FAIL",
+                    editorial_safe_space="FAIL",
+                    rationale="The word overlaps the face and has no clear negative space.",
+                    correction_prompt=(
+                        "Recompose the image with a clear upper-right area and move "
+                        "the face away from it."
+                    ),
                     suggested_editorial_scene_id="scene_002",
+                    failure_category="EDITORIAL_OVER_FACE",
                 )
             if scene.scene_id == "scene_003" and review_attempts[scene.scene_id] == 1:
                 return SceneQAResult(
@@ -456,6 +465,7 @@ def test_image_ai_qa_moves_editorial_and_repairs_impacted_images(
                     editorial_context="PASS",
                     rationale="The pirate's pose is unclear.",
                     correction_prompt="Make the pirate's surprised expression and pointing gesture unmistakable.",
+                    failure_category="WRONG_ACTION",
                 )
             return SceneQAResult(
                 scene_id=scene.scene_id,
@@ -469,11 +479,13 @@ def test_image_ai_qa_moves_editorial_and_repairs_impacted_images(
     class ImageProvider:
         def __init__(self):
             self.generated_scenes: list[str] = []
+            self.prompts: list[str] = []
 
         def generate(self, request):
             output = Path(request.output_directory) / f"{request.image_id}.png"
             shutil.copyfile(image_directory / f"{request.scene_id}.png", output)
             self.generated_scenes.append(request.scene_id)
+            self.prompts.append(request.prompt)
             return ImageGenerationResult(
                 image_id=request.image_id,
                 scene_id=request.scene_id,
@@ -502,13 +514,38 @@ def test_image_ai_qa_moves_editorial_and_repairs_impacted_images(
     assert updated_storyboard.scenes[0].callout_not_warranted_reason
     assert updated_storyboard.scenes[1].callout_not_warranted is False
     assert updated_storyboard.scenes[1].callout_not_warranted_reason is None
+    assert updated_storyboard.scenes[1].callout_position in {
+        "top_left",
+        "top_center",
+        "top_right",
+        "middle_left",
+        "middle_center",
+        "middle_right",
+        "lower_left",
+        "lower_center",
+        "lower_right",
+    }
     assert provider.generated_scenes == ["scene_001", "scene_002", "scene_003"]
     assert (tmp_path / "qa" / "image_repair" / "attempt_1" / "originals" / "scene_001.png").is_file()
     assert (tmp_path / "qa" / "image_repair" / "attempt_1" / "originals" / "scene_003.png").is_file()
+    repair_history = json.loads(
+        (tmp_path / "qa" / "visual_repair_history.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    scene_003_repair = repair_history["scenes"]["scene_003"]["attempts"][0]
+    assert scene_003_repair["failure_category"] == "WRONG_ACTION"
+    assert scene_003_repair["verification"]["status"] == "PASS"
+    assert "make the action the primary focal point" in provider.prompts[-1]
     image_checks = report.stages["image_editorial_qa"][-1]
     assert image_checks.status == "PASS"
     assert "scene_002.editorial_context" in image_checks.checks
     assert "scene_002.narration_description" in image_checks.checks
+    assert image_checks.checks["scene_001.editorial_obstruction"] == "PASS"
+    assert image_checks.checks["scene_001.editorial_safe_space"] == "PASS"
+    assert image_checks.checks["scene_002.editorial_text"] == "PASS"
+    assert image_checks.checks["scene_002.editorial_style"] == "PASS"
+    assert image_checks.checks["scene_002.editorial_placement"] == "PASS"
     assert [attempt.status for attempt in report.stages["image_editorial_qa"]] == ["FAIL", "PASS"]
 
 
@@ -647,9 +684,18 @@ def test_image_ai_qa_preserves_uncertain_images_for_human_review(
     assert "no actionable image correction was supplied" in qa_attempts[0].findings[0]
 
 
-def test_image_ai_qa_suggests_and_applies_fix_for_clear_failure(
+@pytest.mark.parametrize(
+    ("suggested_position", "failure_category"),
+    [
+        ("top_left", "EDITORIAL_OVER_FACE"),
+        (None, "EDITORIAL_NO_SAFE_SPACE"),
+    ],
+)
+def test_image_ai_qa_repairs_unsafe_editorial_placement(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    suggested_position: str | None,
+    failure_category: str,
 ) -> None:
     monkeypatch.setenv("RITZZ_QA_IMAGE_WIDTH", "320")
     monkeypatch.setenv("RITZZ_QA_IMAGE_HEIGHT", "180")
@@ -657,6 +703,12 @@ def test_image_ai_qa_suggests_and_applies_fix_for_clear_failure(
     audio_file = create_audio(tmp_path)
     storyboard_file = create_storyboard(tmp_path, audio_file)
     alignment_file = create_alignment(tmp_path)
+    storyboard = StoryboardEngine.load_storyboard(storyboard_file)
+    storyboard.scenes[0].text_overlay = "ICONIC"
+    storyboard.scenes[0].callout_not_warranted = False
+    storyboard.scenes[0].callout_not_warranted_reason = None
+    storyboard.scenes[0].callout_position = "top_right"
+    StoryboardEngine.save_storyboard(storyboard, storyboard_file)
     review_attempts: dict[str, int] = {}
 
     class Reviewer:
@@ -669,10 +721,19 @@ def test_image_ai_qa_suggests_and_applies_fix_for_clear_failure(
                     return SceneQAResult(
                         scene_id=scene.scene_id,
                         status="FAIL",
-                        narration_image="FAIL",
+                        narration_image="PASS",
                         narration_description="PASS",
                         editorial_context="PASS",
-                        rationale="The image shows a ship instead of the water source.",
+                        editorial_placement="FAIL",
+                        editorial_obstruction="FAIL",
+                        editorial_safe_space="FAIL",
+                        suggested_editorial_position=suggested_position,
+                        rationale="The editorial word crosses the face and action.",
+                        correction_prompt=(
+                            "Place the word on a clean plane away from the face, "
+                            "hand, and primary action; recompose if needed."
+                        ),
+                        failure_category=failure_category,
                     )
             return SceneQAResult(
                 scene_id=scene.scene_id,
@@ -724,9 +785,20 @@ def test_image_ai_qa_suggests_and_applies_fix_for_clear_failure(
         "scene_002": 1,
         "scene_003": 1,
     }
-    assert "The image shows a ship instead of the water source." in provider.prompts[0]
+    assert "Place the word on a clean plane" in provider.prompts[0]
+    assert failure_category in provider.prompts[0]
+    assert "EDITORIAL COMPOSITION REQUIREMENT" in provider.prompts[0]
+    repaired_storyboard = StoryboardEngine.load_storyboard(storyboard_file)
+    expected_position = suggested_position or "top_right"
+    assert repaired_storyboard.scenes[0].callout_position == expected_position
+    if suggested_position:
+        assert "upper-left negative space" in provider.prompts[0]
+    else:
+        assert "Create a different composition" in provider.prompts[0]
     attempts = load_project_qa(tmp_path).stages["image_editorial_qa"]
     assert [attempt.status for attempt in attempts] == ["FAIL", "PASS"]
+    assert attempts[0].checks["scene_001.editorial_placement"] == "FAIL"
+    assert attempts[0].checks["scene_001.editorial_obstruction"] == "FAIL"
     assert any(
         "scene_001: proposed fix" in recommendation
         for recommendation in attempts[0].recommendations

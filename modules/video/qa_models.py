@@ -3,6 +3,8 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from modules.storyboard.editorial_qa import EditorialCalloutQAResult
+from modules.storyboard.models import CalloutPosition
+from modules.storyboard.visual_models import VisualFailureCategory
 
 QAStatus = Literal["PASS", "REVIEW", "FAIL"]
 
@@ -13,9 +15,16 @@ class SceneQAResult(BaseModel):
     narration_image: QAStatus
     narration_description: QAStatus
     editorial_context: QAStatus
+    editorial_text: QAStatus = "PASS"
+    editorial_style: QAStatus = "PASS"
+    editorial_placement: QAStatus = "PASS"
+    editorial_obstruction: QAStatus = "PASS"
+    editorial_safe_space: QAStatus = "PASS"
     rationale: str
     correction_prompt: str | None = None
     suggested_editorial_scene_id: str | None = None
+    suggested_editorial_position: CalloutPosition | None = None
+    failure_category: VisualFailureCategory | None = None
 
 
 class AudioImageMatchResult(BaseModel):

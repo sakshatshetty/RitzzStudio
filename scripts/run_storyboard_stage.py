@@ -12,6 +12,10 @@ from modules.project.config import ProductionConfig
 from modules.project.manager import ProjectManager
 from modules.storyboard.engine import StoryboardEngine
 from modules.storyboard.models import Storyboard
+from modules.storyboard.visual_context import VisualContextEngine
+from modules.research.models import Research
+from modules.image.prompt_builder import ImagePromptBuilder
+from modules.image.character_profile import load_character_profile
 from modules.video.audio_timed_storyboard import AudioTimedStoryboardEngine
 from modules.video.sync_engine import VideoSynchronizationEngine
 
@@ -38,10 +42,34 @@ def main() -> int:
     )
     alignment = VideoSynchronizationEngine.load_narration_alignment(narration_result_file)
     timed = AudioTimedStoryboardEngine(production_config=config).build(narrative, alignment)
+    research = Research.model_validate_json(
+        (project_directory / "research" / "research.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    timed, visual_world, contracts = VisualContextEngine().plan(
+        research,
+        timed,
+        project_directory,
+    )
+    prompt_builder = ImagePromptBuilder(
+        character_profile=load_character_profile(project_directory),
+        visual_world=visual_world,
+    )
+    timed = timed.model_copy(update={
+        "scenes": [
+            scene.model_copy(
+                update={"image_prompt": prompt_builder.build(scene)}
+            )
+            for scene in timed.scenes
+        ]
+    })
     AudioTimedStoryboardEngine.save_storyboard(timed, timed_file)
     Storyboard.model_validate_json(timed_file.read_text(encoding="utf-8"))
     print(f"Narrative storyboard: {narrative_file} ({len(narrative.scenes)} scenes)")
     print(f"Audio-timed storyboard: {timed_file} ({len(timed.scenes)} scenes)")
+    print(f"Visual world bible: {project_directory / 'visual_world_bible.json'}")
+    print(f"Scene visual contracts: {len(contracts)}")
     print(f"Audio duration: {alignment.audio_duration_seconds:.3f}s")
     return 0
 

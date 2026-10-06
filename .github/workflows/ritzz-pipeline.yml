@@ -106,7 +106,7 @@ jobs:
       - name: Install FFmpeg and overlay font for media tests
         run: |
           sudo apt-get update
-          sudo apt-get install --yes ffmpeg fonts-dejavu-core
+          sudo apt-get install --yes ffmpeg fonts-comic-neue fonts-dejavu-core
 
       - name: Run focused pipeline tests
         run: >-
@@ -1391,7 +1391,7 @@ jobs:
       - name: Install FFmpeg and thumbnail font
         run: |
           sudo apt-get update
-          sudo apt-get install --yes ffmpeg fonts-dejavu-core
+          sudo apt-get install --yes ffmpeg fonts-comic-neue fonts-dejavu-core
 
       - name: Download metadata or thumbnail retry checkpoint
         uses: actions/download-artifact@v4
@@ -1456,8 +1456,8 @@ jobs:
           script: |
             const fs = require('fs');
             const count = Number(process.env.CONCEPT_COUNT);
-            if (!Number.isInteger(count) || count < 3 || count > 5) {
-              core.setFailed(`Expected 3–5 thumbnail concepts; received ${process.env.CONCEPT_COUNT}.`);
+            if (!Number.isInteger(count) || count !== 3) {
+              core.setFailed(`Expected exactly 3 thumbnail concepts; received ${process.env.CONCEPT_COUNT}.`);
               return;
             }
             const title = `RITZZ thumbnail concept approval - production ${process.env.PRODUCTION_ID}`;

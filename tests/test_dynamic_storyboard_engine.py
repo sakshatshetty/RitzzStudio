@@ -237,6 +237,23 @@ def test_editorial_text_is_mandatory_every_three_to_four_scenes() -> None:
         assert 3 <= gap <= 4
 
 
+def test_contextual_editorial_zone_moves_away_from_subject_side():
+    left_subject = create_source_storyboard().scenes[0].model_copy(
+        update={
+            "visual_description": "A person stands on the left side of the frame.",
+            "character_action": "The person points toward the horizon.",
+        }
+    )
+    right_subject = left_subject.model_copy(
+        update={
+            "visual_description": "A person stands on the right side of the frame.",
+        }
+    )
+
+    assert DynamicStoryboardEngine._contextual_callout_position(left_subject) == "top_right"
+    assert DynamicStoryboardEngine._contextual_callout_position(right_subject) == "top_left"
+
+
 def test_editorial_text_has_maximum_four_words() -> None:
     engine = DynamicStoryboardEngine()
 

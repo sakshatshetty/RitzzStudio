@@ -515,12 +515,16 @@ class VideoProductionPipeline:
             inspect_image_asset,
         )
         from modules.video.sync_engine import VideoSynchronizationEngine
+        from modules.storyboard.visual_context import load_visual_world_bible
 
         qa_started = time.monotonic()
         storyboard_path = Path(request.storyboard_file)
         storyboard = StoryboardEngine.load_storyboard(storyboard_path)
         image_directory = Path(request.image_directory)
-        reviewer = self.image_reviewer or OpenAIImageEditorialReviewer()
+        visual_world = load_visual_world_bible(project_directory)
+        reviewer = self.image_reviewer or OpenAIImageEditorialReviewer(
+            visual_world=visual_world
+        )
         scenes = list(storyboard.scenes)
         first_reviews: dict[int, SceneQAResult] = {}
         usage_metrics = usage_metrics if usage_metrics is not None else {
@@ -545,6 +549,8 @@ class VideoProductionPipeline:
                 cached_reviews = cache_document["scenes"]
             else:
                 cached_reviews = {}
+        if not isinstance(cached_reviews, dict):
+            raise ValueError("Semantic QA cache entries must be a scene-keyed object.")
         cache_file.parent.mkdir(parents=True, exist_ok=True)
 
         scene_ids = [scene.scene_id for scene in scenes]
@@ -561,6 +567,19 @@ class VideoProductionPipeline:
             structure_issues.append(
                 "QA_INPUT_INVALID: scene ID, full narration, visual description, or image prompt is missing."
             )
+        if visual_world:
+            contract_ids = [
+                scene.visual_contract.scene_id
+                for scene in scenes
+                if scene.visual_contract is not None
+            ]
+            if (
+                len(contract_ids) != len(scenes)
+                or contract_ids != scene_ids
+            ):
+                structure_issues.append(
+                    "QA_INPUT_INVALID: project visual-world bible requires one matching visual contract per scene."
+                )
         if any(
             right.start_seconds < left.start_seconds
             for left, right in pairwise(scenes)
@@ -674,6 +693,7 @@ class VideoProductionPipeline:
         def cache_key(index: int) -> str:
             image_path = image_directory / f"{scenes[index].scene_id}.png"
             payload = {
+                "semantic_qa_policy_version": 2,
                 "reviewer": (
                     f"{type(reviewer).__module__}.{type(reviewer).__qualname__}:"
                     f"{getattr(reviewer, 'model', 'default')}"
@@ -686,7 +706,13 @@ class VideoProductionPipeline:
                         "image_prompt",
                         "text_overlay",
                         "callout_position",
+                        "visual_contract",
                     }
+                ),
+                "visual_world": (
+                    visual_world.model_dump(mode="json")
+                    if visual_world is not None
+                    else None
                 ),
             }
             digest = hashlib.sha256(image_path.read_bytes())
@@ -798,10 +824,54 @@ class VideoProductionPipeline:
                 }
         save_review_cache()
 
+        affected_indices: set[int] = set()
+        manual_review_findings: list[str] = []
+        suggested_fixes: dict[int, str] = {}
+        position_repairs: set[int] = set()
+        for index, review in first_reviews.items():
+            editorial_statuses = (
+                review.editorial_context,
+                review.editorial_text,
+                review.editorial_style,
+                review.editorial_placement,
+                review.editorial_obstruction,
+                review.editorial_safe_space,
+            )
+            new_position = review.suggested_editorial_position
+            if (
+                not scenes[index].text_overlay
+                or new_position is None
+                or new_position == scenes[index].callout_position
+                or not any(status in {"FAIL", "REVIEW"} for status in editorial_statuses)
+            ):
+                continue
+            scenes[index] = scenes[index].model_copy(
+                update={"callout_position": new_position}
+            )
+            position_repairs.add(index)
+            affected_indices.add(index)
+            suggested_fixes[index] = (
+                "Keep the exact editorial word in the same scene but relocate it "
+                f"to the reviewer-approved {new_position} safe zone."
+            )
+
         moves: dict[int, int] = {}
         unresolved_editorial: list[str] = []
         for index, review in first_reviews.items():
-            if review.editorial_context not in {"FAIL", "REVIEW"} or not scenes[index].text_overlay:
+            if index in position_repairs:
+                continue
+            editorial_statuses = (
+                review.editorial_context,
+                review.editorial_text,
+                review.editorial_style,
+                review.editorial_placement,
+                review.editorial_obstruction,
+                review.editorial_safe_space,
+            )
+            if (
+                not any(status in {"FAIL", "REVIEW"} for status in editorial_statuses)
+                or not scenes[index].text_overlay
+            ):
                 continue
             suggested_id = review.suggested_editorial_scene_id
             if not suggested_id:
@@ -836,14 +906,20 @@ class VideoProductionPipeline:
                 continue
             moves[index] = target_index
 
-        affected_indices: set[int] = set()
-        manual_review_findings: list[str] = []
-        suggested_fixes: dict[int, str] = {}
         for index, target_index in moves.items():
             word = scenes[index].text_overlay
+            if scenes[target_index].callout_position is None:
+                from modules.storyboard.dynamic_engine import DynamicStoryboardEngine
+
+                target_position = DynamicStoryboardEngine._contextual_callout_position(
+                    scenes[target_index]
+                )
+            else:
+                target_position = scenes[target_index].callout_position
             scenes[index] = scenes[index].model_copy(
                 update={
                     "text_overlay": "",
+                    "callout_position": None,
                     "callout_not_warranted": True,
                     "callout_not_warranted_reason": (
                         "The approved word fits the adjacent visual beat better."
@@ -853,6 +929,7 @@ class VideoProductionPipeline:
             scenes[target_index] = scenes[target_index].model_copy(
                 update={
                     "text_overlay": word,
+                    "callout_position": target_position,
                     "callout_not_warranted": False,
                     "callout_not_warranted_reason": None,
                 }
@@ -885,7 +962,14 @@ class VideoProductionPipeline:
                     review.narration_description,
                 )
                 if editorial_move_resolves_review
-                else review_statuses
+                else (
+                    *review_statuses,
+                    review.editorial_text,
+                    review.editorial_style,
+                    review.editorial_placement,
+                    review.editorial_obstruction,
+                    review.editorial_safe_space,
+                )
             )
             has_clear_failure = any(status == "FAIL" for status in issue_statuses)
             has_actionable_review = (
@@ -913,14 +997,15 @@ class VideoProductionPipeline:
                     "supplied, so the original image was preserved for review."
                 )
             if (
-                review.editorial_context == "FAIL"
+                any(status == "FAIL" for status in editorial_statuses)
                 and index not in moves
                 and index not in affected_indices
             ):
                 unresolved_editorial.append(f"{scenes[index].scene_id}: editorial placement remains unresolved.")
 
         prompt_builder = ImagePromptBuilder(
-            character_profile=load_character_profile(project_directory)
+            character_profile=load_character_profile(project_directory),
+            visual_world=visual_world,
         )
         for index in affected_indices:
             scenes[index] = scenes[index].model_copy(
@@ -935,6 +1020,11 @@ class VideoProductionPipeline:
                     "narration_image",
                     "narration_description",
                     "editorial_context",
+                    "editorial_text",
+                    "editorial_style",
+                    "editorial_placement",
+                    "editorial_obstruction",
+                    "editorial_safe_space",
                 )
             }
             initial_status: QAStatus = (
@@ -973,11 +1063,117 @@ class VideoProductionPipeline:
             if path.is_dir() and path.name.removeprefix("attempt_").isdigit()
         ]
         attempt_directory = repair_root / f"attempt_{max(previous_attempts, default=0) + 1}"
+        repair_history_path = project_directory / "qa" / "visual_repair_history.json"
+        if repair_history_path.is_file():
+            repair_history = json.loads(
+                repair_history_path.read_text(encoding="utf-8")
+            )
+            if (
+                not isinstance(repair_history, dict)
+                or repair_history.get("version") != 1
+                or not isinstance(repair_history.get("scenes"), dict)
+            ):
+                raise ValueError(f"Invalid visual repair history: {repair_history_path}")
+        else:
+            repair_history = {"version": 1, "scenes": {}}
+
+        failure_strategies = {
+            "ANACHRONISM": (
+                "Remove objects, materials, clothing, infrastructure, and technology "
+                "that exceed the project technology ceiling."
+            ),
+            "AMBIGUITY": (
+                "Follow the scene contract's explicit ambiguity resolution; do not "
+                "substitute another meaning of the ambiguous term."
+            ),
+            "WRONG_ACTION": (
+                "Show the scene contract's stated action clearly and make the action "
+                "the primary focal point."
+            ),
+            "WRONG_ENVIRONMENT": (
+                "Rebuild the setting from the project visual world and scene environment "
+                "instead of using a generic or modern setting."
+            ),
+            "MISSING_REQUIRED_OBJECT": (
+                "Make every required object in the scene contract clearly visible and "
+                "recognizable."
+            ),
+            "FORBIDDEN_OBJECT": (
+                "Exclude every object prohibited by the project world and scene contract."
+            ),
+            "CHARACTER_CONTINUITY": (
+                "Restore the recurring character or object identity and continuity "
+                "requirements without repeating the old composition."
+            ),
+            "EDITORIAL_MISMATCH": (
+                "Render only the exact assigned editorial word in the prescribed "
+                "handwritten marker style inside its reserved safe zone."
+            ),
+            "EDITORIAL_OVER_FACE": (
+                "Recompose the scene so the editorial word sits in empty negative "
+                "space and never overlaps the face, eyes, or important head details."
+            ),
+            "EDITORIAL_OVER_CHARACTER": (
+                "Move the character completely away from the reserved editorial "
+                "zone; keep the word out of the character silhouette."
+            ),
+            "EDITORIAL_OVER_OBJECT": (
+                "Keep all important objects and evidence outside the reserved "
+                "editorial zone; recompose the image rather than covering them."
+            ),
+            "EDITORIAL_OVER_ACTION": (
+                "Keep the primary action and its full gesture/path clear of the "
+                "editorial zone; recompose the subject and action around empty space."
+            ),
+            "EDITORIAL_NO_SAFE_SPACE": (
+                "Create a different composition that preserves the same narrative "
+                "meaning and reserves a naturally uncluttered plane in the assigned "
+                "zone, away from the face, subject, action, and important objects."
+            ),
+            "EDITORIAL_CLIPPED": (
+                "Keep the complete editorial word comfortably inside the image frame "
+                "and entirely within its reserved zone."
+            ),
+            "EDITORIAL_TOO_CLOSE_TO_SUBJECT": (
+                "Increase clear separation between the word and all protected visual "
+                "elements; do not let lettering touch or cross their edges."
+            ),
+            "EDITORIAL_POOR_CONTRAST": (
+                "Use a simple, naturally uncluttered background behind the existing "
+                "handwritten word so its yellow or white lettering is clearly legible."
+            ),
+            "NARRATION_MISMATCH": (
+                "Depict the scene's visual contract and action, not a different idea "
+                "from nearby narration."
+            ),
+            "VISUAL_DUPLICATE": (
+                "Use a clearly different viewpoint, composition, subject placement, "
+                "action, and environmental emphasis while remaining faithful to the contract."
+            ),
+        }
+
+        def save_repair_history() -> None:
+            temporary_history = repair_history_path.with_suffix(".tmp")
+            temporary_history.write_text(
+                json.dumps(repair_history, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            temporary_history.replace(repair_history_path)
+
         for index in sorted(affected_indices):
             scene = scenes[index]
             original_path = image_directory / f"{scene.scene_id}.png"
             review = first_reviews.get(index)
             correction = suggested_fixes.get(index)
+            category = (
+                review.failure_category
+                if review and review.failure_category
+                else "VISUAL_DUPLICATE"
+                if review and "perceptually similar" in review.rationale
+                else "EDITORIAL_MISMATCH"
+                if review and review.editorial_context == "FAIL"
+                else "OTHER"
+            )
             if not correction:
                 correction = (
                     f"Correct this image QA finding: {review.rationale}. "
@@ -987,7 +1183,50 @@ class VideoProductionPipeline:
                     "Correct the visible mismatch with the scene narration and visual description. "
                     "Keep the established character, hand-drawn style, and requested editorial word accurate."
                 )
-            correction_prompt = f"{scene.image_prompt} Image QA correction: {correction}"
+            strategy = failure_strategies.get(
+                category,
+                "Correct the specific reviewer finding while satisfying the full visual contract.",
+            )
+            prompt_fingerprint = hashlib.sha256(
+                f"{scene.image_prompt}\n{category}\n{correction}\n{strategy}".encode("utf-8")
+            ).hexdigest()
+            scene_history = repair_history["scenes"].setdefault(
+                scene.scene_id,
+                {"attempts": []},
+            )
+            if not isinstance(scene_history, dict) or not isinstance(
+                scene_history.get("attempts"), list
+            ):
+                raise ValueError(
+                    f"Invalid repair-history entry for {scene.scene_id}."
+                )
+            previous_fingerprints = {
+                entry.get("prompt_sha256")
+                for entry in scene_history["attempts"]
+                if isinstance(entry, dict)
+            }
+            if prompt_fingerprint in previous_fingerprints:
+                strategy += (
+                    " Avoid repeating any earlier failed visual solution; choose an "
+                    "alternative composition and make the correction unmistakable."
+                )
+                prompt_fingerprint = hashlib.sha256(
+                    f"{prompt_fingerprint}\n{repair_attempt}\n{strategy}".encode("utf-8")
+                ).hexdigest()
+            correction_prompt = (
+                f"{scene.image_prompt} Image QA correction category: {category}. "
+                f"Finding: {correction} Repair strategy: {strategy}"
+            )
+            repair_record = {
+                "repair_attempt": repair_attempt,
+                "failure_category": category,
+                "finding": review.rationale if review else correction,
+                "correction": correction,
+                "prompt_sha256": prompt_fingerprint,
+                "verification": None,
+            }
+            scene_history["attempts"].append(repair_record)
+            save_repair_history()
             candidate_directory = attempt_directory / "candidates"
             candidate_directory.mkdir(parents=True, exist_ok=True)
             provider = self.image_provider
@@ -1051,12 +1290,30 @@ class VideoProductionPipeline:
         final_reviews = dict(first_reviews)
         final_reviews.update(retry_reviews)
         for index, review in retry_reviews.items():
+            scene_history = repair_history["scenes"].get(scenes[index].scene_id)
+            if isinstance(scene_history, dict):
+                attempts = scene_history.get("attempts")
+            else:
+                attempts = None
+            latest_attempt = (
+                attempts[-1]
+                if isinstance(attempts, list) and attempts
+                else None
+            )
+            if isinstance(latest_attempt, dict):
+                latest_attempt["verification"] = {
+                    "status": review.status,
+                    "failure_category": review.failure_category,
+                    "rationale": review.rationale,
+                }
             if review.status == "PASS":
                 cached_reviews[scenes[index].scene_id] = {
                     "fingerprint": cache_key(index),
                     "result": review.model_dump(mode="json"),
                 }
         save_review_cache()
+        if affected_indices:
+            save_repair_history()
         final_hashes: list[int | None] = []
         remaining_image_findings: dict[int, str] = {}
         for index, scene in enumerate(scenes):
@@ -1100,7 +1357,20 @@ class VideoProductionPipeline:
                 suggested_fixes[index] = finding
         unresolved = list(unresolved_editorial)
         for index, review in final_reviews.items():
-            if review.status == "FAIL" or review.narration_image == "FAIL" or review.narration_description == "FAIL" or review.editorial_context == "FAIL":
+            if any(
+                check_status == "FAIL"
+                for check_status in (
+                    review.status,
+                    review.narration_image,
+                    review.narration_description,
+                    review.editorial_context,
+                    review.editorial_text,
+                    review.editorial_style,
+                    review.editorial_placement,
+                    review.editorial_obstruction,
+                    review.editorial_safe_space,
+                )
+            ):
                 unresolved.append(f"{scenes[index].scene_id}: {review.rationale}")
 
         final_check_statuses = [
@@ -1111,6 +1381,11 @@ class VideoProductionPipeline:
                 review.narration_image,
                 review.narration_description,
                 review.editorial_context,
+                review.editorial_text,
+                review.editorial_style,
+                review.editorial_placement,
+                review.editorial_obstruction,
+                review.editorial_safe_space,
             )
         ]
         status: QAStatus = (
@@ -1160,9 +1435,20 @@ class VideoProductionPipeline:
             f"{scenes[index].scene_id}.editorial_context": review.editorial_context
             for index, review in final_reviews.items()
         })
+        for check_name in (
+            "editorial_text",
+            "editorial_style",
+            "editorial_placement",
+            "editorial_obstruction",
+            "editorial_safe_space",
+        ):
+            checks.update({
+                f"{scenes[index].scene_id}.{check_name}": getattr(review, check_name)
+                for index, review in final_reviews.items()
+            })
         checks.update({
             f"{scenes[index].scene_id}.editorial_presence": (
-                review.editorial_context
+                review.editorial_text
                 if scenes[index].text_overlay.strip()
                 else "PASS"
             )
@@ -1190,6 +1476,11 @@ class VideoProductionPipeline:
                             review.narration_image,
                             review.narration_description,
                             review.editorial_context,
+                            review.editorial_text,
+                            review.editorial_style,
+                            review.editorial_placement,
+                            review.editorial_obstruction,
+                            review.editorial_safe_space,
                         )
                     )
                 ],

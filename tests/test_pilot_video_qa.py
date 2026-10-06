@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from modules.storyboard.models import Storyboard, StoryboardScene
+from modules.storyboard.visual_models import VisualWorldBible
 from modules.video.models import VideoAssemblyPlan, VideoClip
 from modules.video.pilot_qa import (
     OpenAIImageEditorialReviewer,
@@ -235,12 +236,41 @@ def test_openai_rendered_scene_reviewer_requests_strict_json_schema(tmp_path):
         "narration_image": "PASS",
         "narration_description": "PASS",
         "editorial_context": "REVIEW",
+        "editorial_text": "PASS",
+        "editorial_style": "PASS",
+        "editorial_placement": "REVIEW",
+        "editorial_obstruction": "PASS",
+        "editorial_safe_space": "REVIEW",
         "rationale": "The word is hard to read.",
         "correction_prompt": None,
         "suggested_editorial_scene_id": None,
+        "suggested_editorial_position": None,
+        "failure_category": None,
     }
 
-    reviewer = OpenAIImageEditorialReviewer(api_key="test-key", model="test-model")
+    world = VisualWorldBible(
+        topic="Test Topic",
+        historical=True,
+        time_period="1200 CE",
+        geography="Coastal settlement",
+        civilization_or_society="Medieval port community",
+        technology_level="Hand-powered tools",
+        built_environment="Timber buildings",
+        clothing="Wool and linen",
+        transportation="Sailing vessels",
+        tools_and_weapons="Hand tools",
+        containers_and_materials="Wood and pottery",
+        architecture="Timber structures",
+        natural_environment="Rocky coast",
+        social_context="Small port community",
+        visual_style="Simple 2D cartoon",
+        technology_ceiling="No powered machinery.",
+    )
+    reviewer = OpenAIImageEditorialReviewer(
+        api_key="test-key",
+        model="test-model",
+        visual_world=world,
+    )
 
     def fake_create(**kwargs):
         captured.update(kwargs)
@@ -262,6 +292,57 @@ def test_openai_rendered_scene_reviewer_requests_strict_json_schema(tmp_path):
     assert captured["text"]["format"]["type"] == "json_schema"
     assert captured["text"]["format"]["strict"] is True
     assert captured["text"]["format"]["schema"]["additionalProperties"] is False
+    assert "technology_ceiling" in captured["input"][0]["content"][0]["text"]
+    assert "failure_category" in captured["text"]["format"]["schema"]["required"]
+    assert {
+        "editorial_text",
+        "editorial_style",
+        "editorial_placement",
+        "editorial_obstruction",
+        "editorial_safe_space",
+    }.issubset(captured["text"]["format"]["schema"]["required"])
+    assert result.editorial_placement == "REVIEW"
+    assert result.editorial_safe_space == "REVIEW"
+    assert "suggested_editorial_position" in captured["text"]["format"]["schema"]["required"]
+
+
+def test_openai_rendered_scene_reviewer_preserves_failure_category(
+    tmp_path,
+    monkeypatch,
+):
+    storyboard, _, _, image = make_inputs(tmp_path)
+    payload = {
+        "scene_id": "scene_001",
+        "narration_image": "FAIL",
+        "narration_description": "PASS",
+        "editorial_context": "PASS",
+        "editorial_text": "PASS",
+        "editorial_style": "PASS",
+        "editorial_placement": "PASS",
+        "editorial_obstruction": "FAIL",
+        "editorial_safe_space": "PASS",
+        "rationale": "The callout overlaps the face.",
+        "correction_prompt": "Move the word into a clear empty area.",
+        "suggested_editorial_scene_id": None,
+        "suggested_editorial_position": None,
+        "failure_category": "EDITORIAL_OVER_FACE",
+    }
+    reviewer = OpenAIImageEditorialReviewer(api_key="test-key", model="test-model")
+    monkeypatch.setattr(
+        reviewer.client.responses,
+        "create",
+        lambda **_kwargs: SimpleNamespace(
+            output_text=json.dumps(payload),
+            status="completed",
+            incomplete_details=None,
+        ),
+    )
+
+    result = reviewer.review(image, storyboard.scenes[0])
+
+    assert result.status == "FAIL"
+    assert result.failure_category == "EDITORIAL_OVER_FACE"
+    assert result.editorial_obstruction == "FAIL"
 
 
 def test_openai_rendered_scene_reviewer_reports_empty_incomplete_output(tmp_path):
@@ -305,9 +386,16 @@ def test_openai_rendered_scene_batch_preserves_full_narration_and_order(tmp_path
                 "narration_image": "PASS",
                 "narration_description": "PASS",
                 "editorial_context": "PASS",
+                "editorial_text": "PASS",
+                "editorial_style": "PASS",
+                "editorial_placement": "PASS",
+                "editorial_obstruction": "PASS",
+                "editorial_safe_space": "PASS",
                 "rationale": "The image fits.",
                 "correction_prompt": None,
                 "suggested_editorial_scene_id": None,
+                "suggested_editorial_position": None,
+                "failure_category": None,
             }
             for scene in (storyboard.scenes[0], second_scene)
         ]
@@ -342,6 +430,7 @@ def test_openai_rendered_scene_batch_preserves_full_narration_and_order(tmp_path
     assert captured["text"]["format"]["strict"] is True
     assert schema["additionalProperties"] is False
     assert schema["properties"]["scenes"]["items"]["additionalProperties"] is False
+    assert "failure_category" in schema["properties"]["scenes"]["items"]["required"]
 
 
 def test_openai_rendered_scene_batch_rejects_reordered_scene_ids(tmp_path):
@@ -360,9 +449,16 @@ def test_openai_rendered_scene_batch_rejects_reordered_scene_ids(tmp_path):
                 "narration_image": "PASS",
                 "narration_description": "PASS",
                 "editorial_context": "PASS",
+                "editorial_text": "PASS",
+                "editorial_style": "PASS",
+                "editorial_placement": "PASS",
+                "editorial_obstruction": "PASS",
+                "editorial_safe_space": "PASS",
                 "rationale": "The image fits.",
                 "correction_prompt": None,
                 "suggested_editorial_scene_id": None,
+                "suggested_editorial_position": None,
+                "failure_category": None,
             }
             for scene_id in ("scene_002", "scene_001")
         ]

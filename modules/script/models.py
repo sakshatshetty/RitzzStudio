@@ -2,7 +2,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-
 ScriptSectionType = Literal[
     "hook",
     "setup",
@@ -38,6 +37,73 @@ class ScriptSection(BaseModel):
     )
 
 
+class ScriptHookPlan(BaseModel):
+    modern_connection: str = ""
+    central_question: str = ""
+    open_loop: str = ""
+    stakes: str = ""
+
+
+class NarrativeMovement(BaseModel):
+    section_id: str
+    purpose: str
+    question: str
+    evidence_source_ids: list[str] = Field(default_factory=list)
+    reveal: str
+    next_question: str
+    visual_opportunity: str
+
+
+class ScriptQualityChecks(BaseModel):
+    hook: Literal["PASS", "REVIEW", "FAIL"]
+    central_mystery: Literal["PASS", "REVIEW", "FAIL"]
+    evolving_questions: Literal["PASS", "REVIEW", "FAIL"]
+    section_purpose: Literal["PASS", "REVIEW", "FAIL"]
+    fact_listing: Literal["PASS", "REVIEW", "FAIL"]
+    evidence_integration: Literal["PASS", "REVIEW", "FAIL"]
+    uncertainty: Literal["PASS", "REVIEW", "FAIL"]
+    viewer_connection: Literal["PASS", "REVIEW", "FAIL"]
+    final_payoff: Literal["PASS", "REVIEW", "FAIL"]
+    visualizability: Literal["PASS", "REVIEW", "FAIL"]
+    originality: Literal["PASS", "REVIEW", "FAIL"]
+
+
+class ScriptQualityFinding(BaseModel):
+    category: Literal[
+        "HOOK_WEAK",
+        "NO_OPEN_LOOP",
+        "FACT_LISTING",
+        "WEAK_EVIDENCE",
+        "NO_PAYOFF",
+        "POOR_VISUALIZABILITY",
+        "UNSUPPORTED_CLAIM",
+        "UNCERTAINTY_LOST",
+        "WEAK_VIEWER_CONNECTION",
+        "OTHER",
+    ]
+    section_ids: list[str] = Field(min_length=1)
+    rationale: str
+    revision_instruction: str
+    research_source_ids: list[str] = Field(default_factory=list)
+
+
+class ScriptQualityReview(BaseModel):
+    status: Literal["PASS", "REVIEW", "FAIL"]
+    checks: ScriptQualityChecks
+    findings: list[ScriptQualityFinding] = Field(default_factory=list)
+
+
+class ScriptSectionRevision(BaseModel):
+    section_id: str
+    narration: str = Field(min_length=1)
+    movement: NarrativeMovement
+    hook: str = ""
+    hook_plan: ScriptHookPlan = Field(default_factory=ScriptHookPlan)
+    viewer_connection: str = ""
+    myth_or_assumption: str = ""
+    uncertainty: str = ""
+
+
 class Script(BaseModel):
     """Complete narration script for a Ritzz video."""
 
@@ -65,3 +131,14 @@ class Script(BaseModel):
     closing_message: str = Field(
         min_length=1,
     )
+
+    script_profile: str = ""
+    input_fingerprint: str = ""
+    hook_plan: ScriptHookPlan = Field(default_factory=ScriptHookPlan)
+    narrative_arc: list[NarrativeMovement] = Field(default_factory=list)
+    viewer_connection: str = ""
+    myth_or_assumption: str = ""
+    major_reveals: list[str] = Field(default_factory=list)
+    uncertainties: list[str] = Field(default_factory=list)
+    visual_opportunities: list[str] = Field(default_factory=list)
+    final_payoff: str = ""
