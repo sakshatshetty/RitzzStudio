@@ -48,6 +48,24 @@ def test_storyboard_generation_job_receives_openai_secret():
     assert "OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}" in job
 
 
+def test_image_generation_archives_and_restores_partial_scene_progress():
+    workflow = Path(".github/workflows/ritzz-pipeline.yml").read_text(
+        encoding="utf-8"
+    )
+    job = workflow.split("  image-generation:", 1)[1].split(
+        "\n  render-video:", 1
+    )[0]
+
+    assert "name: Download partial image checkpoint" in job
+    assert "resume_from_index == '5'" in job
+    assert "endsWith(needs.restore-production.outputs.source_artifact, '-image_generation')" in job
+    assert "name: Extract partial image checkpoint" in job
+    assert "name: Download storyboard project" in job
+    assert "if: always()" in job
+    assert "fail --stage image_generation --artifacts image-project.tar.gz" in job
+    assert "name: Upload image artifacts\n        if: always()" in job
+
+
 def test_validate_prerequisites_reports_missing_secret(monkeypatch):
     _set_valid_environment(monkeypatch)
     monkeypatch.delenv("ELEVENLABS_API_KEY")

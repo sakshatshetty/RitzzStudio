@@ -29,6 +29,16 @@ must have its required preceding-stage artifact available in an unexpired
 Actions artifact. Video and packaging approval environments remain in force
 for reruns that reach those steps.
 
+If image generation fails, the workflow also archives the partial image
+manifest and project before marking the stage failed. Resuming at image
+generation restores that archive and reuses only completed PNGs whose scene,
+provider, prompt, and dimensions still match; missing, corrupt, stale, and
+failed images are generated again. Progress is saved after each scene, so a
+later provider failure does not discard earlier completed images.
+For failures from runs made before partial image checkpoints were added, resume
+falls back to the saved storyboard project and starts image generation from the
+first scene.
+
 Before tests or external providers run, the workflow validates that all required
 secrets are present and that the Google client and token secrets decode to valid
 OAuth JSON. This preflight makes no provider API calls, so it does not consume

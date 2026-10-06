@@ -1,3 +1,5 @@
+import struct
+import zlib
 from pathlib import Path
 
 import pytest
@@ -116,6 +118,38 @@ def create_test_storyboard() -> Storyboard:
             ),
         ],
     )
+
+
+def _png_bytes(width: int, height: int) -> bytes:
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        body = kind + data
+        return (
+            struct.pack(">I", len(data))
+            + body
+            + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
+        )
+
+    row = b"\x00" + b"\x00" * (width * 3)
+    image_data = zlib.compress(row * height)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(
+            b"IHDR",
+            struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0),
+        )
+        + chunk(b"IDAT", image_data)
+        + chunk(b"IEND", b"")
+    )
+
+
+class ValidPngMockProvider(MockImageProvider):
+    def generate(self, request):
+        result = super().generate(request)
+        if result.status == "completed" and result.file_path is not None:
+            Path(result.file_path).write_bytes(
+                _png_bytes(request.width, request.height)
+            )
+        return result
 
 
 def test_load_storyboard(
@@ -447,6 +481,117 @@ def test_generate_all_images(
         assert file_path is not None
 
         assert Path(file_path).exists()
+
+
+def test_generate_reuses_valid_matching_manifest_assets(
+    tmp_path: Path,
+) -> None:
+    storyboard = create_test_storyboard()
+    output_directory = tmp_path / "images"
+    manifest_file = output_directory / "image_manifest.json"
+    first_provider = ValidPngMockProvider()
+    first_engine = ImageBatchEngine(ImageEngine(first_provider))
+
+    first_assets = first_engine.generate(
+        storyboard,
+        output_directory,
+        manifest_file=manifest_file,
+    )
+
+    assert len(first_assets) == 3
+    assert len(first_provider.calls) == 3
+
+    retry_provider = ValidPngMockProvider()
+    retry_engine = ImageBatchEngine(ImageEngine(retry_provider))
+    retry_assets = retry_engine.generate(
+        storyboard,
+        output_directory,
+        manifest_file=manifest_file,
+    )
+
+    assert len(retry_assets) == 3
+    assert len(retry_provider.calls) == 0
+
+
+def test_generate_persists_progress_and_resumes_after_provider_exception(
+    tmp_path: Path,
+) -> None:
+    class InterruptedProvider(ValidPngMockProvider):
+        def generate(self, request):
+            if request.scene_id == "scene_002":
+                raise RuntimeError("Simulated provider interruption.")
+            return super().generate(request)
+
+    storyboard = create_test_storyboard()
+    output_directory = tmp_path / "images"
+    manifest_file = output_directory / "image_manifest.json"
+    interrupted_engine = ImageBatchEngine(
+        ImageEngine(InterruptedProvider())
+    )
+
+    with pytest.raises(RuntimeError, match="Simulated provider interruption"):
+        interrupted_engine.generate(
+            storyboard,
+            output_directory,
+            manifest_file=manifest_file,
+        )
+
+    saved_assets = ImageBatchEngine.load_manifest(manifest_file)
+    assert [asset.status for asset in saved_assets] == [
+        "completed",
+        "generating",
+    ]
+
+    retry_provider = ValidPngMockProvider()
+    retry_engine = ImageBatchEngine(ImageEngine(retry_provider))
+    resumed_assets = retry_engine.generate(
+        storyboard,
+        output_directory,
+        manifest_file=manifest_file,
+    )
+
+    assert [asset.status for asset in resumed_assets] == [
+        "completed",
+        "completed",
+        "completed",
+    ]
+    assert [request.scene_id for request in retry_provider.calls] == [
+        "scene_002",
+        "scene_003",
+    ]
+
+
+def test_generate_retries_changed_prompt_missing_and_corrupt_assets(
+    tmp_path: Path,
+) -> None:
+    storyboard = create_test_storyboard()
+    output_directory = tmp_path / "images"
+    manifest_file = output_directory / "image_manifest.json"
+    first_engine = ImageBatchEngine(ImageEngine(ValidPngMockProvider()))
+    first_engine.generate(
+        storyboard,
+        output_directory,
+        manifest_file=manifest_file,
+    )
+
+    storyboard.scenes[0].visual_description = "Updated scene composition."
+    (output_directory / "scene_002.png").unlink()
+    (output_directory / "scene_003.png").write_bytes(b"corrupt image")
+
+    retry_provider = ValidPngMockProvider()
+    retry_engine = ImageBatchEngine(ImageEngine(retry_provider))
+    retry_assets = retry_engine.generate(
+        storyboard,
+        output_directory,
+        manifest_file=manifest_file,
+    )
+
+    assert len(retry_provider.calls) == 3
+    assert [asset.status for asset in retry_assets] == [
+        "completed",
+        "completed",
+        "completed",
+    ]
 
 
 def test_scene_to_image_mapping(

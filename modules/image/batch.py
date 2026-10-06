@@ -1,4 +1,5 @@
 import json
+import tempfile
 from pathlib import Path
 
 from modules.image.engine import ImageEngine
@@ -8,6 +9,7 @@ from modules.image.models import (
 )
 from modules.image.prompt_builder import ImagePromptBuilder
 from modules.storyboard.models import Storyboard
+from modules.video.image_asset_qa import inspect_image_asset
 
 
 class ImageBatchEngine:
@@ -69,8 +71,9 @@ class ImageBatchEngine:
         self,
         storyboard: Storyboard,
         output_directory: str | Path,
+        manifest_file: str | Path | None = None,
     ) -> list[ImageAsset]:
-        """Generate images for every storyboard scene."""
+        """Generate images, reusing valid matching assets from an optional manifest."""
 
         if not storyboard.scenes:
             raise ValueError(
@@ -82,12 +85,73 @@ class ImageBatchEngine:
             output_directory=output_directory,
         )
 
+        existing_assets: dict[str, ImageAsset] = {}
+        if manifest_file is not None and Path(manifest_file).is_file():
+            existing_assets = {
+                asset.scene_id: asset
+                for asset in self.load_manifest(manifest_file)
+            }
+
         assets: list[ImageAsset] = []
         for request in requests:
+            expected_path = Path(request.output_directory) / f"{request.image_id}.png"
+            previous_asset = existing_assets.get(request.scene_id)
+            if previous_asset is not None and self._can_reuse_asset(
+                previous_asset,
+                request,
+                expected_path,
+            ):
+                asset = previous_asset.model_copy(
+                    update={"file_path": str(expected_path)}
+                )
+                assets.append(asset)
+                if manifest_file is not None:
+                    self.save_manifest(assets, manifest_file)
+                continue
+
+            assets.append(
+                ImageAsset(
+                    image_id=request.image_id,
+                    scene_id=request.scene_id,
+                    provider=request.provider,
+                    prompt=request.prompt,
+                    status="generating",
+                )
+            )
+            if manifest_file is not None:
+                self.save_manifest(assets, manifest_file)
+
             asset = self.image_engine.generate_asset(request)
-            assets.append(asset)
+            assets[-1] = asset
+            if manifest_file is not None:
+                self.save_manifest(assets, manifest_file)
 
         return assets
+
+    @staticmethod
+    def _can_reuse_asset(
+        asset: ImageAsset,
+        request: ImageGenerationRequest,
+        expected_path: Path,
+    ) -> bool:
+        if (
+            asset.status != "completed"
+            or asset.image_id != request.image_id
+            or asset.scene_id != request.scene_id
+            or asset.provider != request.provider
+            or asset.prompt != request.prompt
+            or asset.file_path is None
+            or not expected_path.is_file()
+        ):
+            return False
+        try:
+            inspection = inspect_image_asset(expected_path)
+        except (OSError, ValueError):
+            return False
+        return (
+            inspection.width == request.width
+            and inspection.height == request.height
+        )
 
     @staticmethod
     def save_manifest(
@@ -104,10 +168,16 @@ class ImageBatchEngine:
             for asset in assets
         ]
 
-        path.write_text(
-            json.dumps(data, indent=2),
+        with tempfile.NamedTemporaryFile(
+            "w",
             encoding="utf-8",
-        )
+            dir=path.parent,
+            delete=False,
+        ) as temporary:
+            json.dump(data, temporary, indent=2)
+            temporary.write("\n")
+            temporary_path = Path(temporary.name)
+        temporary_path.replace(path)
 
     @staticmethod
     def load_manifest(
