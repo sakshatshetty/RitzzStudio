@@ -200,6 +200,22 @@ def test_youtube_processing_status_does_not_fail_or_repeat_upload(
     assert len(provider.status_calls) == 1
 
 
+def test_private_upload_workflow_installs_ffmpeg_before_validating_master():
+    workflow = Path(".github/workflows/ritzz-pipeline.yml").read_text(
+        encoding="utf-8"
+    )
+    private_upload_job = workflow[workflow.index("  private-upload:"):]
+    install_step = private_upload_job.index(
+        "Install FFmpeg for upload-master validation"
+    )
+    upload_step = private_upload_job.index("- name: Upload test video privately")
+
+    assert install_step < upload_step
+    assert "sudo apt-get install --yes --no-install-recommends ffmpeg" in (
+        private_upload_job[install_step:upload_step]
+    )
+
+
 def test_resume_with_saved_video_id_skips_upload_even_when_processing_pending(
     tmp_path,
     monkeypatch,

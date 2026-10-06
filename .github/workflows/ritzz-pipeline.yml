@@ -1612,6 +1612,11 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
+      - name: Install FFmpeg for upload-master validation
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ffmpeg
+
       - name: Detect a private-upload checkpoint from this workflow attempt
         id: pending-upload
         shell: bash
