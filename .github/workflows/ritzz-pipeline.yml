@@ -1755,6 +1755,7 @@ jobs:
     if: ${{ always() && needs.restore-production.result == 'success' && (needs.restore-production.outputs.effective_mode == 'NEW' || needs.restore-production.outputs.resume_from_index <= 4) && ((needs.voice-generation.result == 'success') || (needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index >= 4)) }}
     runs-on: ubuntu-latest
     env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       RITZZ_PRODUCTION_ID: ${{ needs.restore-production.outputs.production_id }}
       RITZZ_PIPELINE_ARTIFACTS: .pipeline-artifacts
     steps:
