@@ -67,9 +67,44 @@ _SCENE_REVIEW_RESPONSE_FORMAT: ResponseTextConfigParam = {
                     "type": "string",
                     "enum": ["PASS", "REVIEW", "FAIL"],
                 },
+                "editorial_text": {
+                    "type": "string",
+                    "enum": ["PASS", "REVIEW", "FAIL"],
+                },
+                "editorial_style": {
+                    "type": "string",
+                    "enum": ["PASS", "REVIEW", "FAIL"],
+                },
+                "editorial_placement": {
+                    "type": "string",
+                    "enum": ["PASS", "REVIEW", "FAIL"],
+                },
+                "editorial_obstruction": {
+                    "type": "string",
+                    "enum": ["PASS", "REVIEW", "FAIL"],
+                },
+                "editorial_safe_space": {
+                    "type": "string",
+                    "enum": ["PASS", "REVIEW", "FAIL"],
+                },
                 "rationale": {"type": "string"},
                 "correction_prompt": {"type": ["string", "null"]},
                 "suggested_editorial_scene_id": {"type": ["string", "null"]},
+                "suggested_editorial_position": {
+                    "type": ["string", "null"],
+                    "enum": [
+                        "top_left",
+                        "top_center",
+                        "top_right",
+                        "middle_left",
+                        "middle_center",
+                        "middle_right",
+                        "lower_left",
+                        "lower_center",
+                        "lower_right",
+                        None,
+                    ],
+                },
                 "failure_category": {
                     "type": ["string", "null"],
                     "enum": [
@@ -81,6 +116,14 @@ _SCENE_REVIEW_RESPONSE_FORMAT: ResponseTextConfigParam = {
                         "FORBIDDEN_OBJECT",
                         "CHARACTER_CONTINUITY",
                         "EDITORIAL_MISMATCH",
+                        "EDITORIAL_OVER_FACE",
+                        "EDITORIAL_OVER_CHARACTER",
+                        "EDITORIAL_OVER_OBJECT",
+                        "EDITORIAL_OVER_ACTION",
+                        "EDITORIAL_NO_SAFE_SPACE",
+                        "EDITORIAL_CLIPPED",
+                        "EDITORIAL_TOO_CLOSE_TO_SUBJECT",
+                        "EDITORIAL_POOR_CONTRAST",
                         "NARRATION_MISMATCH",
                         "VISUAL_DUPLICATE",
                         "OTHER",
@@ -93,9 +136,15 @@ _SCENE_REVIEW_RESPONSE_FORMAT: ResponseTextConfigParam = {
                 "narration_image",
                 "narration_description",
                 "editorial_context",
+                "editorial_text",
+                "editorial_style",
+                "editorial_placement",
+                "editorial_obstruction",
+                "editorial_safe_space",
                 "rationale",
                 "correction_prompt",
                 "suggested_editorial_scene_id",
+                "suggested_editorial_position",
                 "failure_category",
             ],
             "additionalProperties": False,
@@ -129,10 +178,45 @@ _SCENE_BATCH_REVIEW_RESPONSE_FORMAT: ResponseTextConfigParam = {
                                 "type": "string",
                                 "enum": ["PASS", "REVIEW", "FAIL"],
                             },
+                            "editorial_text": {
+                                "type": "string",
+                                "enum": ["PASS", "REVIEW", "FAIL"],
+                            },
+                            "editorial_style": {
+                                "type": "string",
+                                "enum": ["PASS", "REVIEW", "FAIL"],
+                            },
+                            "editorial_placement": {
+                                "type": "string",
+                                "enum": ["PASS", "REVIEW", "FAIL"],
+                            },
+                            "editorial_obstruction": {
+                                "type": "string",
+                                "enum": ["PASS", "REVIEW", "FAIL"],
+                            },
+                            "editorial_safe_space": {
+                                "type": "string",
+                                "enum": ["PASS", "REVIEW", "FAIL"],
+                            },
                             "rationale": {"type": "string"},
                             "correction_prompt": {"type": ["string", "null"]},
                             "suggested_editorial_scene_id": {
                                 "type": ["string", "null"]
+                            },
+                            "suggested_editorial_position": {
+                                "type": ["string", "null"],
+                                "enum": [
+                                    "top_left",
+                                    "top_center",
+                                    "top_right",
+                                    "middle_left",
+                                    "middle_center",
+                                    "middle_right",
+                                    "lower_left",
+                                    "lower_center",
+                                    "lower_right",
+                                    None,
+                                ],
                             },
                             "failure_category": {
                                 "type": ["string", "null"],
@@ -145,6 +229,14 @@ _SCENE_BATCH_REVIEW_RESPONSE_FORMAT: ResponseTextConfigParam = {
                                     "FORBIDDEN_OBJECT",
                                     "CHARACTER_CONTINUITY",
                                     "EDITORIAL_MISMATCH",
+                                    "EDITORIAL_OVER_FACE",
+                                    "EDITORIAL_OVER_CHARACTER",
+                                    "EDITORIAL_OVER_OBJECT",
+                                    "EDITORIAL_OVER_ACTION",
+                                    "EDITORIAL_NO_SAFE_SPACE",
+                                    "EDITORIAL_CLIPPED",
+                                    "EDITORIAL_TOO_CLOSE_TO_SUBJECT",
+                                    "EDITORIAL_POOR_CONTRAST",
                                     "NARRATION_MISMATCH",
                                     "VISUAL_DUPLICATE",
                                     "OTHER",
@@ -157,9 +249,15 @@ _SCENE_BATCH_REVIEW_RESPONSE_FORMAT: ResponseTextConfigParam = {
                             "narration_image",
                             "narration_description",
                             "editorial_context",
+                            "editorial_text",
+                            "editorial_style",
+                            "editorial_placement",
+                            "editorial_obstruction",
+                            "editorial_safe_space",
                             "rationale",
                             "correction_prompt",
                             "suggested_editorial_scene_id",
+                            "suggested_editorial_position",
                             "failure_category",
                         ],
                         "additionalProperties": False,
@@ -319,7 +417,10 @@ class OpenAIImageEditorialReviewer:
                     f"{json.dumps(scene.visual_contract.model_dump(mode='json'), ensure_ascii=False) if scene.visual_contract else '(not supplied)'}\n"
                     f"Editorial required: {str(bool(expected_editorial)).lower()}\n"
                     f"Expected editorial word: {expected_editorial or '(none)'}\n"
-                    f"Editorial position: {scene.callout_position or '(unspecified)'}\n"
+                    f"Reserved editorial safe zone: {scene.callout_position or '(unspecified)'}\n"
+                    "Protected visual elements: the face, eyes, head when important, "
+                    "character, hands, primary action, required objects, and evidence "
+                    "objects described by the scene contract\n"
                     "Nearby editorial candidates: "
                     f"{json.dumps(editorial_candidates or [], ensure_ascii=False)}"
                 ),
@@ -337,18 +438,33 @@ class OpenAIImageEditorialReviewer:
             "historical mismatch as FAIL, not merely as stylistic preference. Editorial text is "
             "intentionally embedded in the generated image when "
             "Editorial required is true. The storyboard is authoritative: verify that the exact expected "
-            "uppercase word is present, legible, and contextually appropriate. Do not mark editorial text "
-            "as an error merely because it is embedded in the image. If editorial is not required, "
-            "unintended editorial text is a mismatch. Return exactly one result per scene in the same order "
+            "uppercase word is present, legible, and contextually appropriate. For each scene, report "
+            "EDITORIAL_TEXT (exact required word present and not clipped), EDITORIAL_STYLE (one uppercase "
+            "handwritten marker word in bright yellow or white, no box/banner/subtitle styling), "
+            "EDITORIAL_PLACEMENT (word is inside "
+            "the reserved safe zone), EDITORIAL_OBSTRUCTION (word does not overlap a face, head, body, hand, "
+            "primary action, important object, evidence, or focal point), and EDITORIAL_SAFE_SPACE (the zone "
+            "is genuinely uncluttered and large enough for the word). Use PASS/FAIL/REVIEW independently; "
+            "when no editorial is required, all five are PASS only if no unintended text is visible. "
+            "Do not treat a selected zone as proof that the rendered placement is safe: inspect the image. "
+            "Do not mark editorial text as an error merely because it is embedded in the image. If editorial "
+            "is not required, unintended editorial text is a mismatch. Return exactly one result per scene in the same order "
             "and preserve each scene_id exactly. Use FAIL only for a clear mismatch, REVIEW when uncertain, "
             "and PASS when the visual evidence supports the scene. Every FAIL must include a concrete "
             "actionable correction_prompt, except an editorial relocation which should use "
-            "suggested_editorial_scene_id. A REVIEW should include a correction only when a safe, specific "
+            "suggested_editorial_scene_id. If the image has another clearly safe empty area and "
+            "the word still suits this scene, return a different suggested_editorial_position; "
+            "otherwise request a new composition. A REVIEW should include a correction only when a safe, specific "
             "visual change is clear; otherwise correction_prompt must be null. Classify clear failures "
             "using failure_category: ANACHRONISM, AMBIGUITY, WRONG_ACTION, WRONG_ENVIRONMENT, "
             "MISSING_REQUIRED_OBJECT, FORBIDDEN_OBJECT, CHARACTER_CONTINUITY, EDITORIAL_MISMATCH, "
-            "NARRATION_MISMATCH, VISUAL_DUPLICATE, or OTHER. Keep corrections specific to the image "
-            "and preserve the established character and illustration style."
+            "EDITORIAL_OVER_FACE, EDITORIAL_OVER_CHARACTER, EDITORIAL_OVER_OBJECT, "
+            "EDITORIAL_OVER_ACTION, EDITORIAL_NO_SAFE_SPACE, EDITORIAL_CLIPPED, "
+            "EDITORIAL_TOO_CLOSE_TO_SUBJECT, EDITORIAL_POOR_CONTRAST, NARRATION_MISMATCH, "
+            "VISUAL_DUPLICATE, or OTHER. For an editorial obstruction or missing safe space, "
+            "ask for a new composition that reserves the assigned zone and moves the subject/action "
+            "away while preserving narrative meaning; never solve it by laying text over the subject. "
+            "Keep corrections specific to the image and preserve the established character and illustration style."
         )
         if self.visual_world is not None:
             prompt += (
@@ -399,6 +515,11 @@ class OpenAIImageEditorialReviewer:
                         "narration_image",
                         "narration_description",
                         "editorial_context",
+                        "editorial_text",
+                        "editorial_style",
+                        "editorial_placement",
+                        "editorial_obstruction",
+                        "editorial_safe_space",
                     )
                 ]
                 if any(status not in {"PASS", "REVIEW", "FAIL"} for status in statuses):
@@ -414,10 +535,18 @@ class OpenAIImageEditorialReviewer:
                     narration_image=item["narration_image"],
                     narration_description=item["narration_description"],
                     editorial_context=item["editorial_context"],
+                    editorial_text=item["editorial_text"],
+                    editorial_style=item["editorial_style"],
+                    editorial_placement=item["editorial_placement"],
+                    editorial_obstruction=item["editorial_obstruction"],
+                    editorial_safe_space=item["editorial_safe_space"],
                     rationale=str(item.get("rationale", "")),
                     correction_prompt=item.get("correction_prompt"),
                     suggested_editorial_scene_id=item.get(
                         "suggested_editorial_scene_id"
+                    ),
+                    suggested_editorial_position=item.get(
+                        "suggested_editorial_position"
                     ),
                     failure_category=item.get("failure_category"),
                 ))

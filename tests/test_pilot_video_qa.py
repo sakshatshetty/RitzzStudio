@@ -236,9 +236,15 @@ def test_openai_rendered_scene_reviewer_requests_strict_json_schema(tmp_path):
         "narration_image": "PASS",
         "narration_description": "PASS",
         "editorial_context": "REVIEW",
+        "editorial_text": "PASS",
+        "editorial_style": "PASS",
+        "editorial_placement": "REVIEW",
+        "editorial_obstruction": "PASS",
+        "editorial_safe_space": "REVIEW",
         "rationale": "The word is hard to read.",
         "correction_prompt": None,
         "suggested_editorial_scene_id": None,
+        "suggested_editorial_position": None,
         "failure_category": None,
     }
 
@@ -288,6 +294,16 @@ def test_openai_rendered_scene_reviewer_requests_strict_json_schema(tmp_path):
     assert captured["text"]["format"]["schema"]["additionalProperties"] is False
     assert "technology_ceiling" in captured["input"][0]["content"][0]["text"]
     assert "failure_category" in captured["text"]["format"]["schema"]["required"]
+    assert {
+        "editorial_text",
+        "editorial_style",
+        "editorial_placement",
+        "editorial_obstruction",
+        "editorial_safe_space",
+    }.issubset(captured["text"]["format"]["schema"]["required"])
+    assert result.editorial_placement == "REVIEW"
+    assert result.editorial_safe_space == "REVIEW"
+    assert "suggested_editorial_position" in captured["text"]["format"]["schema"]["required"]
 
 
 def test_openai_rendered_scene_reviewer_preserves_failure_category(
@@ -300,10 +316,16 @@ def test_openai_rendered_scene_reviewer_preserves_failure_category(
         "narration_image": "FAIL",
         "narration_description": "PASS",
         "editorial_context": "PASS",
-        "rationale": "A modern electric light is shown in a medieval scene.",
-        "correction_prompt": "Replace it with a historically appropriate light.",
+        "editorial_text": "PASS",
+        "editorial_style": "PASS",
+        "editorial_placement": "PASS",
+        "editorial_obstruction": "FAIL",
+        "editorial_safe_space": "PASS",
+        "rationale": "The callout overlaps the face.",
+        "correction_prompt": "Move the word into a clear empty area.",
         "suggested_editorial_scene_id": None,
-        "failure_category": "ANACHRONISM",
+        "suggested_editorial_position": None,
+        "failure_category": "EDITORIAL_OVER_FACE",
     }
     reviewer = OpenAIImageEditorialReviewer(api_key="test-key", model="test-model")
     monkeypatch.setattr(
@@ -319,7 +341,8 @@ def test_openai_rendered_scene_reviewer_preserves_failure_category(
     result = reviewer.review(image, storyboard.scenes[0])
 
     assert result.status == "FAIL"
-    assert result.failure_category == "ANACHRONISM"
+    assert result.failure_category == "EDITORIAL_OVER_FACE"
+    assert result.editorial_obstruction == "FAIL"
 
 
 def test_openai_rendered_scene_reviewer_reports_empty_incomplete_output(tmp_path):
@@ -363,9 +386,15 @@ def test_openai_rendered_scene_batch_preserves_full_narration_and_order(tmp_path
                 "narration_image": "PASS",
                 "narration_description": "PASS",
                 "editorial_context": "PASS",
+                "editorial_text": "PASS",
+                "editorial_style": "PASS",
+                "editorial_placement": "PASS",
+                "editorial_obstruction": "PASS",
+                "editorial_safe_space": "PASS",
                 "rationale": "The image fits.",
                 "correction_prompt": None,
                 "suggested_editorial_scene_id": None,
+                "suggested_editorial_position": None,
                 "failure_category": None,
             }
             for scene in (storyboard.scenes[0], second_scene)
@@ -420,9 +449,15 @@ def test_openai_rendered_scene_batch_rejects_reordered_scene_ids(tmp_path):
                 "narration_image": "PASS",
                 "narration_description": "PASS",
                 "editorial_context": "PASS",
+                "editorial_text": "PASS",
+                "editorial_style": "PASS",
+                "editorial_placement": "PASS",
+                "editorial_obstruction": "PASS",
+                "editorial_safe_space": "PASS",
                 "rationale": "The image fits.",
                 "correction_prompt": None,
                 "suggested_editorial_scene_id": None,
+                "suggested_editorial_position": None,
                 "failure_category": None,
             }
             for scene_id in ("scene_002", "scene_001")

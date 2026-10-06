@@ -414,6 +414,10 @@ class ContentWorkflow:
                 outline_result,
                 minimum_word_count=production_config.minimum_word_count,
                 minimum_duration_seconds=production_config.minimum_duration_seconds,
+                words_per_minute=production_config.words_per_minute,
+                maximum_duration_seconds=(
+                    production_config.maximum_acceptable_duration_seconds
+                ),
             )
         except ValueError as exc:
             return QAStageResult(

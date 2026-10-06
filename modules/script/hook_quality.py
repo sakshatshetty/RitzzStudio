@@ -11,6 +11,7 @@ class HookCandidateScores(BaseModel):
     clarity: int = Field(ge=0, le=5)
     open_loop: int = Field(ge=0, le=5)
     payoff_promise: int = Field(ge=0, le=5)
+    viewer_relevance: int = Field(default=0, ge=0, le=5)
     factual_support: int = Field(ge=0, le=5)
     source_ids: list[str] = Field(default_factory=list)
 
@@ -25,6 +26,7 @@ class HookCandidateScores(BaseModel):
             self.clarity,
             self.open_loop,
             self.payoff_promise,
+            self.viewer_relevance,
         )
         return sum(dimensions) / len(dimensions)
 

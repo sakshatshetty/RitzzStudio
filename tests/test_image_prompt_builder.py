@@ -1,13 +1,13 @@
 import pytest
 
 from modules.image.prompt_builder import ImagePromptBuilder
+from modules.storyboard.models import (
+    StoryboardScene,
+)
 from modules.storyboard.visual_models import (
     SceneVisualContract,
     VisualRestriction,
     VisualWorldBible,
-)
-from modules.storyboard.models import (
-    StoryboardScene,
 )
 
 
@@ -234,6 +234,51 @@ def test_prompt_adds_editorial_text_when_present() -> None:
     assert "exact editorial word MYSTERY" in prompt
     assert "intentionally part of the generated image" in prompt
     assert "Do not add any other letters" in prompt
+    assert "Reserve the lower-left negative space" in prompt
+    assert "clean, uncluttered plane" in prompt
+    assert "Keep all faces, eyes, hands, important objects, evidence" in prompt
+    assert "recompose it while preserving the same narrative meaning" in prompt
+    assert prompt.count("MYSTERY") == 1
+
+
+def test_editorial_prompt_protects_visual_contract_elements():
+    scene = sample_scene().model_copy(
+        update={
+            "text_overlay": "SURVIVAL",
+            "callout_position": "middle_right",
+            "visual_contract": SceneVisualContract(
+                scene_id="scene_001",
+                purpose="SHOW_PROCESS",
+                subject="A sailor's face and hand",
+                action="raises a lantern",
+                environment="A ship deck",
+                historical_context="A historical sailing vessel",
+                required_objects=["wooden lantern", "ship wheel"],
+                ambiguity_resolution="Show a physical lantern.",
+            ),
+        }
+    )
+
+    prompt = ImagePromptBuilder().build(scene)
+
+    assert "middle-right negative space" in prompt
+    assert "A sailor's face and hand; raises a lantern; wooden lantern; ship wheel" in prompt
+    assert "Do not place lettering on, across, behind" in prompt
+    assert "Render the exact editorial word SURVIVAL" in prompt
+
+
+def test_editorial_position_map_includes_all_clear_safe_zones():
+    assert set(ImagePromptBuilder.EDITORIAL_POSITION_MAP) == {
+        "top_left",
+        "top_center",
+        "top_right",
+        "middle_left",
+        "middle_center",
+        "middle_right",
+        "lower_left",
+        "lower_center",
+        "lower_right",
+    }
 
 
 def test_editorial_text_is_included_in_image_generation_prompt() -> None:

@@ -93,6 +93,10 @@ def main() -> int:
         if github_output:
             with Path(github_output).open("a", encoding="utf-8") as output:
                 output.write(f"concept_count={len(artifact['concepts'])}\n")
+        if len(artifact["concepts"]) != 3:
+            raise ValueError(
+                "Thumbnail concept generation must return exactly three concepts."
+            )
         print(json.dumps(artifact, ensure_ascii=False, indent=2))
         return 0
 

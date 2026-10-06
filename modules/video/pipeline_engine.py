@@ -693,6 +693,7 @@ class VideoProductionPipeline:
         def cache_key(index: int) -> str:
             image_path = image_directory / f"{scenes[index].scene_id}.png"
             payload = {
+                "semantic_qa_policy_version": 2,
                 "reviewer": (
                     f"{type(reviewer).__module__}.{type(reviewer).__qualname__}:"
                     f"{getattr(reviewer, 'model', 'default')}"
@@ -823,10 +824,54 @@ class VideoProductionPipeline:
                 }
         save_review_cache()
 
+        affected_indices: set[int] = set()
+        manual_review_findings: list[str] = []
+        suggested_fixes: dict[int, str] = {}
+        position_repairs: set[int] = set()
+        for index, review in first_reviews.items():
+            editorial_statuses = (
+                review.editorial_context,
+                review.editorial_text,
+                review.editorial_style,
+                review.editorial_placement,
+                review.editorial_obstruction,
+                review.editorial_safe_space,
+            )
+            new_position = review.suggested_editorial_position
+            if (
+                not scenes[index].text_overlay
+                or new_position is None
+                or new_position == scenes[index].callout_position
+                or not any(status in {"FAIL", "REVIEW"} for status in editorial_statuses)
+            ):
+                continue
+            scenes[index] = scenes[index].model_copy(
+                update={"callout_position": new_position}
+            )
+            position_repairs.add(index)
+            affected_indices.add(index)
+            suggested_fixes[index] = (
+                "Keep the exact editorial word in the same scene but relocate it "
+                f"to the reviewer-approved {new_position} safe zone."
+            )
+
         moves: dict[int, int] = {}
         unresolved_editorial: list[str] = []
         for index, review in first_reviews.items():
-            if review.editorial_context not in {"FAIL", "REVIEW"} or not scenes[index].text_overlay:
+            if index in position_repairs:
+                continue
+            editorial_statuses = (
+                review.editorial_context,
+                review.editorial_text,
+                review.editorial_style,
+                review.editorial_placement,
+                review.editorial_obstruction,
+                review.editorial_safe_space,
+            )
+            if (
+                not any(status in {"FAIL", "REVIEW"} for status in editorial_statuses)
+                or not scenes[index].text_overlay
+            ):
                 continue
             suggested_id = review.suggested_editorial_scene_id
             if not suggested_id:
@@ -861,14 +906,20 @@ class VideoProductionPipeline:
                 continue
             moves[index] = target_index
 
-        affected_indices: set[int] = set()
-        manual_review_findings: list[str] = []
-        suggested_fixes: dict[int, str] = {}
         for index, target_index in moves.items():
             word = scenes[index].text_overlay
+            if scenes[target_index].callout_position is None:
+                from modules.storyboard.dynamic_engine import DynamicStoryboardEngine
+
+                target_position = DynamicStoryboardEngine._contextual_callout_position(
+                    scenes[target_index]
+                )
+            else:
+                target_position = scenes[target_index].callout_position
             scenes[index] = scenes[index].model_copy(
                 update={
                     "text_overlay": "",
+                    "callout_position": None,
                     "callout_not_warranted": True,
                     "callout_not_warranted_reason": (
                         "The approved word fits the adjacent visual beat better."
@@ -878,6 +929,7 @@ class VideoProductionPipeline:
             scenes[target_index] = scenes[target_index].model_copy(
                 update={
                     "text_overlay": word,
+                    "callout_position": target_position,
                     "callout_not_warranted": False,
                     "callout_not_warranted_reason": None,
                 }
@@ -910,7 +962,14 @@ class VideoProductionPipeline:
                     review.narration_description,
                 )
                 if editorial_move_resolves_review
-                else review_statuses
+                else (
+                    *review_statuses,
+                    review.editorial_text,
+                    review.editorial_style,
+                    review.editorial_placement,
+                    review.editorial_obstruction,
+                    review.editorial_safe_space,
+                )
             )
             has_clear_failure = any(status == "FAIL" for status in issue_statuses)
             has_actionable_review = (
@@ -938,7 +997,7 @@ class VideoProductionPipeline:
                     "supplied, so the original image was preserved for review."
                 )
             if (
-                review.editorial_context == "FAIL"
+                any(status == "FAIL" for status in editorial_statuses)
                 and index not in moves
                 and index not in affected_indices
             ):
@@ -961,6 +1020,11 @@ class VideoProductionPipeline:
                     "narration_image",
                     "narration_description",
                     "editorial_context",
+                    "editorial_text",
+                    "editorial_style",
+                    "editorial_placement",
+                    "editorial_obstruction",
+                    "editorial_safe_space",
                 )
             }
             initial_status: QAStatus = (
@@ -1043,7 +1107,40 @@ class VideoProductionPipeline:
             ),
             "EDITORIAL_MISMATCH": (
                 "Render only the exact assigned editorial word in the prescribed "
-                "handwritten marker style and position."
+                "handwritten marker style inside its reserved safe zone."
+            ),
+            "EDITORIAL_OVER_FACE": (
+                "Recompose the scene so the editorial word sits in empty negative "
+                "space and never overlaps the face, eyes, or important head details."
+            ),
+            "EDITORIAL_OVER_CHARACTER": (
+                "Move the character completely away from the reserved editorial "
+                "zone; keep the word out of the character silhouette."
+            ),
+            "EDITORIAL_OVER_OBJECT": (
+                "Keep all important objects and evidence outside the reserved "
+                "editorial zone; recompose the image rather than covering them."
+            ),
+            "EDITORIAL_OVER_ACTION": (
+                "Keep the primary action and its full gesture/path clear of the "
+                "editorial zone; recompose the subject and action around empty space."
+            ),
+            "EDITORIAL_NO_SAFE_SPACE": (
+                "Create a different composition that preserves the same narrative "
+                "meaning and reserves a naturally uncluttered plane in the assigned "
+                "zone, away from the face, subject, action, and important objects."
+            ),
+            "EDITORIAL_CLIPPED": (
+                "Keep the complete editorial word comfortably inside the image frame "
+                "and entirely within its reserved zone."
+            ),
+            "EDITORIAL_TOO_CLOSE_TO_SUBJECT": (
+                "Increase clear separation between the word and all protected visual "
+                "elements; do not let lettering touch or cross their edges."
+            ),
+            "EDITORIAL_POOR_CONTRAST": (
+                "Use a simple, naturally uncluttered background behind the existing "
+                "handwritten word so its yellow or white lettering is clearly legible."
             ),
             "NARRATION_MISMATCH": (
                 "Depict the scene's visual contract and action, not a different idea "
@@ -1260,7 +1357,20 @@ class VideoProductionPipeline:
                 suggested_fixes[index] = finding
         unresolved = list(unresolved_editorial)
         for index, review in final_reviews.items():
-            if review.status == "FAIL" or review.narration_image == "FAIL" or review.narration_description == "FAIL" or review.editorial_context == "FAIL":
+            if any(
+                check_status == "FAIL"
+                for check_status in (
+                    review.status,
+                    review.narration_image,
+                    review.narration_description,
+                    review.editorial_context,
+                    review.editorial_text,
+                    review.editorial_style,
+                    review.editorial_placement,
+                    review.editorial_obstruction,
+                    review.editorial_safe_space,
+                )
+            ):
                 unresolved.append(f"{scenes[index].scene_id}: {review.rationale}")
 
         final_check_statuses = [
@@ -1271,6 +1381,11 @@ class VideoProductionPipeline:
                 review.narration_image,
                 review.narration_description,
                 review.editorial_context,
+                review.editorial_text,
+                review.editorial_style,
+                review.editorial_placement,
+                review.editorial_obstruction,
+                review.editorial_safe_space,
             )
         ]
         status: QAStatus = (
@@ -1320,9 +1435,20 @@ class VideoProductionPipeline:
             f"{scenes[index].scene_id}.editorial_context": review.editorial_context
             for index, review in final_reviews.items()
         })
+        for check_name in (
+            "editorial_text",
+            "editorial_style",
+            "editorial_placement",
+            "editorial_obstruction",
+            "editorial_safe_space",
+        ):
+            checks.update({
+                f"{scenes[index].scene_id}.{check_name}": getattr(review, check_name)
+                for index, review in final_reviews.items()
+            })
         checks.update({
             f"{scenes[index].scene_id}.editorial_presence": (
-                review.editorial_context
+                review.editorial_text
                 if scenes[index].text_overlay.strip()
                 else "PASS"
             )
@@ -1350,6 +1476,11 @@ class VideoProductionPipeline:
                             review.narration_image,
                             review.narration_description,
                             review.editorial_context,
+                            review.editorial_text,
+                            review.editorial_style,
+                            review.editorial_placement,
+                            review.editorial_obstruction,
+                            review.editorial_safe_space,
                         )
                     )
                 ],

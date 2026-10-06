@@ -2,7 +2,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-
 ScenePurpose = Literal[
     "ESTABLISH",
     "EXPLAIN",
@@ -25,6 +24,14 @@ VisualFailureCategory = Literal[
     "FORBIDDEN_OBJECT",
     "CHARACTER_CONTINUITY",
     "EDITORIAL_MISMATCH",
+    "EDITORIAL_OVER_FACE",
+    "EDITORIAL_OVER_CHARACTER",
+    "EDITORIAL_OVER_OBJECT",
+    "EDITORIAL_OVER_ACTION",
+    "EDITORIAL_NO_SAFE_SPACE",
+    "EDITORIAL_CLIPPED",
+    "EDITORIAL_TOO_CLOSE_TO_SUBJECT",
+    "EDITORIAL_POOR_CONTRAST",
     "NARRATION_MISMATCH",
     "VISUAL_DUPLICATE",
     "OTHER",
@@ -77,4 +84,3 @@ class SceneVisualContract(BaseModel):
 
 class SceneVisualContractBatch(BaseModel):
     scenes: list[SceneVisualContract]
-

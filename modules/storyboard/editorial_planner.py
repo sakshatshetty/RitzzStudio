@@ -153,13 +153,16 @@ this is a pacing target, not a timer. Do not force weak or repetitive text.
 For every scene, return either one callout or callout_not_warranted=true with
 a concrete reason. Keep callouts at least 3 scenes apart when context supports
 it. Longer gaps are acceptable when no scene warrants a word.
-For each selected callout, choose one position from top_left, top_center,
-top_right, middle_left, middle_right, lower_left, lower_right. Use the visual
-description, character action, and background to place it in likely negative
-space opposite the main character or important object. Never choose a position
-that would cover the described face, focal object, evidence, or labels. Do not
-cycle positions; choose each scene independently. If placement cannot be
-inferred safely, prefer a clear upper corner and flag the placement for review.
+For each selected callout, choose one safe-zone position from top_left,
+top_center, top_right, middle_left, middle_center, middle_right, lower_left,
+lower_center, lower_right. Treat this position as a clear plane reserved for
+the word, not as permission to draw over scene content. Use the visual
+description, character action, props, and background to place it in likely
+negative space away from the main character, face, action, and important
+objects. Never place text over or through them. Do not cycle positions; choose
+each scene independently. If no safe area is apparent, choose the least
+obstructive zone and flag it for review so image QA can request a new
+composition.
 
 Return JSON only:
 
@@ -199,7 +202,8 @@ The result must be:
 - not a multi-word phrase
 - or explicitly mark the scene not warranted, with a concrete reason
 - for a callout, select one allowed position using composition and negative
-  space; do not use a mechanical rotation
+  space; reserve it as clear empty space rather than placing text over content;
+  do not use a mechanical rotation
 
 Contexts:
 
@@ -343,8 +347,10 @@ Contexts:
                 "top_center",
                 "top_right",
                 "middle_left",
+                "middle_center",
                 "middle_right",
                 "lower_left",
+                "lower_center",
                 "lower_right",
             }
             if position is not None and (

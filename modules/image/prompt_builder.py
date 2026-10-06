@@ -1,3 +1,5 @@
+from typing import ClassVar
+
 from modules.storyboard.models import StoryboardScene
 from modules.storyboard.visual_models import VisualWorldBible
 
@@ -108,13 +110,15 @@ class ImagePromptBuilder:
         "type, subtitle styling, decorative text effects, or any additional text."
     )
 
-    EDITORIAL_POSITION_MAP = {
+    EDITORIAL_POSITION_MAP: ClassVar[dict[str, str]] = {
         "top_left": "upper-left negative space",
         "top_center": "upper-center negative space",
         "top_right": "upper-right negative space",
         "middle_left": "middle-left negative space",
+        "middle_center": "middle-center negative space",
         "middle_right": "middle-right negative space",
         "lower_left": "lower-left negative space",
+        "lower_center": "lower-center negative space",
         "lower_right": "lower-right negative space",
     }
 
@@ -245,12 +249,46 @@ class ImagePromptBuilder:
         if has_editorial_text:
             position = self.EDITORIAL_POSITION_MAP.get(
                 scene.callout_position or "",
-                "an uncluttered area that does not cover the main action",
+                "a clear negative-space plane chosen away from the main action",
+            )
+            protected_elements = [
+                item
+                for item in (
+                    scene.visual_contract.subject
+                    if scene.visual_contract
+                    else "",
+                    scene.visual_contract.action
+                    if scene.visual_contract
+                    else "",
+                    *(
+                        scene.visual_contract.required_objects
+                        if scene.visual_contract
+                        else []
+                    ),
+                    *scene.props,
+                )
+                if item
+            ]
+            protected_text = (
+                "; ".join(dict.fromkeys(protected_elements))
+                or "the face, character, primary action, and important scene objects"
+            )
+            parts.append(
+                f"EDITORIAL COMPOSITION REQUIREMENT: Reserve the {position} as a "
+                "clean, uncluttered plane with enough open area for one large word. "
+                "Compose the subject and action away from this reserved plane. "
+                "Keep all faces, eyes, hands, important objects, evidence, and the "
+                "primary action completely outside it. Do not place lettering on, "
+                "across, behind, or partly outside any protected visual element. "
+                "Protected scene elements: "
+                f"{protected_text}. The illustration should naturally contain this "
+                "open space; if the described composition is crowded, recompose it "
+                "while preserving the same narrative meaning."
             )
             parts.append(
                 f"Render the exact editorial word {editorial_word} inside the illustration. "
                 "The word must be uppercase, spelled exactly as provided, clearly legible, "
-                f"and placed in {position}. "
+                f"and contained entirely within the reserved {position}. "
                 "This word is intentionally part of the generated image, not a subtitle. "
                 "Do not add any other letters, words, captions, labels, or typography."
             )
