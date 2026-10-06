@@ -61,8 +61,82 @@ def _artifact_stage(name: str) -> tuple[str, str] | None:
     return None
 
 
+def _artifact_run_id(artifact: dict[str, Any]) -> str | None:
+    workflow_run = artifact.get("workflow_run")
+    if not isinstance(workflow_run, dict):
+        return None
+    run_id = workflow_run.get("id")
+    return str(run_id) if run_id is not None else None
+
+
+def _find_run_id_for_artifact(
+    artifact: dict[str, Any],
+    repository: str,
+    token: str,
+) -> str:
+    """Find the owning workflow run when GitHub omits workflow_run on an artifact."""
+    owner, separator, repo = repository.partition("/")
+    if not separator or not owner or not repo:
+        raise ValueError("Repository must have the owner/repository form.")
+
+    artifact_id = int(artifact["id"])
+    encoded_repo = urllib.parse.quote(f"{owner}/{repo}", safe="/")
+    artifact_created_at = str(artifact.get("created_at", ""))
+    page = 1
+    while True:
+        response = _github_request(
+            f"{API_ROOT}/repos/{encoded_repo}/actions/runs"
+            f"?per_page=100&page={page}",
+            token,
+        )
+        runs = response.get("workflow_runs")
+        if not isinstance(runs, list):
+            raise TypeError("GitHub workflow run listing response is invalid.")
+
+        for run in runs:
+            run_id = run.get("id")
+            if run_id is None:
+                continue
+            run_created_at = str(run.get("created_at", ""))
+            if artifact_created_at and run_created_at > artifact_created_at:
+                continue
+
+            artifact_page = 1
+            while True:
+                run_artifacts_response = _github_request(
+                    f"{API_ROOT}/repos/{encoded_repo}/actions/runs/{run_id}/artifacts"
+                    f"?per_page=100&page={artifact_page}",
+                    token,
+                )
+                run_artifacts = run_artifacts_response.get("artifacts")
+                if not isinstance(run_artifacts, list):
+                    raise TypeError(
+                        "GitHub workflow run artifact listing response is invalid."
+                    )
+                if any(
+                    int(run_artifact.get("id", 0)) == artifact_id
+                    for run_artifact in run_artifacts
+                ):
+                    return str(run_id)
+                if len(run_artifacts) < 100:
+                    break
+                artifact_page += 1
+
+        if len(runs) < 100:
+            break
+        page += 1
+
+    raise RuntimeError(
+        f"Could not find the workflow run associated with artifact {artifact_id}."
+    )
+
+
 def _download_artifact_archive(artifact: dict[str, Any], repository: str) -> bytes:
-    run_id = str(artifact["workflow_run"]["id"])
+    run_id = _artifact_run_id(artifact)
+    if run_id is None:
+        raise ValueError(
+            f"Artifact {artifact.get('id')} has no associated workflow run."
+        )
     artifact_name = str(artifact["name"])
     with tempfile.TemporaryDirectory(prefix="ritzz-checkpoint-") as directory:
         try:
@@ -177,10 +251,15 @@ def find_checkpoint_for_project(
         if not (completed_stage or failed_stage_retry or interrupted_private_upload):
             continue
         if state.get("project_id") == project_id:
+            source_run_id = _artifact_run_id(artifact)
+            if source_run_id is None:
+                raise RuntimeError(
+                    f"Checkpoint artifact {artifact['name']} has no resolved workflow run."
+                )
             return {
                 "project_id": project_id,
                 "production_id": production_id,
-                "source_run_id": str(artifact["workflow_run"]["id"]),
+                "source_run_id": source_run_id,
                 "source_artifact": str(artifact["name"]),
                 "checkpoint_index": PIPELINE_STAGES.index(stage),
                 "effective_mode": "RESUME",
@@ -192,10 +271,15 @@ def find_checkpoint_for_project(
                 raise RuntimeError(
                     f"Checkpoint artifact {artifact['name']} has no valid project ID."
                 )
+            source_run_id = _artifact_run_id(artifact)
+            if source_run_id is None:
+                raise RuntimeError(
+                    f"Checkpoint artifact {artifact['name']} has no resolved workflow run."
+                )
             return {
                 "project_id": actual_project_id,
                 "production_id": production_id,
-                "source_run_id": str(artifact["workflow_run"]["id"]),
+                "source_run_id": source_run_id,
                 "source_artifact": str(artifact["name"]),
                 "checkpoint_index": PIPELINE_STAGES.index(stage),
                 "effective_mode": "RESUME",
@@ -243,6 +327,10 @@ def resolve_from_github(
         )
         if artifact is None:
             raise RuntimeError(f"Artifact {artifact_id} disappeared from the listing.")
+        if _artifact_run_id(artifact) is None:
+            artifact["workflow_run"] = {
+                "id": _find_run_id_for_artifact(artifact, repository, token)
+            }
         return _download_artifact_archive(artifact, repository)
 
     return find_checkpoint_for_project(project_id, artifacts, download_archive)

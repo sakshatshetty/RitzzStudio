@@ -278,3 +278,56 @@ def test_checkpoint_archive_uses_github_cli_run_download(monkeypatch):
     assert captured["check"] is True
     assert captured["capture_output"] is True
     assert captured["text"] is True
+
+
+def test_resolves_artifact_when_github_omits_workflow_run(monkeypatch):
+    artifact = make_artifact(
+        "production-1",
+        "private_upload",
+        42,
+        "2026-10-01T12:00:00Z",
+        123,
+    )
+    artifact["workflow_run"] = None
+    requested_urls = []
+
+    def fake_github_request(url, _token):
+        requested_urls.append(url)
+        if url.endswith("/actions/artifacts?per_page=100&page=1"):
+            return {"artifacts": [artifact]}
+        if url.endswith("/actions/runs?per_page=100&page=1"):
+            return {
+                "workflow_runs": [
+                    {"id": 123, "created_at": "2026-10-01T11:00:00Z"}
+                ]
+            }
+        if url.endswith("/actions/runs/123/artifacts?per_page=100&page=1"):
+            return {"artifacts": [{"id": 42}]}
+        raise AssertionError(f"Unexpected GitHub API request: {url}")
+
+    def fake_run(command, *, check, capture_output, text):
+        output_directory = Path(command[-1]) / artifact["name"]
+        output_directory.mkdir(parents=True)
+        with zipfile.ZipFile(
+            io.BytesIO(checkpoint_archive("production-1", "PROJECT_1"))
+        ) as checkpoint:
+            state_data = checkpoint.read("production_state.json")
+        (output_directory / "production_state.json").write_bytes(state_data)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(
+        resolve_production_by_project,
+        "_github_request",
+        fake_github_request,
+    )
+    monkeypatch.setattr(resolve_production_by_project.subprocess, "run", fake_run)
+
+    resolved = resolve_production_by_project.resolve_from_github(
+        "PROJECT_1",
+        "sakshatshetty/RitzzStudio",
+        "test-token",
+    )
+
+    assert resolved["source_run_id"] == "123"
+    assert artifact["workflow_run"] == {"id": "123"}
+    assert any("/actions/runs/123/artifacts" in url for url in requested_urls)
