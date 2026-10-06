@@ -13,6 +13,7 @@ from modules.image.character_profile import load_character_profile
 from modules.image.engine import ImageEngine
 from modules.image.providers.openai import OpenAIImageProvider
 from modules.image.prompt_builder import ImagePromptBuilder
+from modules.storyboard.visual_context import load_visual_world_bible
 from modules.project.manager import ProjectManager
 from modules.storyboard.models import Storyboard
 
@@ -34,7 +35,8 @@ def main() -> int:
     engine = ImageBatchEngine(
         ImageEngine(OpenAIImageProvider()),
         prompt_builder=ImagePromptBuilder(
-            character_profile=load_character_profile(project_directory)
+            character_profile=load_character_profile(project_directory),
+            visual_world=load_visual_world_bible(project_directory),
         ),
     )
     assets = engine.generate(storyboard, image_directory)

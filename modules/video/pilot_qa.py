@@ -18,6 +18,7 @@ from openai.types.responses import ResponseTextConfigParam
 
 from modules.storyboard.editorial_qa import review_editorial_callouts
 from modules.storyboard.models import Storyboard
+from modules.storyboard.visual_models import VisualWorldBible
 from modules.video.models import VideoAssemblyPlan
 from modules.video.qa_models import (
     AudioImageMatchResult,
@@ -69,6 +70,23 @@ _SCENE_REVIEW_RESPONSE_FORMAT: ResponseTextConfigParam = {
                 "rationale": {"type": "string"},
                 "correction_prompt": {"type": ["string", "null"]},
                 "suggested_editorial_scene_id": {"type": ["string", "null"]},
+                "failure_category": {
+                    "type": ["string", "null"],
+                    "enum": [
+                        "ANACHRONISM",
+                        "AMBIGUITY",
+                        "WRONG_ACTION",
+                        "WRONG_ENVIRONMENT",
+                        "MISSING_REQUIRED_OBJECT",
+                        "FORBIDDEN_OBJECT",
+                        "CHARACTER_CONTINUITY",
+                        "EDITORIAL_MISMATCH",
+                        "NARRATION_MISMATCH",
+                        "VISUAL_DUPLICATE",
+                        "OTHER",
+                        None,
+                    ],
+                },
             },
             "required": [
                 "scene_id",
@@ -78,6 +96,7 @@ _SCENE_REVIEW_RESPONSE_FORMAT: ResponseTextConfigParam = {
                 "rationale",
                 "correction_prompt",
                 "suggested_editorial_scene_id",
+                "failure_category",
             ],
             "additionalProperties": False,
         },
@@ -115,6 +134,23 @@ _SCENE_BATCH_REVIEW_RESPONSE_FORMAT: ResponseTextConfigParam = {
                             "suggested_editorial_scene_id": {
                                 "type": ["string", "null"]
                             },
+                            "failure_category": {
+                                "type": ["string", "null"],
+                                "enum": [
+                                    "ANACHRONISM",
+                                    "AMBIGUITY",
+                                    "WRONG_ACTION",
+                                    "WRONG_ENVIRONMENT",
+                                    "MISSING_REQUIRED_OBJECT",
+                                    "FORBIDDEN_OBJECT",
+                                    "CHARACTER_CONTINUITY",
+                                    "EDITORIAL_MISMATCH",
+                                    "NARRATION_MISMATCH",
+                                    "VISUAL_DUPLICATE",
+                                    "OTHER",
+                                    None,
+                                ],
+                            },
                         },
                         "required": [
                             "scene_id",
@@ -124,6 +160,7 @@ _SCENE_BATCH_REVIEW_RESPONSE_FORMAT: ResponseTextConfigParam = {
                             "rationale",
                             "correction_prompt",
                             "suggested_editorial_scene_id",
+                            "failure_category",
                         ],
                         "additionalProperties": False,
                     },
@@ -228,12 +265,18 @@ def _mp3_duration(path: Path) -> float:
 class OpenAIImageEditorialReviewer:
     """Review generated image relevance and editorial-word placement only."""
 
-    def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model: str | None = None,
+        visual_world: VisualWorldBible | None = None,
+    ) -> None:
         key = api_key or os.getenv("OPENAI_API_KEY")
         if not key:
             raise ValueError("OPENAI_API_KEY is not configured.")
         self.client = OpenAI(api_key=key)
         self.model = model or os.getenv("RITZZ_EDITORIAL_MODEL", "gpt-5.4-mini")
+        self.visual_world = visual_world
 
     def review(
         self,
@@ -272,6 +315,8 @@ class OpenAIImageEditorialReviewer:
                     f"Full narration (do not truncate or infer missing text): {narration}\n"
                     f"Visual description / intent: {scene.visual_description}\n"
                     f"Image prompt: {scene.image_prompt}\n"
+                    f"Scene visual contract: "
+                    f"{json.dumps(scene.visual_contract.model_dump(mode='json'), ensure_ascii=False) if scene.visual_contract else '(not supplied)'}\n"
                     f"Editorial required: {str(bool(expected_editorial)).lower()}\n"
                     f"Expected editorial word: {expected_editorial or '(none)'}\n"
                     f"Editorial position: {scene.callout_position or '(unspecified)'}\n"
@@ -287,7 +332,10 @@ class OpenAIImageEditorialReviewer:
             })
         prompt = (
             "Review each supplied scene independently for semantic fit between image, full narration, "
-            "and visual intent. Editorial text is intentionally embedded in the generated image when "
+            "visual contract, project visual world, historical context, technology ceiling, required "
+            "objects, forbidden objects, and continuity requirements. Mark an obvious world or "
+            "historical mismatch as FAIL, not merely as stylistic preference. Editorial text is "
+            "intentionally embedded in the generated image when "
             "Editorial required is true. The storyboard is authoritative: verify that the exact expected "
             "uppercase word is present, legible, and contextually appropriate. Do not mark editorial text "
             "as an error merely because it is embedded in the image. If editorial is not required, "
@@ -296,9 +344,17 @@ class OpenAIImageEditorialReviewer:
             "and PASS when the visual evidence supports the scene. Every FAIL must include a concrete "
             "actionable correction_prompt, except an editorial relocation which should use "
             "suggested_editorial_scene_id. A REVIEW should include a correction only when a safe, specific "
-            "visual change is clear; otherwise correction_prompt must be null. Keep corrections specific "
-            "to the image and preserve the established character and illustration style."
+            "visual change is clear; otherwise correction_prompt must be null. Classify clear failures "
+            "using failure_category: ANACHRONISM, AMBIGUITY, WRONG_ACTION, WRONG_ENVIRONMENT, "
+            "MISSING_REQUIRED_OBJECT, FORBIDDEN_OBJECT, CHARACTER_CONTINUITY, EDITORIAL_MISMATCH, "
+            "NARRATION_MISMATCH, VISUAL_DUPLICATE, or OTHER. Keep corrections specific to the image "
+            "and preserve the established character and illustration style."
         )
+        if self.visual_world is not None:
+            prompt += (
+                "\n\nProject visual-world bible:\n"
+                + self.visual_world.model_dump_json(indent=2)
+            )
         response = self.client.responses.create(
             model=self.model,
             input=[{"role": "user", "content": [
@@ -363,6 +419,7 @@ class OpenAIImageEditorialReviewer:
                     suggested_editorial_scene_id=item.get(
                         "suggested_editorial_scene_id"
                     ),
+                    failure_category=item.get("failure_category"),
                 ))
         except (ValueError, KeyError, TypeError) as exc:
             raise ValueError(

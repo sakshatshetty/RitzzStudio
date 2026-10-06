@@ -310,7 +310,7 @@ def test_prompt_without_editorial_text_does_not_request_text(
     assert "NO SPEECH BUBBLES." in prompt
 
 
-def test_prompts_use_different_camera_motion(
+def test_prompts_keep_static_camera_regardless_of_legacy_motion_metadata(
     tmp_path: Path,
 ) -> None:
     provider = MockImageProvider()
@@ -324,19 +324,16 @@ def test_prompts_use_different_camera_motion(
         output_directory=tmp_path,
     )
 
-    assert (
-        "Static camera."
-        in requests[0].prompt
+    assert len(requests) == 3
+    assert all(
+        "Static camera; the video uses hard cuts between still images."
+        in request.prompt
+        for request in requests
     )
-
-    assert (
-        "Slow gentle zoom in."
-        in requests[1].prompt
-    )
-
-    assert (
-        "Gentle camera pan right."
-        in requests[2].prompt
+    assert all(
+        "gentle zoom" not in request.prompt
+        and "camera pan" not in request.prompt
+        for request in requests
     )
 
 

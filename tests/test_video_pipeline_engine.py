@@ -456,6 +456,7 @@ def test_image_ai_qa_moves_editorial_and_repairs_impacted_images(
                     editorial_context="PASS",
                     rationale="The pirate's pose is unclear.",
                     correction_prompt="Make the pirate's surprised expression and pointing gesture unmistakable.",
+                    failure_category="WRONG_ACTION",
                 )
             return SceneQAResult(
                 scene_id=scene.scene_id,
@@ -469,11 +470,13 @@ def test_image_ai_qa_moves_editorial_and_repairs_impacted_images(
     class ImageProvider:
         def __init__(self):
             self.generated_scenes: list[str] = []
+            self.prompts: list[str] = []
 
         def generate(self, request):
             output = Path(request.output_directory) / f"{request.image_id}.png"
             shutil.copyfile(image_directory / f"{request.scene_id}.png", output)
             self.generated_scenes.append(request.scene_id)
+            self.prompts.append(request.prompt)
             return ImageGenerationResult(
                 image_id=request.image_id,
                 scene_id=request.scene_id,
@@ -505,6 +508,15 @@ def test_image_ai_qa_moves_editorial_and_repairs_impacted_images(
     assert provider.generated_scenes == ["scene_001", "scene_002", "scene_003"]
     assert (tmp_path / "qa" / "image_repair" / "attempt_1" / "originals" / "scene_001.png").is_file()
     assert (tmp_path / "qa" / "image_repair" / "attempt_1" / "originals" / "scene_003.png").is_file()
+    repair_history = json.loads(
+        (tmp_path / "qa" / "visual_repair_history.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    scene_003_repair = repair_history["scenes"]["scene_003"]["attempts"][0]
+    assert scene_003_repair["failure_category"] == "WRONG_ACTION"
+    assert scene_003_repair["verification"]["status"] == "PASS"
+    assert "make the action the primary focal point" in provider.prompts[-1]
     image_checks = report.stages["image_editorial_qa"][-1]
     assert image_checks.status == "PASS"
     assert "scene_002.editorial_context" in image_checks.checks

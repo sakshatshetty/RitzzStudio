@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,6 +11,7 @@ from modules.research.models import (
     Source,
 )
 from modules.script.engine import ScriptEngine
+from modules.script.hook_quality import HookCandidateScores, HookQualityReview
 from modules.script.models import (
     Script,
     ScriptSection,
@@ -129,6 +131,102 @@ def test_load_research(tmp_path):
 
     assert loaded.topic == "Test Topic"
     assert len(loaded.key_facts) == 1
+
+
+def test_hook_replacement_changes_only_opening_text_and_recounts_script():
+    script = create_script()
+    old_hook = "A small change can reshape an entire world."
+    new_hook = (
+        "One unexpected clue reveals how a familiar object changed the course "
+        "of history."
+    )
+    first_section = script.sections[0].model_copy(
+        update={
+            "narration": (
+                f"{old_hook} The next sentence explains the larger mystery."
+            )
+        }
+    )
+    script = script.model_copy(
+        update={
+            "hook": old_hook,
+            "sections": [first_section, *script.sections[1:]],
+        }
+    )
+
+    updated = ScriptEngine._replace_opening_hook(script, new_hook)
+
+    assert updated.hook == new_hook
+    assert updated.sections[0].narration == (
+        f"{new_hook} The next sentence explains the larger mystery."
+    )
+    assert updated.sections[1] == script.sections[1]
+    assert updated.total_word_count == ScriptEngine._calculate_word_count(updated)
+    assert updated.total_estimated_seconds == ScriptEngine._calculate_duration_seconds(
+        updated.total_word_count
+    )
+
+
+def test_hook_evaluation_selects_supported_candidate_and_writes_report(
+    tmp_path,
+    monkeypatch,
+):
+    script = create_script()
+    old_hook = (
+        "This is a weak opening hook with very little curiosity or specificity."
+    )
+    first_section = script.sections[0].model_copy(
+        update={"narration": f"{old_hook} The remaining spoken section continues."}
+    )
+    script = script.model_copy(
+        update={"hook": old_hook, "sections": [first_section, *script.sections[1:]]}
+    )
+    candidate_text = (
+        "One unexpected clue reveals how a familiar object changed the course "
+        "of history."
+    )
+
+    def scores(text: str, score: int, factual_support: int, sources: list[str]):
+        return HookCandidateScores(
+            text=text,
+            curiosity=score,
+            tension=score,
+            specificity=score,
+            stakes=score,
+            novelty=score,
+            clarity=score,
+            open_loop=score,
+            payoff_promise=score,
+            factual_support=factual_support,
+            source_ids=sources,
+        )
+
+    review = HookQualityReview(
+        current=scores(old_hook, 2, 4, ["source_001"]),
+        alternatives=[scores(candidate_text, 5, 5, ["source_001"])],
+    )
+
+    class FakeResponses:
+        def parse(self, **_kwargs):
+            return SimpleNamespace(output_parsed=review)
+
+    engine = ScriptEngine.__new__(ScriptEngine)
+    engine.client = SimpleNamespace(responses=FakeResponses())
+    monkeypatch.setenv("RITZZ_HOOK_MIN_SCORE", "3.5")
+
+    updated = engine._review_and_strengthen_hook(
+        script,
+        create_research(),
+        tmp_path,
+    )
+
+    report = json.loads((tmp_path / "hook_evaluation.json").read_text())
+    assert updated.hook == candidate_text
+    assert updated.sections[0].narration.startswith(candidate_text)
+    assert report["status"] == "PASS"
+    assert report["regenerated"] is True
+    assert report["iterations"][0]["alternatives"][0]["eligible"] is True
+    assert (tmp_path / "script.json").is_file()
 
 
 def test_load_outline(tmp_path):

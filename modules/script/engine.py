@@ -1,4 +1,5 @@
 import json
+import os
 import re
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from modules.outline.models import Outline
 from modules.project.config import ProductionConfig
 from modules.research.models import Research
 from modules.script.models import Script
+from modules.script.hook_quality import HookQualityReview
 
 
 class ScriptEngine:
@@ -233,6 +235,12 @@ class ScriptEngine:
                 and actual_duration_seconds
                 <= maximum_duration_seconds
             ):
+                script = self._review_and_strengthen_hook(
+                    script,
+                    research,
+                    script_directory,
+                )
+
                 # -----------------------------------------
                 # Full validation
                 # -----------------------------------------
@@ -270,6 +278,229 @@ class ScriptEngine:
             f"attempts. "
             f"Last result contained "
             f"{last_word_count} words."
+        )
+
+    def _review_and_strengthen_hook(
+        self,
+        script: Script,
+        research: Research,
+        script_directory: Path,
+    ) -> Script:
+        threshold_text = os.getenv("RITZZ_HOOK_MIN_SCORE", "3.5")
+        try:
+            threshold = float(threshold_text)
+        except ValueError as exc:
+            raise ValueError("RITZZ_HOOK_MIN_SCORE must be a number from 0 to 5.") from exc
+        if not 0 <= threshold <= 5:
+            raise ValueError("RITZZ_HOOK_MIN_SCORE must be a number from 0 to 5.")
+
+        source_ids = {source.id for source in research.sources}
+        report: dict = {
+            "version": 1,
+            "topic": script.topic,
+            "threshold": threshold,
+            "original_hook": script.hook,
+            "selected_hook": script.hook,
+            "iterations": [],
+        }
+        report_path = script_directory / "hook_evaluation.json"
+
+        for iteration in range(1, 3):
+            hook_section = next(
+                (
+                    section
+                    for section in script.sections
+                    if section.section_type == "hook"
+                ),
+                script.sections[0] if script.sections else None,
+            )
+            if hook_section is None:
+                raise ValueError("Cannot evaluate a hook without script sections.")
+            response = self.client.responses.parse(
+                model=OPENAI_MODEL,
+                input=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Evaluate and improve a fact-grounded YouTube opening hook. "
+                            "Score curiosity, tension, specificity, stakes, novelty, clarity, "
+                            "open loop, payoff promise, and factual support from 0 to 5. "
+                            "Do not use simplistic banned-phrase rules. Judge whether the "
+                            "actual opening earns attention and promises a supported answer. "
+                            "Provide three distinct, stronger alternatives when the current "
+                            "hook is weak. Each alternative must be 13–38 spoken words and "
+                            "cite source IDs that support its claims. Do not rewrite the "
+                            "script or reveal the full answer in the hook."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Current hook:\n{script.hook}\n\n"
+                            "Opening section context:\n"
+                            f"{hook_section.narration}\n\n"
+                            "Approved research and source IDs:\n"
+                            f"{research.model_dump_json(indent=2)}\n\n"
+                            f"Minimum average quality score: {threshold:.2f}/5.\n"
+                            "Return scores for the current hook and three alternatives. "
+                            "If prior alternatives were supplied, do not repeat their wording; "
+                            "address the prior weaknesses."
+                            + (
+                                "\n\nPreviously attempted alternatives:\n"
+                                + json.dumps(report["iterations"], ensure_ascii=False)
+                                if report["iterations"]
+                                else ""
+                            )
+                        ),
+                    },
+                ],
+                text_format=HookQualityReview,
+            )
+            review = response.output_parsed
+            if not isinstance(review, HookQualityReview):
+                raise RuntimeError("Hook evaluator returned no valid structured result.")
+            if review.current.text.strip().casefold() != script.hook.strip().casefold():
+                raise ValueError(
+                    "Hook evaluator scored a different current hook than the script contains."
+                )
+            current = review.current
+            valid_alternatives = [
+                candidate
+                for candidate in review.alternatives
+                if 13 <= self._count_words(candidate.text) <= 38
+                and candidate.factual_support >= 4
+                and candidate.source_ids
+                and set(candidate.source_ids).issubset(source_ids)
+            ]
+            iteration_result = {
+                "iteration": iteration,
+                "current": current.model_dump(mode="json"),
+                "current_score": current.quality_score,
+                "alternatives": [
+                    {
+                        **candidate.model_dump(mode="json"),
+                        "quality_score": candidate.quality_score,
+                        "word_count": self._count_words(candidate.text),
+                        "eligible": candidate in valid_alternatives,
+                    }
+                    for candidate in review.alternatives
+                ],
+                "improvement_notes": review.improvement_notes,
+            }
+            report["iterations"].append(iteration_result)
+
+            current_is_supported = (
+                current.factual_support >= 4
+                and (
+                    not current.source_ids
+                    or set(current.source_ids).issubset(source_ids)
+                )
+            )
+            if current.quality_score >= threshold and current_is_supported:
+                report["status"] = "PASS"
+                report["selected_hook"] = script.hook
+                report["regenerated"] = script.hook != report["original_hook"]
+                report_path.write_text(
+                    json.dumps(report, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                self._save_script(script_directory / "script.json", script)
+                return script
+
+            qualified_alternatives = [
+                candidate
+                for candidate in valid_alternatives
+                if candidate.quality_score >= threshold
+            ]
+            if not qualified_alternatives:
+                qualified_alternatives = [
+                    candidate
+                    for candidate in valid_alternatives
+                    if candidate.quality_score > current.quality_score
+                ]
+            if not qualified_alternatives:
+                report["status"] = "FAIL"
+                report["failure"] = (
+                    "No fact-supported alternative improved the hook within "
+                    "the required 13–38 word range."
+                )
+                report_path.write_text(
+                    json.dumps(report, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                raise ValueError(
+                    "Hook quality remained below threshold and no fact-supported "
+                    "13–38-word alternative improved it; inspect hook_evaluation.json."
+                )
+            selected = max(
+                qualified_alternatives,
+                key=lambda candidate: candidate.quality_score,
+            )
+            script = self._replace_opening_hook(script, selected.text)
+            report["selected_hook"] = selected.text
+            if selected.quality_score >= threshold:
+                report["status"] = "PASS"
+                report["regenerated"] = selected.text != report["original_hook"]
+                report_path.write_text(
+                    json.dumps(report, indent=2, ensure_ascii=False),
+                    encoding="utf-8",
+                )
+                self._save_script(script_directory / "script.json", script)
+                return script
+
+        report["status"] = "FAIL"
+        report["failure"] = "Hook remained below the configured quality threshold."
+        report_path.write_text(
+            json.dumps(report, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        raise ValueError(
+            "Hook remained below the configured quality threshold after "
+            "two hook-only improvement attempts; inspect hook_evaluation.json."
+        )
+
+    @classmethod
+    def _replace_opening_hook(cls, script: Script, new_hook: str) -> Script:
+        if not script.sections or not new_hook.strip():
+            raise ValueError("Cannot replace a missing opening hook.")
+        hook_section_index = next(
+            (
+                index
+                for index, section in enumerate(script.sections)
+                if section.section_type == "hook"
+            ),
+            0,
+        )
+        section = script.sections[hook_section_index]
+        leading = len(section.narration) - len(section.narration.lstrip())
+        narration = section.narration[leading:]
+        if not narration.casefold().startswith(script.hook.strip().casefold()):
+            raise ValueError(
+                "Script.hook does not match the first spoken hook-section text; "
+                "cannot safely regenerate only the hook."
+            )
+        remainder = narration[len(script.hook.strip()):].lstrip()
+        updated_narration = (
+            f"{new_hook.strip()} {remainder}".rstrip()
+            if remainder
+            else new_hook.strip()
+        )
+        sections = list(script.sections)
+        sections[hook_section_index] = section.model_copy(
+            update={"narration": " " * leading + updated_narration}
+        )
+        updated_script = script.model_copy(
+            update={
+                "hook": new_hook.strip(),
+                "sections": sections,
+            }
+        )
+        word_count = cls._calculate_word_count(updated_script)
+        return updated_script.model_copy(
+            update={
+                "total_word_count": word_count,
+                "total_estimated_seconds": cls._calculate_duration_seconds(word_count),
+            }
         )
 
     # ---------------------------------------------------------

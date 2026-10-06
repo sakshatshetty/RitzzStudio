@@ -515,12 +515,16 @@ class VideoProductionPipeline:
             inspect_image_asset,
         )
         from modules.video.sync_engine import VideoSynchronizationEngine
+        from modules.storyboard.visual_context import load_visual_world_bible
 
         qa_started = time.monotonic()
         storyboard_path = Path(request.storyboard_file)
         storyboard = StoryboardEngine.load_storyboard(storyboard_path)
         image_directory = Path(request.image_directory)
-        reviewer = self.image_reviewer or OpenAIImageEditorialReviewer()
+        visual_world = load_visual_world_bible(project_directory)
+        reviewer = self.image_reviewer or OpenAIImageEditorialReviewer(
+            visual_world=visual_world
+        )
         scenes = list(storyboard.scenes)
         first_reviews: dict[int, SceneQAResult] = {}
         usage_metrics = usage_metrics if usage_metrics is not None else {
@@ -545,6 +549,8 @@ class VideoProductionPipeline:
                 cached_reviews = cache_document["scenes"]
             else:
                 cached_reviews = {}
+        if not isinstance(cached_reviews, dict):
+            raise ValueError("Semantic QA cache entries must be a scene-keyed object.")
         cache_file.parent.mkdir(parents=True, exist_ok=True)
 
         scene_ids = [scene.scene_id for scene in scenes]
@@ -561,6 +567,19 @@ class VideoProductionPipeline:
             structure_issues.append(
                 "QA_INPUT_INVALID: scene ID, full narration, visual description, or image prompt is missing."
             )
+        if visual_world:
+            contract_ids = [
+                scene.visual_contract.scene_id
+                for scene in scenes
+                if scene.visual_contract is not None
+            ]
+            if (
+                len(contract_ids) != len(scenes)
+                or contract_ids != scene_ids
+            ):
+                structure_issues.append(
+                    "QA_INPUT_INVALID: project visual-world bible requires one matching visual contract per scene."
+                )
         if any(
             right.start_seconds < left.start_seconds
             for left, right in pairwise(scenes)
@@ -686,7 +705,13 @@ class VideoProductionPipeline:
                         "image_prompt",
                         "text_overlay",
                         "callout_position",
+                        "visual_contract",
                     }
+                ),
+                "visual_world": (
+                    visual_world.model_dump(mode="json")
+                    if visual_world is not None
+                    else None
                 ),
             }
             digest = hashlib.sha256(image_path.read_bytes())
@@ -920,7 +945,8 @@ class VideoProductionPipeline:
                 unresolved_editorial.append(f"{scenes[index].scene_id}: editorial placement remains unresolved.")
 
         prompt_builder = ImagePromptBuilder(
-            character_profile=load_character_profile(project_directory)
+            character_profile=load_character_profile(project_directory),
+            visual_world=visual_world,
         )
         for index in affected_indices:
             scenes[index] = scenes[index].model_copy(
@@ -973,11 +999,84 @@ class VideoProductionPipeline:
             if path.is_dir() and path.name.removeprefix("attempt_").isdigit()
         ]
         attempt_directory = repair_root / f"attempt_{max(previous_attempts, default=0) + 1}"
+        repair_history_path = project_directory / "qa" / "visual_repair_history.json"
+        if repair_history_path.is_file():
+            repair_history = json.loads(
+                repair_history_path.read_text(encoding="utf-8")
+            )
+            if (
+                not isinstance(repair_history, dict)
+                or repair_history.get("version") != 1
+                or not isinstance(repair_history.get("scenes"), dict)
+            ):
+                raise ValueError(f"Invalid visual repair history: {repair_history_path}")
+        else:
+            repair_history = {"version": 1, "scenes": {}}
+
+        failure_strategies = {
+            "ANACHRONISM": (
+                "Remove objects, materials, clothing, infrastructure, and technology "
+                "that exceed the project technology ceiling."
+            ),
+            "AMBIGUITY": (
+                "Follow the scene contract's explicit ambiguity resolution; do not "
+                "substitute another meaning of the ambiguous term."
+            ),
+            "WRONG_ACTION": (
+                "Show the scene contract's stated action clearly and make the action "
+                "the primary focal point."
+            ),
+            "WRONG_ENVIRONMENT": (
+                "Rebuild the setting from the project visual world and scene environment "
+                "instead of using a generic or modern setting."
+            ),
+            "MISSING_REQUIRED_OBJECT": (
+                "Make every required object in the scene contract clearly visible and "
+                "recognizable."
+            ),
+            "FORBIDDEN_OBJECT": (
+                "Exclude every object prohibited by the project world and scene contract."
+            ),
+            "CHARACTER_CONTINUITY": (
+                "Restore the recurring character or object identity and continuity "
+                "requirements without repeating the old composition."
+            ),
+            "EDITORIAL_MISMATCH": (
+                "Render only the exact assigned editorial word in the prescribed "
+                "handwritten marker style and position."
+            ),
+            "NARRATION_MISMATCH": (
+                "Depict the scene's visual contract and action, not a different idea "
+                "from nearby narration."
+            ),
+            "VISUAL_DUPLICATE": (
+                "Use a clearly different viewpoint, composition, subject placement, "
+                "action, and environmental emphasis while remaining faithful to the contract."
+            ),
+        }
+
+        def save_repair_history() -> None:
+            temporary_history = repair_history_path.with_suffix(".tmp")
+            temporary_history.write_text(
+                json.dumps(repair_history, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            temporary_history.replace(repair_history_path)
+
         for index in sorted(affected_indices):
             scene = scenes[index]
             original_path = image_directory / f"{scene.scene_id}.png"
             review = first_reviews.get(index)
             correction = suggested_fixes.get(index)
+            category = (
+                review.failure_category
+                if review and review.failure_category
+                else "VISUAL_DUPLICATE"
+                if review and "perceptually similar" in review.rationale
+                else "EDITORIAL_MISMATCH"
+                if review and review.editorial_context == "FAIL"
+                else "OTHER"
+            )
             if not correction:
                 correction = (
                     f"Correct this image QA finding: {review.rationale}. "
@@ -987,7 +1086,50 @@ class VideoProductionPipeline:
                     "Correct the visible mismatch with the scene narration and visual description. "
                     "Keep the established character, hand-drawn style, and requested editorial word accurate."
                 )
-            correction_prompt = f"{scene.image_prompt} Image QA correction: {correction}"
+            strategy = failure_strategies.get(
+                category,
+                "Correct the specific reviewer finding while satisfying the full visual contract.",
+            )
+            prompt_fingerprint = hashlib.sha256(
+                f"{scene.image_prompt}\n{category}\n{correction}\n{strategy}".encode("utf-8")
+            ).hexdigest()
+            scene_history = repair_history["scenes"].setdefault(
+                scene.scene_id,
+                {"attempts": []},
+            )
+            if not isinstance(scene_history, dict) or not isinstance(
+                scene_history.get("attempts"), list
+            ):
+                raise ValueError(
+                    f"Invalid repair-history entry for {scene.scene_id}."
+                )
+            previous_fingerprints = {
+                entry.get("prompt_sha256")
+                for entry in scene_history["attempts"]
+                if isinstance(entry, dict)
+            }
+            if prompt_fingerprint in previous_fingerprints:
+                strategy += (
+                    " Avoid repeating any earlier failed visual solution; choose an "
+                    "alternative composition and make the correction unmistakable."
+                )
+                prompt_fingerprint = hashlib.sha256(
+                    f"{prompt_fingerprint}\n{repair_attempt}\n{strategy}".encode("utf-8")
+                ).hexdigest()
+            correction_prompt = (
+                f"{scene.image_prompt} Image QA correction category: {category}. "
+                f"Finding: {correction} Repair strategy: {strategy}"
+            )
+            repair_record = {
+                "repair_attempt": repair_attempt,
+                "failure_category": category,
+                "finding": review.rationale if review else correction,
+                "correction": correction,
+                "prompt_sha256": prompt_fingerprint,
+                "verification": None,
+            }
+            scene_history["attempts"].append(repair_record)
+            save_repair_history()
             candidate_directory = attempt_directory / "candidates"
             candidate_directory.mkdir(parents=True, exist_ok=True)
             provider = self.image_provider
@@ -1051,12 +1193,30 @@ class VideoProductionPipeline:
         final_reviews = dict(first_reviews)
         final_reviews.update(retry_reviews)
         for index, review in retry_reviews.items():
+            scene_history = repair_history["scenes"].get(scenes[index].scene_id)
+            if isinstance(scene_history, dict):
+                attempts = scene_history.get("attempts")
+            else:
+                attempts = None
+            latest_attempt = (
+                attempts[-1]
+                if isinstance(attempts, list) and attempts
+                else None
+            )
+            if isinstance(latest_attempt, dict):
+                latest_attempt["verification"] = {
+                    "status": review.status,
+                    "failure_category": review.failure_category,
+                    "rationale": review.rationale,
+                }
             if review.status == "PASS":
                 cached_reviews[scenes[index].scene_id] = {
                     "fingerprint": cache_key(index),
                     "result": review.model_dump(mode="json"),
                 }
         save_review_cache()
+        if affected_indices:
+            save_repair_history()
         final_hashes: list[int | None] = []
         remaining_image_findings: dict[int, str] = {}
         for index, scene in enumerate(scenes):

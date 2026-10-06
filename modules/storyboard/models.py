@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from modules.storyboard.visual_models import SceneVisualContract
+
 VisualStyle = Literal[
     "stickman",
     "illustration",
@@ -75,7 +77,7 @@ class StoryboardScene(BaseModel):
         default_factory=list
     )
 
-    # Editorial words are composited after image generation by FFmpeg.
+    # Editorial words are rendered as part of selected generated images.
     text_overlay: str = Field(
         default="",
         max_length=80,
@@ -96,6 +98,7 @@ class StoryboardScene(BaseModel):
     image_prompt: str = Field(
         min_length=10,
     )
+    visual_contract: SceneVisualContract | None = None
 
 
 class Storyboard(BaseModel):

@@ -3,6 +3,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from modules.storyboard.editorial_qa import EditorialCalloutQAResult
+from modules.storyboard.visual_models import VisualFailureCategory
 
 QAStatus = Literal["PASS", "REVIEW", "FAIL"]
 
@@ -16,6 +17,7 @@ class SceneQAResult(BaseModel):
     rationale: str
     correction_prompt: str | None = None
     suggested_editorial_scene_id: str | None = None
+    failure_category: VisualFailureCategory | None = None
 
 
 class AudioImageMatchResult(BaseModel):

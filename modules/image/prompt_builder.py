@@ -1,4 +1,5 @@
 from modules.storyboard.models import StoryboardScene
+from modules.storyboard.visual_models import VisualWorldBible
 
 
 class ImagePromptBuilder:
@@ -85,68 +86,50 @@ class ImagePromptBuilder:
         "excessive shading, "
         "crowds, "
         "unnecessary objects, "
-        "decorative typography, "
-        "large headline text, "
-        "oversized display typography, "
-        "bold display typography, "
-        "multicolored text, "
-        "yellow text, "
-        "bright colored text, "
-        "thick text outlines, "
+        "digital or geometric display typography, "
+        "subtitle styling, "
+        "text outline or stroke, "
         "3D text, "
         "text effects, "
         "text banners, "
-        "burst shapes, "
-        "gradient text, "
-        "drop shadows, "
+        "caption bars, "
+        "boxes, "
+        "background panels, "
+        "UI treatment, "
         "and any text beyond the requested editorial callout."
     )
 
     RITZZ_EDITORIAL_TEXT_STYLE = (
-        "Render the editorial text as simple, "
-        "clean, hand-drawn handwritten lettering. "
-        "Use a casual handwritten marker or hand-lettered "
-        "appearance rather than a formal computer font. "
-        "Keep the lettering medium-large and clearly readable "
-        "at 1080p. "
-        "Make it visually noticeable but still secondary "
-        "to the main illustration. "
-        "Use one flat color for the lettering only: plain black "
-        "or plain white depending on the background. "
-        "This one-color instruction applies only to the editorial letters. "
-        "Keep the lettering simple and slightly informal. "
-        "Do not use cursive writing that reduces readability. "
-        "No decorative lettering, "
-        "no thick outline, "
-        "no 3D effects, "
-        "no gradients, "
-        "no bright colors in the lettering, "
-        "no shadows, "
-        "and no graphic text effects."
+        "Render the exact one-word editorial callout as if a human wrote it "
+        "with a thick marker: natural uppercase handwritten letters, slightly "
+        "imperfect, bold, and highly readable. Use a flat yellow or white fill "
+        "with no outline, stroke, shadow, background, box, banner, caption bar, "
+        "or UI treatment. Do not use a digital/block font, geometric display "
+        "type, subtitle styling, decorative text effects, or any additional text."
     )
 
-    CAMERA_MOTION_MAP = {
-        "static": "Static camera.",
-        "slow_zoom_in": "Slow gentle zoom in.",
-        "slow_zoom_out": "Slow gentle zoom out.",
-        "pan_left": "Gentle camera pan left.",
-        "pan_right": "Gentle camera pan right.",
-        "pan_up": "Gentle camera pan upward.",
-        "pan_down": "Gentle camera pan downward.",
+    EDITORIAL_POSITION_MAP = {
+        "top_left": "upper-left negative space",
+        "top_center": "upper-center negative space",
+        "top_right": "upper-right negative space",
+        "middle_left": "middle-left negative space",
+        "middle_right": "middle-right negative space",
+        "lower_left": "lower-left negative space",
+        "lower_right": "lower-right negative space",
     }
 
     DEFAULT_CHARACTER_PROFILE = ""
 
     EDITORIAL_ILLUSTRATION_COLOR_INSTRUCTION = (
         "Keep the illustration fully colored using the normal RITZZ flat-color palette. "
-        "Use clear colors for the character, clothing, props, and background. "
-        "Do not make the illustration monochrome, grayscale, black-and-white, or single-color."
+        "Use clear colors for the character, clothing, props, and background."
     )
 
     def __init__(
         self,
         base_style: str | None = None,
         character_profile: str | None = None,
+        visual_world: VisualWorldBible | None = None,
     ) -> None:
         self.base_style = (
             base_style.strip()
@@ -159,6 +142,7 @@ class ImagePromptBuilder:
             if character_profile
             else self.DEFAULT_CHARACTER_PROFILE
         )
+        self.visual_world = visual_world
 
     def build(
         self,
@@ -184,6 +168,57 @@ class ImagePromptBuilder:
                 "throughout this video."
             )
 
+        if self.visual_world:
+            parts.append(
+                "PROJECT VISUAL WORLD: "
+                f"{self.visual_world.model_dump_json(exclude={'topic', 'version'})}"
+            )
+            if self.visual_world.historical:
+                parts.append(
+                    "HISTORICAL / TECHNOLOGY CONSTRAINT: "
+                    f"{self.visual_world.technology_ceiling} "
+                    "Historical accuracy is mandatory. Do not introduce technology, "
+                    "objects, architecture, infrastructure, clothing, tools, "
+                    "transportation, or materials belonging to a later period unless "
+                    "the scene explicitly depicts a later development."
+                )
+            if self.visual_world.forbidden_visuals:
+                parts.append(
+                    "PROJECT FORBIDDEN VISUALS: "
+                    + "; ".join(
+                        item.description
+                        for item in self.visual_world.forbidden_visuals
+                    )
+                )
+
+        if scene.visual_contract:
+            contract = scene.visual_contract
+            parts.extend(
+                [
+                    f"SCENE PURPOSE: {contract.purpose}",
+                    f"SCENE SUBJECT: {contract.subject}",
+                    f"SCENE ACTION: {contract.action}",
+                    f"SCENE ENVIRONMENT: {contract.environment}",
+                    f"SCENE HISTORICAL CONTEXT: {contract.historical_context}",
+                    "REQUIRED OBJECTS: "
+                    + (", ".join(contract.required_objects) or "None specified."),
+                    "FORBIDDEN OBJECTS: "
+                    + (", ".join(contract.forbidden_objects) or "None specified."),
+                    "AMBIGUITY RESOLUTION: "
+                    f"{contract.ambiguity_resolution}",
+                    "CONTINUITY REQUIREMENTS: "
+                    + (
+                        "; ".join(contract.continuity_requirements)
+                        or "Maintain the project world and recurring identities."
+                    ),
+                ]
+            )
+            if contract.context_transition:
+                parts.append(
+                    "INTENTIONAL CONTEXT TRANSITION: "
+                    f"{contract.context_transition_reason}"
+                )
+
         if scene.visual_description:
             parts.append(
                 f"Scene: {scene.visual_description}"
@@ -208,13 +243,18 @@ class ImagePromptBuilder:
         has_editorial_text = bool(editorial_word)
 
         if has_editorial_text:
+            position = self.EDITORIAL_POSITION_MAP.get(
+                scene.callout_position or "",
+                "an uncluttered area that does not cover the main action",
+            )
             parts.append(
                 f"Render the exact editorial word {editorial_word} inside the illustration. "
                 "The word must be uppercase, spelled exactly as provided, clearly legible, "
-                "and placed near the lower-left as a single editorial callout. "
+                f"and placed in {position}. "
                 "This word is intentionally part of the generated image, not a subtitle. "
                 "Do not add any other letters, words, captions, labels, or typography."
             )
+            parts.append(self.RITZZ_EDITORIAL_TEXT_STYLE)
             parts.append(
                 self.EDITORIAL_ILLUSTRATION_COLOR_INSTRUCTION
             )
@@ -228,12 +268,7 @@ class ImagePromptBuilder:
             "Do not turn the scene into an infographic."
         )
 
-        camera_description = self.CAMERA_MOTION_MAP.get(
-            scene.camera_motion
-        )
-
-        if camera_description:
-            parts.append(camera_description)
+        parts.append("Static camera; the video uses hard cuts between still images.")
 
         if has_editorial_text:
             parts.append(
