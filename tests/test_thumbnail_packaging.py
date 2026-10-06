@@ -536,6 +536,36 @@ def test_invalid_thumbnail_hook_is_rejected(tmp_path, updates, message):
         )
 
 
+def test_thumbnail_concept_retry_feedback_includes_measured_hook_width(tmp_path):
+    project = _project(tmp_path)
+    invalid = _concepts()
+    invalid.concepts[0] = invalid.concepts[0].model_copy(
+        update={"text": "EXTRAORDINARILY LONG HIDDEN PATH"}
+    )
+
+    class CorrectingGenerator:
+        def __init__(self):
+            self.contexts = []
+
+        def generate(self, context):
+            self.contexts.append(context)
+            return invalid if len(self.contexts) == 1 else _concepts()
+
+    generator = CorrectingGenerator()
+    result = _engine(concepts=generator).create_concepts(
+        project,
+        production_id="production-1",
+        project_id="20261005_001",
+    )
+
+    assert result["status"] == "AWAITING_CONCEPT_SELECTION"
+    assert len(generator.contexts) == 2
+    feedback = generator.contexts[1]["qa_feedback"]
+    assert "EXTRAORDINARILY LONG HIDDEN PATH" in feedback
+    assert "maximum is 8.0" in feedback
+    assert "word count alone does not guarantee fit" in feedback
+
+
 def test_thumbnail_qa_rejects_wrong_size_and_records_failed_status(tmp_path):
     project = _project(tmp_path)
     engine = _engine(dimensions={"width": 640, "height": 360})
