@@ -1,5 +1,6 @@
 import base64
 import json
+from pathlib import Path
 
 import pytest
 
@@ -34,6 +35,17 @@ def test_validate_prerequisites_accepts_configured_secrets(monkeypatch):
     assert result["oauth_client_json"] == "valid"
     assert result["oauth_token_json"] == "valid"
     assert result["api_calls_made"] == "none"
+
+
+def test_storyboard_generation_job_receives_openai_secret():
+    workflow = Path(".github/workflows/ritzz-pipeline.yml").read_text(
+        encoding="utf-8"
+    )
+    job = workflow.split("  storyboard-generation:", 1)[1].split(
+        "\n  image-generation:", 1
+    )[0]
+
+    assert "OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}" in job
 
 
 def test_validate_prerequisites_reports_missing_secret(monkeypatch):
