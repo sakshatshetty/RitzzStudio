@@ -11,11 +11,11 @@ if str(PROJECT_ROOT) not in sys.path:
 from modules.image.batch import ImageBatchEngine
 from modules.image.character_profile import load_character_profile
 from modules.image.engine import ImageEngine
-from modules.image.providers.openai import OpenAIImageProvider
 from modules.image.prompt_builder import ImagePromptBuilder
-from modules.storyboard.visual_context import load_visual_world_bible
+from modules.image.providers.openai import OpenAIImageProvider
 from modules.project.manager import ProjectManager
 from modules.storyboard.models import Storyboard
+from modules.storyboard.visual_context import load_visual_world_bible
 
 
 def main() -> int:
@@ -39,10 +39,13 @@ def main() -> int:
             visual_world=load_visual_world_bible(project_directory),
         ),
     )
-    assets = engine.generate(storyboard, image_directory)
-    engine.save_manifest(assets, manifest_file)
+    assets = engine.generate(
+        storyboard,
+        image_directory,
+        manifest_file=manifest_file,
+    )
     failed = [asset for asset in assets if asset.status != "completed"]
-    print(f"Generated images: {len(assets) - len(failed)}/{len(assets)}")
+    print(f"Ready images (new or resumed): {len(assets) - len(failed)}/{len(assets)}")
     print(f"Manifest: {manifest_file}")
     if failed:
         for asset in failed:

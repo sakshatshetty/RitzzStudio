@@ -1029,11 +1029,20 @@ jobs:
           ffmpeg -version
 
       - name: Download storyboard project
-        if: ${{ needs.restore-production.outputs.rerun_from_stage != 'image_generation' }}
+        if: ${{ needs.restore-production.outputs.rerun_from_stage != 'image_generation' && !(needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '5' && endsWith(needs.restore-production.outputs.source_artifact, '-image_generation')) }}
         uses: actions/download-artifact@v4
         with:
           name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-storyboard_generation
           run-id: ${{ needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '5' && needs.restore-production.outputs.source_run_id || github.run_id }}
+          github-token: ${{ github.token }}
+          path: .pipeline-artifacts
+
+      - name: Download partial image checkpoint
+        if: ${{ needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '5' && needs.restore-production.outputs.rerun_from_stage == 'NONE' && endsWith(needs.restore-production.outputs.source_artifact, '-image_generation') }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-image_generation
+          run-id: ${{ needs.restore-production.outputs.source_run_id }}
           github-token: ${{ github.token }}
           path: .pipeline-artifacts
 
@@ -1047,9 +1056,14 @@ jobs:
           path: .pipeline-artifacts
 
       - name: Extract storyboard project
-        if: ${{ needs.restore-production.outputs.rerun_from_stage != 'image_generation' }}
+        if: ${{ needs.restore-production.outputs.rerun_from_stage != 'image_generation' && !(needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '5' && endsWith(needs.restore-production.outputs.source_artifact, '-image_generation')) }}
         shell: bash
         run: mkdir -p projects && tar -xzf .pipeline-artifacts/storyboard-project.tar.gz -C projects
+
+      - name: Extract partial image checkpoint
+        if: ${{ needs.restore-production.outputs.effective_mode == 'RESUME' && needs.restore-production.outputs.resume_from_index == '5' && needs.restore-production.outputs.rerun_from_stage == 'NONE' && endsWith(needs.restore-production.outputs.source_artifact, '-image_generation') }}
+        shell: bash
+        run: mkdir -p projects && tar -xzf .pipeline-artifacts/image-project.tar.gz -C projects
 
       - name: Extract rerun project
         if: ${{ needs.restore-production.outputs.rerun_from_stage == 'image_generation' }}
@@ -1064,6 +1078,7 @@ jobs:
           echo "project_id=$project_id" >> "$GITHUB_OUTPUT"
 
       - name: Generate timed-scene images
+        id: generate-images
         shell: bash
         env:
           RITZZ_PROJECT_ID: ${{ steps.project.outputs.project_id }}
@@ -1071,19 +1086,27 @@ jobs:
           set -euo pipefail
           stage=image_generation
           python scripts/manage_pipeline_production.py start --stage "$stage"
-          trap 'python scripts/manage_pipeline_production.py fail --stage "$stage" --error "Image generation command failed."' ERR
           python scripts/run_image_stage.py
 
       - name: Archive image project artifacts
+        id: archive-images
+        if: always()
         shell: bash
         run: |
+          mkdir -p .pipeline-artifacts
           project_name=$(find projects -mindepth 1 -maxdepth 1 -type d -name "${{ steps.project.outputs.project_id }}_*" -printf "%f\n" | head -n 1)
           tar -czf .pipeline-artifacts/image-project.tar.gz -C projects "$project_name"
 
+      - name: Fail image generation checkpoint
+        if: ${{ failure() && steps.archive-images.outcome == 'success' && steps.complete-image.outcome != 'success' }}
+        run: python scripts/manage_pipeline_production.py fail --stage image_generation --artifacts image-project.tar.gz --error "Image generation command failed; partial scene progress was archived for resume."
+
       - name: Complete image generation checkpoint
+        id: complete-image
         run: python scripts/manage_pipeline_production.py complete --stage image_generation --artifacts image-project.tar.gz
 
       - name: Upload image artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ritzz-production-${{ needs.restore-production.outputs.production_id }}-image_generation

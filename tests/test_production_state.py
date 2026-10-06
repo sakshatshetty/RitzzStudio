@@ -99,6 +99,28 @@ def test_resume_detects_missing_or_modified_completed_artifact(tmp_path):
         store.resume("prod-123")
 
 
+def test_failed_stage_can_record_partial_archive_for_resume(tmp_path):
+    artifact_root = tmp_path / "artifacts"
+    artifact_root.mkdir()
+    store = ProductionStateStore(artifact_root / "production_state.json", artifact_root)
+    store.initialize("prod-123")
+    partial_archive = artifact_root / "image-project.tar.gz"
+    partial_archive.write_bytes(b"partial image checkpoint")
+
+    store.start_stage("image_generation")
+    failed = store.fail_stage(
+        "image_generation",
+        "Image generation was interrupted.",
+        ["image-project.tar.gz"],
+    )
+
+    resumed = store.resume("prod-123")
+    image_stage = resumed["stages"]["image_generation"]
+    assert failed["status"] == "failed"
+    assert image_stage["status"] == "failed"
+    assert image_stage["artifacts"][0]["path"] == "image-project.tar.gz"
+
+
 def test_resume_migrates_legacy_shared_render_and_metadata_archive(tmp_path):
     artifact_root = tmp_path / "artifacts"
     artifact_root.mkdir()
