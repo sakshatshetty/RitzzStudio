@@ -289,8 +289,13 @@ class OpenAIThumbnailConceptGenerator:
                         "from artwork. The artwork_prompt must request a clean image with "
                         "absolutely no letters, numbers, captions, logos, watermarks, or text; "
                         "leave a broad, uncluttered horizontal area in the lower quarter for "
-                        "large one-line deterministic text composition. Return exactly three "
-                        "genuinely different concepts."
+                        "large one-line deterministic text composition. Keep each hook to "
+                        "short, wide-display-readable words: under the current 1280px layout, "
+                        "its measured uppercase glyph width must not exceed 8 font-width units "
+                        "(for example, 'STAY WARM' or 'DARK SECRET'). Word count alone does not "
+                        "guarantee that a hook fits. If qa_feedback is supplied, correct the "
+                        "reported concept-validation issue before returning the concepts. "
+                        "Return exactly three genuinely different concepts."
                     ),
                 },
                 {
@@ -514,7 +519,7 @@ class ThumbnailPackagingEngine:
 
         generator = self.concept_generator or OpenAIThumbnailConceptGenerator()
         validation_error: ValueError | None = None
-        for attempt in range(2):
+        for attempt in range(3):
             attempt_context = dict(context)
             if validation_error:
                 attempt_context["qa_feedback"] = (
@@ -551,9 +556,9 @@ class ThumbnailPackagingEngine:
                         ],
                     ),
                 )
-                if attempt == 1:
+                if attempt == 2:
                     raise ValueError(
-                        "Thumbnail concept QA failed after one automatic "
+                        "Thumbnail concept QA failed after two automatic "
                         f"correction: {exc}"
                     ) from exc
         else:
@@ -1188,14 +1193,18 @@ def _thumbnail_text_layout(
         raise ValueError("Thumbnail text must not be empty.")
     width_units = sum(_FONT_WIDTHS.get(character, 0.66) for character in normalized)
     maximum_width = width - 2 * THUMBNAIL_SAFE_MARGIN
+    maximum_font_width_units = width * 0.55 / THUMBNAIL_MIN_TEXT_FONT_SIZE
     font_size = min(
         THUMBNAIL_TEXT_FONT_SIZE,
         int((width * 0.55) / width_units),
     )
     if font_size < THUMBNAIL_MIN_TEXT_FONT_SIZE:
         raise ValueError(
-            "Thumbnail hook cannot fit on one readable line; regenerate a shorter hook "
-            "or recompose the concept."
+            "Thumbnail hook cannot fit on one readable line: "
+            f"'{normalized}' uses {width_units:.1f} font-width units, but the "
+            f"maximum is {maximum_font_width_units:.1f}. Replace it with 1-3 "
+            "short uppercase words that preserve the curiosity angle; word count "
+            "alone does not guarantee fit."
         )
     estimated_width = round(width_units * font_size)
     if estimated_width > maximum_width:
