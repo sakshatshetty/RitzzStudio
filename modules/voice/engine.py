@@ -44,7 +44,8 @@ class OpeningHookValidationError(ValueError):
 class VoiceEngine:
     """Create and manage narration audio for Ritzz scripts."""
 
-    OPENING_HOOK_MINIMUM_SECONDS = 10.0
+    OPENING_HOOK_MINIMUM_SECONDS = 20.0
+    OPENING_HOOK_MAXIMUM_SECONDS = 35.0
 
     def __init__(
         self,
@@ -248,11 +249,18 @@ class VoiceEngine:
             return None, "The opening hook has invalid character timestamps."
 
         duration = ends[-1] - starts[0]
-        if duration < cls.OPENING_HOOK_MINIMUM_SECONDS:
+        if not (
+            cls.OPENING_HOOK_MINIMUM_SECONDS
+            <= duration
+            <= cls.OPENING_HOOK_MAXIMUM_SECONDS
+        ):
+            duration_requirement = (
+                f"between {cls.OPENING_HOOK_MINIMUM_SECONDS:.1f}s and "
+                f"{cls.OPENING_HOOK_MAXIMUM_SECONDS:.1f}s"
+            )
             return duration, (
                 f"The spoken curiosity hook lasts {duration:.3f}s; it must remain "
-                f"the opening hook for at least "
-                f"{cls.OPENING_HOOK_MINIMUM_SECONDS:.1f}s."
+                f"{duration_requirement} in the actual narration."
             )
         return duration, None
 
@@ -313,8 +321,8 @@ class VoiceEngine:
         if opening_hook_error:
             findings.append(opening_hook_error)
             recommendations.append(
-                "Revise the opening hook so the first spoken hook lasts at least "
-                "10 seconds, then regenerate narration."
+                "Revise only the opening hook to last between 20 and 35 seconds "
+                "in actual narration, then regenerate narration."
             )
         status = (
             "PASS"
@@ -330,7 +338,7 @@ class VoiceEngine:
                     "minimum_duration": "PASS" if duration_passed else "FAIL",
                     "character_alignment": "PASS" if alignment_complete else "FAIL",
                     "timestamp_order": "PASS" if timestamps_valid else "FAIL",
-                    "opening_hook_10_seconds": (
+                    "opening_hook_20_to_35_seconds": (
                         "PASS" if opening_hook_passed else "FAIL"
                     ),
                 },
@@ -367,7 +375,11 @@ class VoiceEngine:
             production_config=production_config,
         )
 
-        def regenerate_request(feedback: str) -> VoiceGenerationRequest:
+        def regenerate_request(
+            feedback: str,
+            *,
+            hook_only: bool = False,
+        ) -> VoiceGenerationRequest:
             project_directory = Path(script_file).parent.parent
             research_file = project_directory / "research" / "research.json"
             outline_file = project_directory / "outline" / "outline.json"
@@ -377,14 +389,23 @@ class VoiceEngine:
                 )
             from modules.script.engine import ScriptEngine
 
-            corrected_script = ScriptEngine().create_script(
-                research_file=research_file,
-                outline_file=outline_file,
-                script_directory=Path(script_file).parent,
-                force_refresh=True,
-                production_config=production_config,
-                qa_feedback=feedback,
-            )
+            script_engine = ScriptEngine()
+            if hook_only:
+                corrected_script = script_engine.repair_opening_hook(
+                    script_file=script_file,
+                    research_file=research_file,
+                    feedback=feedback,
+                    production_config=production_config,
+                )
+            else:
+                corrected_script = script_engine.create_script(
+                    research_file=research_file,
+                    outline_file=outline_file,
+                    script_directory=Path(script_file).parent,
+                    force_refresh=True,
+                    production_config=production_config,
+                    qa_feedback=feedback,
+                )
             return self.create_request(
                 script=corrected_script,
                 voice_id=voice_id,
@@ -400,12 +421,12 @@ class VoiceEngine:
             return self.generate(regenerate_request(str(exc)))
         except OpeningHookValidationError as exc:
             feedback = (
-                f"{exc} Regenerate the opening hook so it remains a specific, "
-                "fact-supported curiosity gap for at least the first 10 seconds "
-                "of the actual narration. Do not resolve the central mystery "
-                "before that point."
+                f"{exc} Repair only the opening hook so its character-aligned "
+                "duration is 20–35 seconds. Preserve its research support, early "
+                "curiosity question, open loop, and continuity with the first "
+                "investigation; do not resolve the central mystery."
             )
-            return self.generate(regenerate_request(feedback))
+            return self.generate(regenerate_request(feedback, hook_only=True))
         except VoiceAlignmentError:
             return self.generate(request)
 

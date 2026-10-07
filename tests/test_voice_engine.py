@@ -226,9 +226,9 @@ def test_profiled_script_request_carries_the_spoken_opening_hook():
 
 @pytest.mark.parametrize(
     ("hook_duration", "should_pass"),
-    [(8.1, False), (10.2, True)],
+    [(18.1, False), (20.2, True), (36.0, False)],
 )
-def test_generated_audio_must_keep_the_hook_for_ten_seconds(
+def test_generated_audio_must_keep_the_hook_for_twenty_to_thirty_five_seconds(
     tmp_path,
     hook_duration,
     should_pass,
@@ -283,7 +283,7 @@ def test_generated_audio_must_keep_the_hook_for_ten_seconds(
     else:
         with pytest.raises(
             OpeningHookValidationError,
-            match="must remain the opening hook for at least 10.0s",
+            match="must remain between 20.0s and 35.0s",
         ):
             engine.generate(request)
 
@@ -331,11 +331,11 @@ def test_create_voice_regenerates_a_hook_that_is_short_in_actual_audio(
     regeneration_calls = []
     monkeypatch.setattr(ScriptEngine, "__init__", lambda _self: None)
 
-    def regenerate(_self, **kwargs):
-        regeneration_calls.append(kwargs["qa_feedback"])
+    def repair_hook(_self, **kwargs):
+        regeneration_calls.append(kwargs["feedback"])
         return script
 
-    monkeypatch.setattr(ScriptEngine, "create_script", regenerate)
+    monkeypatch.setattr(ScriptEngine, "repair_opening_hook", repair_hook)
 
     class CorrectingProvider:
         def __init__(self):
@@ -346,7 +346,7 @@ def test_create_voice_regenerates_a_hook_that_is_short_in_actual_audio(
             audio_file = Path(request.output_directory) / request.output_filename
             audio_file.parent.mkdir(parents=True, exist_ok=True)
             audio_file.write_bytes(b"mock audio")
-            hook_duration = 8.1 if self.calls == 1 else 10.2
+            hook_duration = 18.1 if self.calls == 1 else 20.2
             seconds_per_character = hook_duration / len(hook)
             characters = list(request.text)
             return VoiceGenerationResult(
@@ -385,11 +385,11 @@ def test_create_voice_regenerates_a_hook_that_is_short_in_actual_audio(
 
     assert provider.calls == 2
     assert len(regeneration_calls) == 1
-    assert "first 10 seconds" in regeneration_calls[0]
-    assert result.opening_hook_duration_seconds == pytest.approx(10.2)
+    assert "20–35 seconds" in regeneration_calls[0]
+    assert result.opening_hook_duration_seconds == pytest.approx(20.2)
     report = load_project_qa(project_directory)
     assert [
-        attempt.checks["opening_hook_10_seconds"]
+        attempt.checks["opening_hook_20_to_35_seconds"]
         for attempt in report.stages["voice"]
     ] == ["FAIL", "PASS"]
 
