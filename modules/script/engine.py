@@ -326,6 +326,7 @@ class ScriptEngine:
                     script_directory,
                     config,
                 )
+                self._save_script(script_file, script)
                 script = self._review_and_strengthen_hook(
                     script,
                     research,
@@ -471,6 +472,12 @@ class ScriptEngine:
             "iterations": [],
         }
         report_path = script_directory / "hook_evaluation.json"
+        target_hook_words = round(
+            config.words_per_minute
+            * ((self.MINIMUM_HOOK_SECONDS + self.MAXIMUM_HOOK_SECONDS) / 2)
+            / 60
+        )
+        retry_feedback = ""
 
         for iteration in range(1, 3):
             response = self.client.responses.parse(
@@ -510,6 +517,11 @@ class ScriptEngine:
                             f"{minimum_hook_words}–{maximum_hook_words} spoken words "
                             f"(about {self.MINIMUM_HOOK_SECONDS}–"
                             f"{self.MAXIMUM_HOOK_SECONDS} seconds at the configured pace). "
+                            f"Count the words in every candidate before returning it. "
+                            f"Never return a candidate shorter than {minimum_hook_words} "
+                            f"words; aim near {target_hook_words} words so natural "
+                            "punctuation or contractions do not put it under the minimum. "
+                            "Do not satisfy the duration by padding or repeating ideas. "
                             "Score modern relevance, problem clarity, ancient connection, "
                             "curiosity, open loop, surprise, stakes, specificity, "
                             "conversational quality, factual support, and visual potential "
@@ -540,6 +552,13 @@ class ScriptEngine:
                             "hook and 3–5 candidates. Address each prior issue code directly. "
                             "Do not regenerate the full script."
                             + (
+                                "\n\nDeterministic rejection feedback from the prior "
+                                "hook-only attempt:\n"
+                                + retry_feedback
+                                if retry_feedback
+                                else ""
+                            )
+                            + (
                                 "\n\nTargeted actual-audio repair:\n"
                                 + hook_feedback
                                 if hook_feedback
@@ -569,18 +588,43 @@ class ScriptEngine:
             distinct_alternatives = self._distinct_hook_candidates(
                 review.alternatives
             )
-            valid_alternatives = [
-                candidate
-                for candidate in review.alternatives
-                if self._hook_meets_retention_gate(
+            distinct_failure = (
+                []
+                if distinct_alternatives
+                else [
+                    (
+                        "The alternative set must contain three to five distinct "
+                        "mechanisms and non-near-duplicate wording."
+                    )
+                ]
+            )
+            candidate_reasons = {
+                candidate.text: self._hook_candidate_rejection_reasons(
                     candidate,
                     minimum_hook_words,
                     maximum_hook_words,
                     allowed_source_ids,
                 )
+                + (
+                    [
+                        (
+                            "Weighted quality score is below the "
+                            f"{threshold:.2f}/5 threshold."
+                        )
+                    ]
+                    if self._hook_candidate_score(
+                        candidate, config.hook_quality_weights
+                    ) < threshold
+                    else []
+                )
+                + distinct_failure
+                for candidate in review.alternatives
+            }
+            valid_alternatives = [
+                candidate
+                for candidate in review.alternatives
+                if not candidate_reasons[candidate.text]
             ]
-            if not distinct_alternatives:
-                valid_alternatives = []
             iteration_result = {
                 "iteration": iteration,
                 "current": current.model_dump(mode="json"),
@@ -595,10 +639,8 @@ class ScriptEngine:
                             candidate, config.hook_quality_weights
                         ),
                         "word_count": self._count_words(candidate.text),
-                        "eligible": (
-                            candidate in valid_alternatives
-                            and distinct_alternatives
-                        ),
+                        "rejection_reasons": candidate_reasons[candidate.text],
+                        "eligible": not candidate_reasons[candidate.text],
                     }
                     for candidate in review.alternatives
                 ],
@@ -631,21 +673,54 @@ class ScriptEngine:
                 qualified_candidates.append(current)
             if not qualified_candidates:
                 if iteration < 2:
+                    rejected = [
+                        (
+                            f"Candidate {index} ({item['word_count']} words): "
+                            + (
+                                "; ".join(item["rejection_reasons"])
+                                or "below the weighted quality threshold."
+                            )
+                        )
+                        for index, item in enumerate(
+                            iteration_result["alternatives"], start=1
+                        )
+                    ]
+                    retry_feedback = (
+                        f"The required hook length is {minimum_hook_words}–"
+                        f"{maximum_hook_words} words; target approximately "
+                        f"{target_hook_words}. Previous rejection reasons:\n- "
+                        + "\n- ".join(rejected)
+                        + "\nGenerate new, complete hooks within the length range; "
+                        "do not reuse or pad the previous candidates."
+                    )
+                    iteration_result["retry_feedback"] = retry_feedback
+                    report_path.write_text(
+                        json.dumps(report, indent=2, ensure_ascii=False),
+                        encoding="utf-8",
+                    )
                     continue
                 report["status"] = "FAIL"
                 report["failure"] = (
                     "No distinct, fact-supported hook met the configured 20–35 "
                     "second duration, structural, and quality gates."
                 )
+                report["blocking_reasons"] = sorted(
+                    {
+                        reason
+                        for item in iteration_result["alternatives"]
+                        for reason in item["rejection_reasons"]
+                    }
+                    | set(distinct_failure)
+                )
                 report_path.write_text(
                     json.dumps(report, indent=2, ensure_ascii=False),
                     encoding="utf-8",
                 )
                 raise ValueError(
-                    "Hook quality did not meet the duration, factual-support, "
-                    "curiosity, or structure gates; no distinct supported candidate "
-                    "passed after two hook-only attempts. "
-                    "Inspect hook_evaluation.json."
+                    "Hook quality did not pass deterministic gates after two "
+                    "hook-only attempts: "
+                    + "; ".join(report["blocking_reasons"])
+                    + ". Inspect hook_evaluation.json."
                 )
             selected = max(
                 qualified_candidates,
@@ -795,6 +870,21 @@ class ScriptEngine:
         maximum_words: int,
         source_ids: set[str],
     ) -> bool:
+        return not cls._hook_candidate_rejection_reasons(
+            candidate,
+            minimum_words,
+            maximum_words,
+            source_ids,
+        )
+
+    @classmethod
+    def _hook_candidate_rejection_reasons(
+        cls,
+        candidate: HookCandidateScores,
+        minimum_words: int,
+        maximum_words: int,
+        source_ids: set[str],
+    ) -> list[str]:
         word_count = cls._count_words(candidate.text)
         normalized_hook = cls._normalize_hook_text(candidate.text)
         question = candidate.curiosity_question.strip()
@@ -842,35 +932,61 @@ class ScriptEngine:
             if candidate.visual_potential is not None
             else candidate.specificity
         )
-        scores_are_strong = (
-            candidate.curiosity >= 4
-            and candidate.open_loop >= 4
-            and candidate.payoff_promise >= 4
-            and candidate.factual_support >= 4
-            and problem_clarity >= 4
-            and ancient_connection >= 4
-            and conversational_quality >= 3
-            and visual_potential >= 3
-            and (candidate.story_continuity or 0) >= 4
-            and (
-                not candidate.modern_connection_applicable
-                or (
-                    modern_fields_complete
-                    and (candidate.modern_relevance or 0) >= 4
-                )
+        reasons = []
+        if word_count < minimum_words:
+            reasons.append(
+                f"Hook has {word_count} words; minimum is {minimum_words}."
             )
-        )
-        return (
-            minimum_words <= word_count <= maximum_words
-            and scores_are_strong
-            and bool(candidate.ancient_problem.strip())
-            and bool(candidate.open_loop_description.strip())
-            and bool(candidate.visual_opportunity.strip())
-            and bool(candidate.first_investigation.strip())
-            and question_is_early
-            and bool(candidate.source_ids)
-            and set(candidate.source_ids).issubset(source_ids)
-        )
+        elif word_count > maximum_words:
+            reasons.append(
+                f"Hook has {word_count} words; maximum is {maximum_words}."
+            )
+        for dimension, score, minimum in (
+            ("curiosity", candidate.curiosity, 4),
+            ("open loop", candidate.open_loop, 4),
+            ("payoff promise", candidate.payoff_promise, 4),
+            ("factual support", candidate.factual_support, 4),
+            ("problem clarity", problem_clarity, 4),
+            ("ancient connection", ancient_connection, 4),
+            ("conversational quality", conversational_quality, 3),
+            ("visual potential", visual_potential, 3),
+            ("story continuity", candidate.story_continuity or 0, 4),
+        ):
+            if score < minimum:
+                reasons.append(
+                    f"{dimension.capitalize()} score {score}/5 is below "
+                    f"the required {minimum}/5."
+                )
+        if candidate.modern_connection_applicable:
+            if not modern_fields_complete:
+                reasons.append(
+                    "The applicable modern connection is missing its situation, "
+                    "solution, shared problem, or ancient problem."
+                )
+            if (candidate.modern_relevance or 0) < 4:
+                reasons.append(
+                    "Modern relevance score is below the required 4/5."
+                )
+        if not candidate.ancient_problem.strip():
+            reasons.append("The ancient problem is not specified.")
+        if not candidate.open_loop_description.strip():
+            reasons.append("The open loop is not described.")
+        if not candidate.visual_opportunity.strip():
+            reasons.append("The visual opportunity is not specified.")
+        if not candidate.first_investigation.strip():
+            reasons.append("Continuity into the first investigation is not specified.")
+        if not question_is_early:
+            reasons.append(
+                "The curiosity question is missing from the spoken hook or appears "
+                "after the first 65% of its words."
+            )
+        if not candidate.source_ids:
+            reasons.append("No approved research source IDs are cited.")
+        elif not set(candidate.source_ids).issubset(source_ids):
+            reasons.append(
+                "The candidate cites source IDs outside the approved hook sources."
+            )
+        return reasons
 
     @staticmethod
     def _normalize_hook_text(text: str) -> str:

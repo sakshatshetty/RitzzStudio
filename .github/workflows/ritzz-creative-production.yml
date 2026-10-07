@@ -1,0 +1,345 @@
+name: RITZZ Creative Package Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Start production from a ZIP or resume a saved project
+        required: true
+        type: choice
+        options:
+          - NEW
+          - RESUME
+        default: NEW
+      creative_package_url:
+        description: Path URL on the configured private HTTPS asset host (NEW only)
+        required: false
+        type: string
+      project_id:
+        description: Existing project ID (RESUME only)
+        required: false
+        type: string
+      source_run_id:
+        description: Actions run ID containing the saved project checkpoint (RESUME only)
+        required: false
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: ritzz-creative-${{ inputs.project_id || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate credentials and focused tests
+    runs-on: ubuntu-latest
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+      RITZZ_VOICE_ID: ${{ secrets.RITZZ_VOICE_ID }}
+      GOOGLE_CLIENT_SECRETS_B64: ${{ secrets.GOOGLE_CLIENT_SECRETS_B64 }}
+      GOOGLE_TOKEN_B64: ${{ secrets.GOOGLE_TOKEN_B64 }}
+      RITZZ_CREATIVE_PACKAGE_HOST: ${{ vars.RITZZ_CREATIVE_PACKAGE_HOST }}
+      RITZZ_CREATIVE_PACKAGE_DOWNLOAD_TOKEN: ${{ secrets.RITZZ_CREATIVE_PACKAGE_DOWNLOAD_TOKEN }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Install media-test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ffmpeg fonts-comic-neue fonts-dejavu-core
+
+      - name: Validate creative production secrets
+        run: python scripts/validate_pipeline_prerequisites.py --creative-package
+
+      - name: Run creative production regression tests
+        run: >-
+          python -m pytest
+          tests/test_creative_package.py
+          tests/test_creative_workflow.py
+          tests/test_download_creative_package.py
+          tests/test_audio_timed_storyboard.py
+          tests/test_run_render_stage.py
+          tests/test_video_pipeline_engine.py
+          tests/test_voice_engine.py
+          tests/test_upload_thumbnail_recovery.py
+          tests/test_private_upload_quality.py
+          tests/test_publishing_engine.py
+          -q
+
+  production:
+    name: Validate ZIP and produce video
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    outputs:
+      project_id: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+      RITZZ_VOICE_ID: ${{ secrets.RITZZ_VOICE_ID }}
+      RITZZ_CREATIVE_PACKAGE_HOST: ${{ vars.RITZZ_CREATIVE_PACKAGE_HOST }}
+      RITZZ_CREATIVE_PACKAGE_DOWNLOAD_TOKEN: ${{ secrets.RITZZ_CREATIVE_PACKAGE_DOWNLOAD_TOKEN }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies and FFmpeg
+        run: |
+          python -m pip install -r requirements.txt
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ffmpeg fonts-comic-neue fonts-dejavu-core
+
+      - name: Download the user-supplied ZIP
+        if: ${{ inputs.mode == 'NEW' }}
+        env:
+          RITZZ_CREATIVE_PACKAGE_URL: ${{ inputs.creative_package_url }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$RITZZ_CREATIVE_PACKAGE_URL" ]]; then
+            echo "creative_package_url is required for a NEW production." >&2
+            exit 1
+          fi
+          python scripts/download_creative_package.py
+
+      - name: Validate and import the creative ZIP
+        if: ${{ inputs.mode == 'NEW' }}
+        id: new-project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .pipeline-artifacts
+          python scripts/import_creative_package.py \
+            --zip .pipeline-artifacts/creative-package.zip \
+            > .pipeline-artifacts/import_result.json
+          project_id=$(python -c "import json; print(json.load(open('.pipeline-artifacts/import_result.json', encoding='utf-8'))['project_id'])")
+          echo "project_id=$project_id" >> "$GITHUB_OUTPUT"
+          echo "Validated creative package for project $project_id."
+
+      - name: Download saved project checkpoint
+        if: ${{ inputs.mode == 'RESUME' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ritzz-creative-production-${{ inputs.project_id }}-checkpoint
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+          path: .pipeline-artifacts
+
+      - name: Restore saved project
+        if: ${{ inputs.mode == 'RESUME' }}
+        id: resume-project
+        shell: bash
+        env:
+          PROJECT_ID: ${{ inputs.project_id }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$PROJECT_ID" || -z "$SOURCE_RUN_ID" ]]; then
+            echo "RESUME requires both project_id and source_run_id." >&2
+            exit 1
+          fi
+          if [[ ! "$PROJECT_ID" =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$ ]]; then
+            echo "project_id contains unsupported characters." >&2
+            exit 1
+          fi
+          if [[ ! "$SOURCE_RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "source_run_id must contain digits only." >&2
+            exit 1
+          fi
+          mkdir -p projects
+          tar -xzf .pipeline-artifacts/project.tar.gz -C projects
+          python -c "import os; from modules.project.manager import ProjectManager; ProjectManager('projects').load_project(os.environ['PROJECT_ID'])"
+          echo "project_id=$PROJECT_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Generate or reuse supplied-script narration
+        env:
+          RITZZ_PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
+          RITZZ_RESUME: ${{ inputs.mode == 'RESUME' && 'true' || 'false' }}
+        run: python scripts/run_voice_stage.py
+
+      - name: Research factual visual context
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          RITZZ_PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
+        run: python scripts/run_creative_research.py
+
+      - name: Build context-driven audio-timed storyboard
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          RITZZ_PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
+          RITZZ_RESUME: ${{ inputs.mode == 'RESUME' && 'true' || 'false' }}
+        run: python scripts/run_storyboard_stage.py
+
+      - name: Generate or resume scene images
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          RITZZ_PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
+        run: python scripts/run_image_stage.py
+
+      - name: Render and run technical plus targeted semantic QA
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          RITZZ_PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
+        run: python scripts/run_render_stage.py
+
+      - name: Create exact-input final review package
+        env:
+          RITZZ_PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
+        run: python scripts/package_creative_production.py
+
+      - name: Publish review link
+        if: ${{ always() && (steps.new-project.outputs.project_id != '' || steps.resume-project.outputs.project_id != '') }}
+        env:
+          PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            echo "## RITZZ production review"
+            echo
+            echo "Project: \`$PROJECT_ID\`"
+            echo
+            echo "Review the downloadable \`final-package-$PROJECT_ID.zip\` artifact before approving the protected upload job."
+            echo
+            echo "Run and artifact link: $RUN_URL"
+            echo
+            echo "A semantic QA REVIEW remains visible for human assessment; a technical QA FAIL blocks this stage."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Archive project for review and resume
+        if: ${{ always() && (steps.new-project.outputs.project_id != '' || steps.resume-project.outputs.project_id != '') }}
+        env:
+          PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
+        run: |
+          set -euo pipefail
+          project_name=$(find projects -mindepth 1 -maxdepth 1 -type d -name "$PROJECT_ID_*" -printf "%f\n" | head -n 1)
+          if [[ -z "$project_name" ]]; then
+            echo "Could not find the project directory for $PROJECT_ID." >&2
+            exit 1
+          fi
+          tar -czf .pipeline-artifacts/project.tar.gz -C projects "$project_name"
+
+      - name: Upload production checkpoint and final package
+        if: ${{ always() && (steps.new-project.outputs.project_id != '' || steps.resume-project.outputs.project_id != '') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ritzz-creative-production-${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}-checkpoint
+          path: |
+            .pipeline-artifacts/project.tar.gz
+            .pipeline-artifacts/final-package-*.zip
+          if-no-files-found: warn
+          retention-days: 30
+
+  human-review-and-private-upload:
+    name: Human review and private YouTube upload
+    needs: production
+    if: ${{ needs.production.result == 'success' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: ritzz-packaging-approval
+      url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    env:
+      RITZZ_PROJECT_ID: ${{ needs.production.outputs.project_id }}
+      GOOGLE_CLIENT_SECRETS_B64: ${{ secrets.GOOGLE_CLIENT_SECRETS_B64 }}
+      GOOGLE_TOKEN_B64: ${{ secrets.GOOGLE_TOKEN_B64 }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies and validate upload media
+        run: |
+          python -m pip install -r requirements.txt
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ffmpeg
+
+      - name: Download reviewed project
+        uses: actions/download-artifact@v4
+        with:
+          name: ritzz-creative-production-${{ needs.production.outputs.project_id }}-checkpoint
+          run-id: ${{ github.run_id }}
+          github-token: ${{ github.token }}
+          path: .pipeline-artifacts
+
+      - name: Restore project and prepare OAuth files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p projects .pipeline-artifacts
+          tar -xzf .pipeline-artifacts/project.tar.gz -C projects
+          printf '%s' "$GOOGLE_CLIENT_SECRETS_B64" | base64 --decode > .pipeline-artifacts/google-client-secrets.json
+          printf '%s' "$GOOGLE_TOKEN_B64" | base64 --decode > .pipeline-artifacts/google-token.json
+          echo "GOOGLE_CLIENT_SECRETS_FILE=$GITHUB_WORKSPACE/.pipeline-artifacts/google-client-secrets.json" >> "$GITHUB_ENV"
+          echo "GOOGLE_TOKEN_FILE=$GITHUB_WORKSPACE/.pipeline-artifacts/google-token.json" >> "$GITHUB_ENV"
+
+      - name: Finalize the human-approved exact-input package
+        env:
+          RITZZ_HUMAN_APPROVED: "true"
+        run: python scripts/package_creative_production.py
+
+      - name: Upload the approved metadata and final video privately
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          RITZZ_YOUTUBE_CATEGORY: Education
+        run: python scripts/run_private_upload_stage.py
+
+      - name: Set the supplied thumbnail on the private video
+        run: python scripts/upload_youtube_thumbnail.py
+
+      - name: Save approved upload checkpoint
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          mkdir -p .pipeline-artifacts
+          project_name=$(find projects -mindepth 1 -maxdepth 1 -type d -name "$RITZZ_PROJECT_ID_*" -printf "%f\n" | head -n 1)
+          if [[ -z "$project_name" ]]; then
+            echo "Could not find the project directory for $RITZZ_PROJECT_ID." >&2
+            exit 1
+          fi
+          tar -czf .pipeline-artifacts/project.tar.gz -C projects "$project_name"
+
+      - name: Upload resumable approved checkpoint
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ritzz-creative-production-${{ needs.production.outputs.project_id }}-checkpoint
+          path: |
+            .pipeline-artifacts/project.tar.gz
+            .pipeline-artifacts/final-package-*.zip
+          if-no-files-found: warn
+          retention-days: 30
+          overwrite: true
+
+      - name: Upload final approved production artifacts
+        if: ${{ success() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ritzz-creative-production-${{ needs.production.outputs.project_id }}-approved
+          path: |
+            .pipeline-artifacts/project.tar.gz
+            .pipeline-artifacts/final-package-*.zip
+          if-no-files-found: error
+          retention-days: 90

@@ -3,11 +3,70 @@
 RITZZ video runs are started from the GitHub Actions web interface. Normal video
 production does not require a local command-line command.
 
-## Current workflow
+## Primary workflow: user-supplied creative package
 
-Workflow file: `.github/workflows/ritzz-pipeline.yml`
+Workflow file: `.github/workflows/ritzz-creative-production.yml`
 
-The current M8 slice performs these steps:
+This is the normal production path. It does not discover/select a topic or
+generate/rewrite the supplied script, title, description, tags, or thumbnail.
+The ZIP is validated before research, ElevenLabs, or image-generation calls.
+Production then researches factual visual context, generates narration from the
+supplied script, aligns scenes to actual narration timestamps, plans visual
+contracts with neighboring-scene context, generates images, runs deterministic
+and targeted semantic QA, renders with static images and hard cuts, and creates
+a final review ZIP. Uncertain semantic checks remain visible for human review;
+clear failures and technical QA failures block progression.
+
+The ZIP root must contain `project.json` and exactly the five files referenced
+by it. Example manifest:
+
+```json
+{
+  "project_id": "20261007_001",
+  "topic": "Why Do Pirates Wear Eye Patches?",
+  "target_duration_minutes": 8,
+  "script_file": "script.txt",
+  "title_file": "title.txt",
+  "description_file": "description.txt",
+  "tags_file": "tags.txt",
+  "thumbnail_file": "thumbnail.png"
+}
+```
+
+The script is UTF-8 text; title and description are UTF-8 text; `tags.txt` has
+one non-empty, trimmed tag per line; and the thumbnail is a readable RGB/RGBA
+PNG at 16:9 and at least 1280×720. The script is checked against the target
+runtime before paid production calls. The ZIP importer preserves the source
+files and refuses project-ID reuse with different content. Audio-timed holds
+may vary from 1 to 6 seconds, with hold reason, visual weight, narration
+density, and cut-boundary context recorded for QA. Camera movement and
+transitions remain disabled.
+
+For secure ZIP delivery, configure the repository variable
+`RITZZ_CREATIVE_PACKAGE_HOST` to the exact HTTPS hostname used for package
+downloads and the repository secret `RITZZ_CREATIVE_PACKAGE_DOWNLOAD_TOKEN` to
+its bearer token. The workflow input is a path URL on that host, without
+credentials, query parameters, or fragments. The token is sent only to that
+allowlisted host, and redirects are rejected. Configure the existing
+`ritzz-packaging-approval` environment with trusted reviewers. The final
+review job runs only after protected approval; it uploads the exact supplied
+title, description, tags, and thumbnail with the technically validated video.
+YouTube visibility remains private.
+
+Start a new run with `mode=NEW` and the package URL. To resume, choose
+`mode=RESUME` and provide the project ID plus the Actions run ID that contains
+its checkpoint. A resume requires an unexpired checkpoint artifact. Completed
+voice/storyboard assets are validated and reused, and completed images are
+resumed from their manifest.
+
+## Legacy generated-creative workflow
+
+Workflow file: `.github/workflows/ritzz-pipeline.yml` (named
+“RITZZ Legacy Generated-Creative Pipeline” in Actions)
+
+This workflow is retained for compatibility with existing checkpoints. It
+still performs the former generated-creative flow described below; do not use
+it for new user-supplied ZIP productions.
 
 When starting a run, the GitHub form provides `Discovery mode`, `Test run`,
 `Target video duration in minutes`, and `Minimum allowed video duration in

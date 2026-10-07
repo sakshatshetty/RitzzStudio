@@ -44,7 +44,12 @@ class ProjectManager:
 
         return f"{today}_{sequence:03d}"
 
-    def create_project(self, title: str) -> Project:
+    def create_project(
+        self,
+        title: str,
+        *,
+        project_id: str | None = None,
+    ) -> Project:
         """Create a new project and its directory structure."""
 
         title = title.strip()
@@ -52,7 +57,11 @@ class ProjectManager:
         if not title:
             raise ValueError("Project title cannot be empty.")
 
-        project_id = self._next_project_id()
+        project_id = project_id or self._next_project_id()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", project_id):
+            raise ValueError(
+                "Project ID must contain 1–80 letters, numbers, underscores, or hyphens."
+            )
         slug = self.create_slug(title)
 
         if not slug:

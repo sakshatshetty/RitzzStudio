@@ -146,6 +146,7 @@ class Script(BaseModel):
     )
 
     script_profile: str = ""
+    user_supplied: bool = False
     input_fingerprint: str = ""
     hook_plan: ScriptHookPlan = Field(default_factory=ScriptHookPlan)
     narrative_arc: list[NarrativeMovement] = Field(default_factory=list)

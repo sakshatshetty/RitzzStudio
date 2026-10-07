@@ -37,6 +37,18 @@ def test_validate_prerequisites_accepts_configured_secrets(monkeypatch):
     assert result["api_calls_made"] == "none"
 
 
+def test_creative_package_preflight_does_not_require_vidiq(monkeypatch):
+    _set_valid_environment(monkeypatch)
+    monkeypatch.delenv("VIDIQ_MCP_API_KEY")
+    monkeypatch.setenv("RITZZ_CREATIVE_PACKAGE_HOST", "assets.example.com")
+    monkeypatch.setenv("RITZZ_CREATIVE_PACKAGE_DOWNLOAD_TOKEN", "token")
+
+    result = validate_prerequisites(creative_package=True)
+
+    assert result["required_secrets"] == "7"
+    assert result["api_calls_made"] == "none"
+
+
 def test_storyboard_generation_job_receives_openai_secret():
     workflow = Path(".github/workflows/ritzz-pipeline.yml").read_text(
         encoding="utf-8"

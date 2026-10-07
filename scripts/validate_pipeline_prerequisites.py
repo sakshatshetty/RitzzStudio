@@ -1,10 +1,10 @@
 """Validate required GitHub Actions secrets without exposing their values."""
 
+import argparse
 import base64
 import json
 import os
 from typing import Any
-
 
 REQUIRED_ENVIRONMENT_VARIABLES = (
     "OPENAI_API_KEY",
@@ -26,12 +26,29 @@ def _decode_json_secret(name: str) -> dict[str, Any]:
     except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"{name} is not valid Base64-encoded JSON.") from exc
     if not isinstance(payload, dict):
-        raise ValueError(f"{name} must decode to a JSON object.")
+        raise TypeError(f"{name} must decode to a JSON object.")
     return payload
 
 
-def validate_prerequisites() -> dict[str, str]:
-    missing = [name for name in REQUIRED_ENVIRONMENT_VARIABLES if not os.environ.get(name, "").strip()]
+def validate_prerequisites(*, creative_package: bool = False) -> dict[str, str]:
+    required_variables = (
+        tuple(
+            name
+            for name in REQUIRED_ENVIRONMENT_VARIABLES
+            if name != "VIDIQ_MCP_API_KEY"
+        )
+        + (
+            "RITZZ_CREATIVE_PACKAGE_HOST",
+            "RITZZ_CREATIVE_PACKAGE_DOWNLOAD_TOKEN",
+        )
+        if creative_package
+        else REQUIRED_ENVIRONMENT_VARIABLES
+    )
+    missing = [
+        name
+        for name in required_variables
+        if not os.environ.get(name, "").strip()
+    ]
     if missing:
         raise ValueError(f"Missing required pipeline secrets: {', '.join(missing)}")
 
@@ -45,7 +62,7 @@ def validate_prerequisites() -> dict[str, str]:
         raise ValueError("GOOGLE_TOKEN_B64 does not contain an OAuth token.")
 
     return {
-        "required_secrets": str(len(REQUIRED_ENVIRONMENT_VARIABLES)),
+        "required_secrets": str(len(required_variables)),
         "oauth_client_json": "valid",
         "oauth_token_json": "valid",
         "api_calls_made": "none",
@@ -53,7 +70,14 @@ def validate_prerequisites() -> dict[str, str]:
 
 
 def main() -> int:
-    result = validate_prerequisites()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--creative-package",
+        action="store_true",
+        help="Validate the creative ZIP workflow's credentials instead of vidIQ.",
+    )
+    arguments = parser.parse_args()
+    result = validate_prerequisites(creative_package=arguments.creative_package)
     print("Pipeline prerequisites passed.")
     for name, value in result.items():
         print(f"{name}: {value}")

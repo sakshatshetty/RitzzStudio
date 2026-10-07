@@ -10,6 +10,10 @@ import pytest
 from modules.image.models import ImageGenerationResult
 from modules.qa.engine import load_project_qa
 from modules.storyboard.engine import StoryboardEngine
+from modules.storyboard.visual_models import (
+    SceneVisualContract,
+    VisualWorldBible,
+)
 from modules.video.pipeline_engine import (
     VideoProductionPipeline,
 )
@@ -597,6 +601,96 @@ def test_image_ai_qa_batches_with_bounded_concurrency_and_retries_failed_batch(
     assert metrics["ai_reviewed_scenes"] == 3
 
 
+def test_semantic_qa_only_reviews_scenes_with_contract_risk_reasons(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("RITZZ_QA_IMAGE_WIDTH", "320")
+    monkeypatch.setenv("RITZZ_QA_IMAGE_HEIGHT", "180")
+    image_directory = create_images(tmp_path)
+    audio_file = create_audio(tmp_path)
+    storyboard_file = create_storyboard(tmp_path, audio_file)
+    alignment_file = create_alignment(tmp_path)
+    storyboard = StoryboardEngine.load_storyboard(storyboard_file)
+    storyboard.scenes = [
+        scene.model_copy(
+            update={
+                "visual_contract": SceneVisualContract(
+                    scene_id=scene.scene_id,
+                    purpose="EXPLAIN",
+                    subject="A pirate",
+                    action="Looks across the sea",
+                    environment="A wooden ship at sea",
+                    historical_context="Not established by the approved research.",
+                    ambiguity_resolution="Show the described pirate and ship.",
+                    semantic_review_reasons=(
+                        ["historical accuracy needs verification"]
+                        if scene.scene_id == "scene_002"
+                        else []
+                    ),
+                )
+            }
+        )
+        for scene in storyboard.scenes
+    ]
+    storyboard_file.write_text(
+        storyboard.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+    world = VisualWorldBible(
+        topic=storyboard.topic,
+        historical=False,
+        time_period="Not established by the approved research.",
+        geography="Not established by the approved research.",
+        civilization_or_society="Not established by the approved research.",
+        technology_level="Not established by the approved research.",
+        built_environment="Not established by the approved research.",
+        clothing="Not established by the approved research.",
+        transportation="Not established by the approved research.",
+        tools_and_weapons="Not established by the approved research.",
+        containers_and_materials="Not established by the approved research.",
+        architecture="Not established by the approved research.",
+        natural_environment="The open sea.",
+        social_context="Not established by the approved research.",
+        visual_style="Simple 2D cartoon illustration.",
+        technology_ceiling="Not established by the approved research.",
+    )
+    (tmp_path / "visual_world_bible.json").write_text(
+        world.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+
+    class Reviewer:
+        def __init__(self):
+            self.scene_ids: list[str] = []
+
+        def review(self, image_path, scene, editorial_candidates=None):
+            self.scene_ids.append(scene.scene_id)
+            return SceneQAResult(
+                scene_id=scene.scene_id,
+                status="PASS",
+                narration_image="PASS",
+                narration_description="PASS",
+                rationale="Targeted semantic risk review passed.",
+            )
+
+    reviewer = Reviewer()
+    pipeline = VideoProductionPipeline(image_reviewer=reviewer)
+    request = pipeline.create_request(
+        storyboard_file=storyboard_file,
+        image_directory=image_directory,
+        narration_result_file=alignment_file,
+        audio_file=audio_file,
+        output_directory=tmp_path / "output",
+        enable_image_ai_qa=True,
+    )
+
+    assert pipeline._review_and_repair_images(request, tmp_path) == "PASS"
+    assert reviewer.scene_ids == ["scene_002"]
+    metrics = load_project_qa(tmp_path).stages["image_semantic_qa"][-1].metrics
+    assert metrics["ai_reviewed_scenes"] == 1
+
+
 def test_image_ai_qa_preserves_uncertain_images_for_human_review(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -762,7 +856,7 @@ def test_image_ai_qa_ignores_legacy_editorial_review_failures(
     assert not any("editorial" in name for name in attempts[0].checks)
 
 
-def test_unresolved_image_qa_blocks_video_render_pipeline(
+def test_semantic_review_status_keeps_video_available_for_human_approval(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -787,10 +881,40 @@ def test_unresolved_image_qa_blocks_video_render_pipeline(
 
     result = pipeline.run(request)
 
-    assert result.status == "failed"
-    assert result.technical_qa_status == "FAIL"
+    assert result.status == "completed"
+    assert result.technical_qa_status == "PASS"
     assert result.image_ai_qa_status == "REVIEW"
-    assert "status was REVIEW" in (result.error_message or "")
+    assert result.output_video_file is not None
+    assert Path(result.output_video_file).is_file()
+
+
+def test_semantic_failure_blocks_video_render_pipeline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    image_directory = create_images(tmp_path)
+    audio_file = create_audio(tmp_path)
+    storyboard_file = create_storyboard(tmp_path, audio_file)
+    alignment_file = create_alignment(tmp_path)
+    pipeline = VideoProductionPipeline()
+    request = pipeline.create_request(
+        storyboard_file=storyboard_file,
+        image_directory=image_directory,
+        narration_result_file=alignment_file,
+        audio_file=audio_file,
+        output_directory=tmp_path / "output",
+        enable_image_ai_qa=True,
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_review_and_repair_images",
+        lambda *_args: "FAIL",
+    )
+
+    result = pipeline.run(request)
+
+    assert result.status == "failed"
+    assert result.image_ai_qa_status == "FAIL"
     assert result.output_video_file is None
 
 

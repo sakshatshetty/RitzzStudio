@@ -8,7 +8,10 @@ from modules.qa.engine import load_project_qa
 from modules.storyboard.dynamic_engine import DynamicStoryboardEngine
 from modules.storyboard.editorial_planner import EditorialDecision
 from modules.storyboard.models import Storyboard, StoryboardScene
-from modules.video.audio_timed_storyboard import AudioTimedStoryboardEngine
+from modules.video.audio_timed_storyboard import (
+    AudioTimedStoryboardEngine,
+    _AlignedScene,
+)
 from modules.video.sync_models import NarrationAlignment
 
 
@@ -90,6 +93,24 @@ def test_visual_change_respects_maximum_hold_and_keeps_complete_words():
     assert all(scene.narration[-1].isalnum() or scene.narration[-1] in ".!?,;:" for scene in timed.scenes)
     assert timed.scenes[1].start_seconds < 4
     assert timed.scenes[0].duration_seconds == timed.scenes[1].start_seconds
+
+
+def test_arbitrary_storyboard_fragment_is_not_treated_as_a_natural_clause():
+    previous = make_storyboard(
+        ["The first phrase continues"],
+        ["A quiet ship on the horizon"],
+    ).scenes[0]
+    current = make_storyboard(
+        ["without punctuation into the next phrase"],
+        ["The same quiet ship and horizon"],
+    ).scenes[0]
+
+    assert AudioTimedStoryboardEngine._boundary_before(
+        previous,
+        current,
+        start_seconds=1.0,
+        previous_end_seconds=1.0,
+    ) == "word_fallback"
 
 
 def test_audio_timed_storyboard_fails_when_word_boundaries_cannot_meet_scene_bounds():
@@ -245,6 +266,119 @@ def test_audio_timed_scene_splits_to_enforce_maximum_hold_without_natural_pause(
     assert all(scene.duration_seconds <= 4 for scene in timed.scenes)
     assert timed.scenes[0].narration.startswith(lines[0])
     assert timed.scenes[-1].narration.endswith(lines[-1])
+
+
+def test_variable_hold_target_responds_to_density_and_visual_weight():
+    low_density = make_storyboard(
+        ["A calm moment."],
+        ["A quiet ship on the horizon"],
+    ).scenes[0]
+    high_density = make_storyboard(
+        ["Three ships turn, cannons fire, and the crew escapes."],
+        ["Ships turn, cannon fire, and crew scramble across the deck"],
+    ).scenes[0]
+    high_density.character_action = "Ships fire while the crew escapes."
+    high_density.props = ["three ships", "cannon", "rope", "sail"]
+    engine = AudioTimedStoryboardEngine(
+        production_config=ProductionConfig(
+            target_duration_seconds=480,
+            minimum_duration_seconds=480,
+            scene_minimum_duration_seconds=1,
+            scene_maximum_duration_seconds=6,
+        )
+    )
+
+    calm_target = engine._target_hold_seconds(
+        [_AlignedScene(low_density, 0, 4)],
+        duration=4,
+        minimum=1,
+        maximum=6,
+    )
+    dense_target = engine._target_hold_seconds(
+        [_AlignedScene(high_density, 0, 4)],
+        duration=4,
+        minimum=1,
+        maximum=6,
+    )
+
+    assert dense_target < calm_target
+    assert 1 <= dense_target <= 6
+    assert 1 <= calm_target <= 6
+
+
+def test_variable_hold_metadata_and_qa_flag_unjustified_extreme_holds():
+    scene = make_storyboard(
+        ["A calm moment."],
+        ["A quiet ship on the horizon"],
+    ).scenes[0].model_copy(
+        update={
+            "start_seconds": 0,
+            "duration_seconds": 1.5,
+            "narration_density": 0.67,
+            "visual_weight": 1,
+            "hold_reason": "",
+        }
+    )
+    storyboard = Storyboard(
+        topic="Pirates",
+        target_duration_seconds=2,
+        scenes=[scene],
+        total_scene_duration_seconds=1.5,
+        target_scene_duration_seconds=3,
+    )
+    config = ProductionConfig(
+        target_duration_seconds=2,
+        minimum_duration_seconds=2,
+        scene_minimum_duration_seconds=1,
+        scene_maximum_duration_seconds=6,
+    )
+
+    review = AudioTimedStoryboardEngine._evaluate_storyboard(storyboard, config)
+    scene.hold_reason = "HIGH_INFORMATION_DENSITY"
+    unsupported = AudioTimedStoryboardEngine._evaluate_storyboard(storyboard, config)
+    scene.hold_reason = "RAPID_VISUAL_BEAT"
+    passing = AudioTimedStoryboardEngine._evaluate_storyboard(storyboard, config)
+
+    assert review.status == "REVIEW"
+    assert review.checks["variable_hold_rationale"] == "REVIEW"
+    assert unsupported.checks["variable_hold_rationale"] == "REVIEW"
+    assert passing.checks["variable_hold_rationale"] == "PASS"
+
+
+def test_long_hold_rationale_must_match_scene_purpose_and_density():
+    scene = make_storyboard(
+        ["A careful explanation unfolds."],
+        ["A character explaining a diagram"],
+    ).scenes[0].model_copy(
+        update={
+            "start_seconds": 0,
+            "duration_seconds": 7.5,
+            "narration_density": 1.0,
+            "visual_weight": 3,
+            "scene_purpose": "EXPLAIN",
+            "hold_reason": "SINGLE_VISUAL_IDEA",
+        }
+    )
+    storyboard = Storyboard(
+        topic="Pirates",
+        target_duration_seconds=8,
+        scenes=[scene],
+        total_scene_duration_seconds=7.5,
+        target_scene_duration_seconds=3,
+    )
+    config = ProductionConfig(
+        target_duration_seconds=8,
+        minimum_duration_seconds=8,
+        scene_minimum_duration_seconds=1,
+        scene_maximum_duration_seconds=10,
+    )
+
+    unsupported = AudioTimedStoryboardEngine._evaluate_storyboard(storyboard, config)
+    scene.hold_reason = "DELIBERATE_EXPLANATION"
+    supported = AudioTimedStoryboardEngine._evaluate_storyboard(storyboard, config)
+
+    assert unsupported.checks["variable_hold_rationale"] == "REVIEW"
+    assert supported.checks["variable_hold_rationale"] == "PASS"
 
 
 def test_sentence_end_and_visual_idea_change_create_a_scene():

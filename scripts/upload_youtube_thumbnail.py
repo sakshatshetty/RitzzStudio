@@ -1,4 +1,4 @@
-"""Set the generated thumbnail on an already uploaded private test video."""
+"""Set the supplied or generated thumbnail on an uploaded private video."""
 
 import json
 import os
@@ -22,7 +22,14 @@ def main() -> int:
     project = manager.load_project(project_id)
     project_directory = manager.get_project_path(project)
     publishing_directory = project_directory / "publishing"
-    thumbnail_file = project_directory / "video" / "thumbnail.jpg"
+    supplied_thumbnail = (
+        project_directory / "thumbnail" / "supplied_thumbnail.png"
+    )
+    thumbnail_file = (
+        supplied_thumbnail
+        if supplied_thumbnail.is_file()
+        else project_directory / "video" / "thumbnail.jpg"
+    )
     result_file = publishing_directory / "publish.json"
     marker_file = publishing_directory / "thumbnail_upload.json"
     if not result_file.is_file():
@@ -43,7 +50,7 @@ def main() -> int:
             return 0
     if not thumbnail_file.is_file() or thumbnail_file.stat().st_size == 0:
         raise FileNotFoundError(
-            f"Generated thumbnail is missing or empty: {thumbnail_file}"
+            f"Thumbnail image is missing or empty: {thumbnail_file}"
         )
 
     provider = YouTubeProvider(

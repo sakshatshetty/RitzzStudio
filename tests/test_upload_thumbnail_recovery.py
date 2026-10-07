@@ -105,6 +105,40 @@ def test_thumbnail_retry_reuses_video_id_and_skips_video_upload(
     assert marker["video_id"] == "existing-video"
 
 
+def test_supplied_thumbnail_is_used_instead_of_generated_thumbnail(
+    tmp_path: Path,
+    monkeypatch,
+):
+    monkeypatch.chdir(tmp_path)
+    manager = ProjectManager(Path("projects"))
+    project = manager.create_project("A supplied thumbnail test")
+    project_directory = manager.get_project_path(project)
+    create_saved_publish_result(project_directory)
+    supplied = project_directory / "thumbnail" / "supplied_thumbnail.png"
+    supplied.parent.mkdir(parents=True, exist_ok=True)
+    supplied.write_bytes(b"supplied thumbnail")
+    generated = project_directory / "video" / "thumbnail.jpg"
+    generated.write_bytes(b"generated thumbnail")
+    monkeypatch.setenv("RITZZ_PROJECT_ID", project.project_id)
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRETS_FILE", str(tmp_path / "client.json"))
+    monkeypatch.setenv("GOOGLE_TOKEN_FILE", str(tmp_path / "token.json"))
+    uploaded_paths = []
+
+    class Provider:
+        def __init__(self, *_args):
+            pass
+
+        def set_thumbnail(self, *, video_id, thumbnail_file):
+            uploaded_paths.append(Path(thumbnail_file))
+            return {"kind": "thumbnail"}
+
+    monkeypatch.setattr(upload_youtube_thumbnail, "YouTubeProvider", Provider)
+
+    assert upload_youtube_thumbnail.main() == 0
+
+    assert uploaded_paths == [supplied]
+
+
 def test_completed_thumbnail_marker_must_match_saved_video_id(
     tmp_path: Path,
     monkeypatch,

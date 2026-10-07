@@ -138,6 +138,33 @@ def test_upload_validates_and_uploads_only_exact_master_then_persists_details(
     assert "YOUTUBE_PROCESSING_PENDING" in summary_text
 
 
+def test_private_upload_preserves_user_supplied_metadata_exactly(
+    tmp_path,
+    monkeypatch,
+):
+    _, project_directory, _, provider, _, _ = _prepare_upload(
+        tmp_path,
+        monkeypatch,
+    )
+    title = "  Supplied title exactly  \n"
+    description = "Supplied description exactly.\nSecond line.\n"
+    tags = ["first supplied tag", "second supplied tag"]
+    artifact = PackagingArtifact(
+        selected_title=title,
+        metadata=PackagingMetadata(description=description, tags=tags),
+    )
+    (project_directory / "packaging.json").write_text(
+        json.dumps(artifact.to_dict()),
+        encoding="utf-8",
+    )
+
+    assert run_private_upload_stage.main() == 0
+
+    assert provider.upload_calls[0]["title"] == title
+    assert provider.upload_calls[0]["description"] == description
+    assert provider.upload_calls[0]["metadata"]["tags"] == tags
+
+
 def test_lower_resolution_master_fails_before_youtube_upload(
     tmp_path,
     monkeypatch,
