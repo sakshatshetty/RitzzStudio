@@ -934,6 +934,179 @@ def test_script_generation_prompts_require_speech_friendly_punctuation():
     assert "careful standard punctuation" in ScriptEngine._system_prompt()
 
 
+def test_system_prompt_bans_generic_suspense_filler_and_shows_the_required_shift():
+    system_prompt = ScriptEngine._system_prompt()
+    for phrase in ScriptEngine.BANNED_NARRATION_FILLER_PHRASES:
+        assert phrase in system_prompt
+    assert "generic suspense filler" in system_prompt
+    assert "Weak pattern to avoid" in system_prompt
+    assert "Apply this shift throughout every section" in system_prompt
+
+
+def test_hook_evaluator_prompt_bans_generic_suspense_filler(tmp_path):
+    captured: dict = {}
+    script = create_script()
+    old_hook = (
+        "This is a weak opening hook with very little curiosity or specificity."
+    )
+    first_section = script.sections[0].model_copy(
+        update={"narration": f"{old_hook} The remaining spoken section continues."}
+    )
+    script = script.model_copy(
+        update={"hook": old_hook, "sections": [first_section, *script.sections[1:]]}
+    )
+    candidate_text = (
+        "Today, a familiar task feels easy because modern tools hide the hard part. "
+        "But people in the ancient world faced the same underlying problem without "
+        "those tools. How did they make it work? The surviving evidence offers clues, "
+        "but not one universal answer. By comparing what sources actually show, we "
+        "can uncover the choices and constraints behind a solution that is easy to "
+        "overlook now."
+    )
+
+    def scores(text, score, factual_support, sources, mechanism, question):
+        return HookCandidateScores(
+            text=text,
+            modern_connection_applicable=True,
+            modern_situation="A familiar task feels easy with modern tools.",
+            modern_solution="Modern tools hide the difficult part.",
+            shared_problem="The same underlying human challenge.",
+            ancient_problem="People faced the same challenge in the ancient world.",
+            curiosity_question=question,
+            open_loop_description="The evidence offers clues without resolving every detail.",
+            stakes_description="The problem affected ordinary choices.",
+            visual_opportunity="Contrast a modern tool with an ancient person facing the same task.",
+            first_investigation="The opening section immediately examines evidence about that problem.",
+            curiosity_mechanism=mechanism,
+            curiosity=score,
+            tension=score,
+            specificity=score,
+            stakes=score,
+            novelty=score,
+            clarity=score,
+            open_loop=score,
+            payoff_promise=score,
+            viewer_relevance=score,
+            factual_support=factual_support,
+            source_ids=sources,
+            modern_relevance=score,
+            problem_clarity=score,
+            ancient_connection=score,
+            surprise=score,
+            conversational_quality=score,
+            visual_potential=score,
+            story_continuity=score,
+        )
+
+    other_candidates = [
+        (
+            (
+                "Picture an ordinary modern moment when a device solves an annoying "
+                "problem before you even think about it. Now remove that convenience and "
+                "place the same challenge in an ancient setting. What could people do "
+                "instead? The answer is not a single trick; it depends on what they had, "
+                "what the evidence records, and which risks mattered most. That is the "
+                "puzzle we can test."
+            ),
+            "EVERYDAY_CONVENIENCE",
+            "What could people do instead?",
+        ),
+        (
+            (
+                "We assume the simplest way to handle a daily problem has always been "
+                "obvious. It has not. Before the familiar modern fix existed, people "
+                "still faced the same basic challenge. Which choices helped them cope, "
+                "and what can the surviving evidence really prove? The most interesting "
+                "clue may not be the one we expect, so let's separate documented methods "
+                "from later assumptions."
+            ),
+            "ASSUMPTION_REVERSAL",
+            "Which choices helped them cope, and what can the surviving evidence really prove?",
+        ),
+    ]
+    review = HookQualityReview(
+        current=scores(old_hook, 2, 4, ["source_001"], "GENERIC_OPENING", "How?"),
+        alternatives=[
+            scores(candidate_text, 5, 5, ["source_001"], "MODERN_CONTRAST", "How did they make it work?"),
+            *(
+                scores(text, 5, 5, ["source_001"], mechanism, question)
+                for text, mechanism, question in other_candidates
+            ),
+        ],
+    )
+
+    class FakeResponses:
+        def parse(self, **kwargs):
+            captured["input"] = kwargs["input"]
+            return SimpleNamespace(output_parsed=review)
+
+    engine = ScriptEngine.__new__(ScriptEngine)
+    engine.client = SimpleNamespace(responses=FakeResponses())
+
+    engine._review_and_strengthen_hook(
+        script,
+        create_research(),
+        tmp_path,
+    )
+
+    system_message = next(
+        message["content"]
+        for message in captured["input"]
+        if message["role"] == "system"
+    )
+    for phrase in ScriptEngine.BANNED_NARRATION_FILLER_PHRASES:
+        assert phrase in system_message
+    assert "WEAK_CURIOSITY" in system_message
+
+
+def test_narrative_reviewer_prompt_flags_generic_suspense_filler(tmp_path):
+    captured: dict = {}
+    script = create_script().model_copy(
+        update={
+            "script_profile": "RITZZ_ANCIENT_HUMAN_CURIOSITY",
+            "hook_plan": ScriptHookPlan(
+                central_question="How did this work?",
+                open_loop="The evidence suggests a less obvious answer.",
+                stakes="The explanation changes how we see daily life.",
+            ),
+            "narrative_arc": [
+                _movement("s1", reveal="The opening establishes a real puzzle."),
+                _movement("s2", reveal="The closing supplies the supported answer."),
+            ],
+            "final_payoff": "The conclusion resolves the opening mystery.",
+            "viewer_connection": "The same question matters to modern viewers.",
+        }
+    )
+    passing_review = _quality_review("PASS")
+
+    class FakeResponses:
+        def parse(self, **kwargs):
+            captured["input"] = kwargs["input"]
+            return SimpleNamespace(output_parsed=passing_review)
+
+    engine = ScriptEngine.__new__(ScriptEngine)
+    engine.client = SimpleNamespace(responses=FakeResponses())
+    script_directory = tmp_path / "project" / "script"
+    script_directory.mkdir(parents=True)
+
+    engine._review_and_repair_narrative(
+        script,
+        create_research(),
+        create_outline(),
+        script_directory,
+        ProductionConfig(),
+    )
+
+    system_message = next(
+        message["content"]
+        for message in captured["input"]
+        if message["role"] == "system"
+    )
+    for phrase in ScriptEngine.BANNED_NARRATION_FILLER_PHRASES:
+        assert phrase in system_message
+    assert "generic suspense filler" in system_message
+
+
 def test_script_schema_allows_two_minute_target_word_count():
     script = create_script().model_copy(
         update={"target_word_count": 280}
