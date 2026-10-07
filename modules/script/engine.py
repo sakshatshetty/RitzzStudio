@@ -13,7 +13,7 @@ from modules.project.config import ProductionConfig
 from modules.qa.engine import record_stage_qa
 from modules.qa.models import QAStageResult
 from modules.research.models import Research
-from modules.script.hook_quality import HookQualityReview
+from modules.script.hook_quality import HookCandidateScores, HookQualityReview
 from modules.script.models import (
     NarrativeMovement,
     Script,
@@ -32,7 +32,7 @@ class ScriptEngine:
     # ---------------------------------------------------------
 
     WORDS_PER_MINUTE = 140
-    TEN_SECOND_HOOK_WORDS = 25
+    TEN_SECOND_HOOK_WORDS = 30
 
     MINIMUM_DURATION_SECONDS = 480
 
@@ -114,6 +114,7 @@ class ScriptEngine:
                     quality_report.get("profile") == config.script_profile
                     and quality_report.get("status") == "PASS"
                     and hook_report.get("status") == "PASS"
+                    and hook_report.get("version") == 2
                 ):
                     try:
                         self._validate_script(
@@ -353,10 +354,20 @@ class ScriptEngine:
             raise ValueError("RITZZ_HOOK_MIN_SCORE must be a number from 0 to 5.")
 
         source_ids = {source.id for source in research.sources}
+        minimum_hook_words = self._ten_second_hook_word_target(
+            config.words_per_minute
+        )
         report: dict = {
-            "version": 1,
+            "version": 2,
             "topic": script.topic,
             "words_per_minute": config.words_per_minute,
+            "minimum_hook_words": minimum_hook_words,
+            "minimum_hook_seconds": 10,
+            "retention_gate": {
+                "minimum_curiosity": 4,
+                "minimum_open_loop": 4,
+                "minimum_payoff_promise": 4,
+            },
             "threshold": threshold,
             "original_hook": script.hook,
             "selected_hook": script.hook,
@@ -390,8 +401,10 @@ class ScriptEngine:
                             "Use a modern-life connection only when it fits the approved "
                             "topic and evidence; do not force one. "
                             "Provide three distinct, stronger alternatives when the current "
-                            "hook is weak. Each alternative must be 13–38 spoken words and "
-                            "cite source IDs that support its claims. Do not rewrite the "
+                            f"hook is weak. Each alternative must be {minimum_hook_words}–38 "
+                            "spoken words and "
+                            "score at least 4/5 for curiosity, open loop, and payoff promise, "
+                            "and cite source IDs that support its claims. Do not rewrite the "
                             "script or reveal the full answer in the hook."
                         ),
                     },
@@ -429,10 +442,11 @@ class ScriptEngine:
             valid_alternatives = [
                 candidate
                 for candidate in review.alternatives
-                if 13 <= self._count_words(candidate.text) <= 38
-                and candidate.factual_support >= 4
-                and candidate.source_ids
-                and set(candidate.source_ids).issubset(source_ids)
+                if self._hook_meets_retention_gate(
+                    candidate,
+                    minimum_hook_words,
+                    source_ids,
+                )
             ]
             iteration_result = {
                 "iteration": iteration,
@@ -452,11 +466,10 @@ class ScriptEngine:
             report["iterations"].append(iteration_result)
 
             current_is_supported = (
-                current.factual_support >= 4
-                and 13 <= self._count_words(script.hook) <= 38
-                and (
-                    not current.source_ids
-                    or set(current.source_ids).issubset(source_ids)
+                self._hook_meets_retention_gate(
+                    current,
+                    minimum_hook_words,
+                    source_ids,
                 )
             )
             if current.quality_score >= threshold and current_is_supported:
@@ -482,18 +495,21 @@ class ScriptEngine:
                     if candidate.quality_score > current.quality_score
                 ]
             if not qualified_alternatives:
+                if iteration < 2:
+                    continue
                 report["status"] = "FAIL"
                 report["failure"] = (
-                    "No fact-supported alternative improved the hook within "
-                    "the required 13–38 word range."
+                    "No fact-supported alternative met the minimum hook length "
+                    "and curiosity/open-loop/payoff retention gate."
                 )
                 report_path.write_text(
                     json.dumps(report, indent=2, ensure_ascii=False),
                     encoding="utf-8",
                 )
                 raise ValueError(
-                    "Hook quality remained below threshold and no fact-supported "
-                    "13–38-word alternative improved it; inspect hook_evaluation.json."
+                    "Hook quality did not meet the minimum duration and retention gate; "
+                    "no fact-supported alternative passed after two attempts. "
+                    "Inspect hook_evaluation.json."
                 )
             selected = max(
                 qualified_alternatives,
@@ -522,8 +538,25 @@ class ScriptEngine:
             encoding="utf-8",
         )
         raise ValueError(
-            "Hook remained below the configured quality threshold after "
-            "two hook-only improvement attempts; inspect hook_evaluation.json."
+            "Hook remained below the configured quality and retention thresholds "
+            "after two hook-only improvement attempts; inspect hook_evaluation.json."
+        )
+
+    @classmethod
+    def _hook_meets_retention_gate(
+        cls,
+        candidate: HookCandidateScores,
+        minimum_words: int,
+        source_ids: set[str],
+    ) -> bool:
+        return (
+            minimum_words <= cls._count_words(candidate.text) <= 38
+            and candidate.curiosity >= 4
+            and candidate.open_loop >= 4
+            and candidate.payoff_promise >= 4
+            and candidate.factual_support >= 4
+            and bool(candidate.source_ids)
+            and set(candidate.source_ids).issubset(source_ids)
         )
 
     def _review_and_repair_narrative(
@@ -535,6 +568,9 @@ class ScriptEngine:
         config: ProductionConfig,
     ) -> Script:
         profile = get_script_profile(config.script_profile)
+        minimum_hook_words = self._ten_second_hook_word_target(
+            config.words_per_minute
+        )
         section_by_id = {section.section_id: section for section in outline.sections}
         report: dict = {
             "version": 1,
@@ -817,8 +853,10 @@ class ScriptEngine:
                                     "section plus its narrative movement metadata. Do "
                                     "not rewrite other sections, add facts, or alter "
                                     "the section ID. If this is the hook section, provide "
-                                    "a 13–38-word hook that exactly begins the revised "
-                                    "narration and keeps the central mystery open."
+                                    f"a {minimum_hook_words}–38-word hook that exactly "
+                                    "begins the revised narration, scores at least 4/5 "
+                                    "for curiosity, open loop, and payoff promise, and "
+                                    "keeps the central mystery open."
                                 ),
                             },
                             {
@@ -870,9 +908,10 @@ class ScriptEngine:
                     )
                 if section.section_type == "hook":
                     hook_words = self._count_words(revision.hook)
-                    if not 13 <= hook_words <= 38:
+                    if not minimum_hook_words <= hook_words <= 38:
                         raise ValueError(
-                            "Targeted hook revision must contain 13–38 words."
+                            "Targeted hook revision must contain at least "
+                            f"{minimum_hook_words} words for the 10-second opening."
                         )
                     if not revision.narration.lstrip().casefold().startswith(
                         revision.hook.strip().casefold()
@@ -1742,9 +1781,13 @@ class ScriptEngine:
                 script.sections[0],
             )
             hook_words = cls._count_words(script.hook)
-            if not 13 <= hook_words <= 38:
+            minimum_hook_words = cls._ten_second_hook_word_target(
+                used_words_per_minute
+            )
+            if not minimum_hook_words <= hook_words <= 38:
                 raise ValueError(
-                    f"Profiled script hook has {hook_words} words; expected 13–38."
+                    f"Profiled script hook has {hook_words} words; expected "
+                    f"{minimum_hook_words}–38 for a roughly 10-second opening."
                 )
             if not hook_section.narration.lstrip().casefold().startswith(
                 script.hook.strip().casefold()

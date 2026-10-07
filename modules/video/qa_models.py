@@ -14,7 +14,7 @@ class SceneQAResult(BaseModel):
     status: QAStatus
     narration_image: QAStatus
     narration_description: QAStatus
-    editorial_context: QAStatus
+    editorial_context: QAStatus = "PASS"
     editorial_text: QAStatus = "PASS"
     editorial_style: QAStatus = "PASS"
     editorial_placement: QAStatus = "PASS"

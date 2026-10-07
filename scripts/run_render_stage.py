@@ -47,7 +47,7 @@ def _validate_production_render_format(probe: dict[str, object]) -> None:
 def _reject_semantic_qa_fail(status: str) -> None:
     if status == "FAIL":
         raise RuntimeError(
-            "Rendered-video semantic QA found a clear scene/narration or editorial mismatch."
+            "Rendered-video semantic QA found a clear scene/narration mismatch."
         )
 
 

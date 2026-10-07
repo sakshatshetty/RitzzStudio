@@ -156,7 +156,7 @@ def test_generate_with_mocked_request(
             "similarity_boost": 0.75,
             "style": 0.0,
             "use_speaker_boost": True,
-            "speed": 0.95,
+            "speed": 0.9,
         }
 
         return MockResponse(
@@ -234,7 +234,7 @@ def test_generate_sends_overridden_voice_settings(monkeypatch, tmp_path):
             "similarity_boost": 0.75,
             "style": 0.0,
             "use_speaker_boost": True,
-            "speed": 0.95,
+            "speed": 0.9,
         }
         return MockResponse(response_data)
 

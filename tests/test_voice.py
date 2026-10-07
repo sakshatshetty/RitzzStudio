@@ -24,7 +24,7 @@ def test_voice_generation_request():
     assert request.voice_settings.similarity_boost == 0.75
     assert request.voice_settings.style == 0.0
     assert request.voice_settings.use_speaker_boost is True
-    assert request.voice_settings.speed == 0.95
+    assert request.voice_settings.speed == 0.9
 
 
 def test_voice_generation_request_custom_model():

@@ -16,8 +16,8 @@ Borrow the clarity and visual storytelling, not the reference's exact character,
 - Make settings specific enough to ground the scene. Use simple foreground, middle-ground, and background layers, with restrained colors and strong value contrast so the action reads at phone size.
 - Show a concept visually where possible: contrast old/new, small/large, cause/effect, or problem/solution in a single understandable composition.
 - Compose for a 16:9 frame, keep important subjects away from the edges, and leave breathing room around faces, hands, and the action.
-- Keep editorial callouts as currently specified: when warranted, embed one relevant uppercase word in the generated illustration. Do not turn them into subtitles or multi-word in-scene headlines.
-- Build scene changes around narration beats. Keep the current static-image, hard-cut approach; use a new composition when the narrated idea changes, aiming near the existing roughly 3-second visual cadence without cutting through one idea just to meet a timer.
+- Keep video artwork entirely free of editorial words, labels, captions, or other intentional text. Put all text treatment in the separate thumbnail.
+- Build scene changes around actual narration timestamps. Keep static images and hard cuts, use complete-word boundaries, prefer sentence or clause ends and meaningful visual changes, and target 3–4 seconds per image without splitting an idea unnecessarily.
 
 ## RITZZ-compatible implementation ideas
 
@@ -25,7 +25,7 @@ Borrow the clarity and visual storytelling, not the reference's exact character,
 2. Add per-scene composition direction (subject, action, focal prop, setting, and optional contrast) so the generator does not repeat one centered-character layout.
 3. Generate and inspect a small representative pilot set before adopting this direction broadly. Check that scenes remain distinct, narration-relevant, legible at small size, and consistent in character/style.
 4. Keep motion, zooms, pans, transitions, and multi-word editorial text out of scope. They are not necessary to adopt the observed illustration language and conflict with the current production decisions.
-5. Treat the reference's title treatment as thumbnail inspiration only; it does not change RITZZ's one-word in-scene editorial-callout rule.
+5. Use the reference's large, bright outlined hook as thumbnail inspiration only; do not carry its lettering into video frames.
 
 ## Not assessed
 

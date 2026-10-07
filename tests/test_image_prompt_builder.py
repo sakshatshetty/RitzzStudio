@@ -222,7 +222,7 @@ def test_prompt_contains_camera_motion() -> None:
     assert "Static camera; the video uses hard cuts between still images." in prompt
 
 
-def test_prompt_adds_editorial_text_when_present() -> None:
+def test_legacy_editorial_text_is_ignored_in_video_image_prompts() -> None:
     builder = ImagePromptBuilder()
 
     scene = sample_scene()
@@ -231,17 +231,12 @@ def test_prompt_adds_editorial_text_when_present() -> None:
 
     prompt = builder.build(scene)
 
-    assert "exact editorial word MYSTERY" in prompt
-    assert "intentionally part of the generated image" in prompt
-    assert "Do not add any other letters" in prompt
-    assert "Reserve the lower-left negative space" in prompt
-    assert "clean, uncluttered plane" in prompt
-    assert "Keep all faces, eyes, hands, important objects, evidence" in prompt
-    assert "recompose it while preserving the same narrative meaning" in prompt
-    assert prompt.count("MYSTERY") == 1
+    assert "MYSTERY" not in prompt
+    assert "NO TEXT." in prompt
+    assert "DO NOT DRAW EDITORIAL CALLOUT TEXT." in prompt
 
 
-def test_editorial_prompt_protects_visual_contract_elements():
+def test_legacy_editorial_fields_do_not_override_visual_contract():
     scene = sample_scene().model_copy(
         update={
             "text_overlay": "SURVIVAL",
@@ -261,10 +256,10 @@ def test_editorial_prompt_protects_visual_contract_elements():
 
     prompt = ImagePromptBuilder().build(scene)
 
-    assert "middle-right negative space" in prompt
-    assert "A sailor's face and hand; raises a lantern; wooden lantern; ship wheel" in prompt
-    assert "Do not place lettering on, across, behind" in prompt
-    assert "Render the exact editorial word SURVIVAL" in prompt
+    assert "SCENE ACTION (WHAT HAPPENS): raises a lantern" in prompt
+    assert "REQUIRED OBJECTS: wooden lantern, ship wheel" in prompt
+    assert "SURVIVAL" not in prompt
+    assert "NO TEXT." in prompt
 
 
 def test_editorial_position_map_includes_all_clear_safe_zones():
@@ -281,7 +276,7 @@ def test_editorial_position_map_includes_all_clear_safe_zones():
     }
 
 
-def test_editorial_text_is_included_in_image_generation_prompt() -> None:
+def test_legacy_editorial_text_does_not_change_image_generation_prompt() -> None:
     builder = ImagePromptBuilder()
 
     scene = sample_scene()
@@ -289,11 +284,11 @@ def test_editorial_text_is_included_in_image_generation_prompt() -> None:
 
     prompt = builder.build(scene)
 
-    assert "exact editorial word WILDSIZE" in prompt
-    assert "intentionally part of the generated image" in prompt
+    assert "WILDSIZE" not in prompt
+    assert "NO TEXT." in prompt
 
 
-def test_editorial_text_does_not_change_the_colored_illustration_style() -> None:
+def test_legacy_editorial_text_preserves_colored_illustration_style() -> None:
     builder = ImagePromptBuilder()
 
     scene = sample_scene()
@@ -301,8 +296,8 @@ def test_editorial_text_does_not_change_the_colored_illustration_style() -> None
 
     prompt = builder.build(scene)
 
-    assert "Keep the illustration fully colored" in prompt
-    assert "normal RITZZ flat-color palette" in prompt
+    assert "flat colors" in prompt
+    assert "MYSTERY" not in prompt
 
 
 def test_prompt_includes_project_world_and_scene_contract() -> None:
@@ -353,12 +348,12 @@ def test_prompt_includes_project_world_and_scene_contract() -> None:
     assert "No powered machinery or modern materials" in prompt
     assert "No electric lighting." in prompt
     assert "SCENE PURPOSE: SHOW_PROCESS" in prompt
-    assert "SCENE ACTION: raises a wooden lantern" in prompt
+    assert "SCENE ACTION (WHAT HAPPENS): raises a wooden lantern" in prompt
     assert "REQUIRED OBJECTS: wooden lantern" in prompt
     assert "FORBIDDEN OBJECTS: electric lamp" in prompt
 
 
-def test_editorial_text_prompt_allows_only_the_assigned_word() -> None:
+def test_legacy_editorial_text_is_not_allowed_in_video_artwork() -> None:
     builder = ImagePromptBuilder()
 
     scene = sample_scene()
@@ -366,11 +361,11 @@ def test_editorial_text_prompt_allows_only_the_assigned_word() -> None:
 
     prompt = builder.build(scene)
 
-    assert "exact editorial word MYSTERY" in prompt
-    assert "Do not add any other letters, words, captions, labels, or typography." in prompt
+    assert "MYSTERY" not in prompt
+    assert "NO TEXT." in prompt
 
 
-def test_editorial_text_prompt_preserves_negative_space_for_callout() -> None:
+def test_legacy_editorial_position_does_not_change_composition() -> None:
     builder = ImagePromptBuilder()
 
     scene = sample_scene()
@@ -379,11 +374,11 @@ def test_editorial_text_prompt_preserves_negative_space_for_callout() -> None:
 
     prompt = builder.build(scene)
 
-    assert "lower-left negative space" in prompt
-    assert "exact editorial word MYSTERY" in prompt
+    assert "lower-left negative space" not in prompt
+    assert "MYSTERY" not in prompt
 
 
-def test_editorial_text_avoids_graphic_text_elements() -> None:
+def test_legacy_editorial_text_is_not_requested_as_a_graphic_element() -> None:
     builder = ImagePromptBuilder()
 
     scene = sample_scene()
@@ -391,10 +386,11 @@ def test_editorial_text_avoids_graphic_text_elements() -> None:
 
     prompt = builder.build(scene)
 
-    assert "Do not add any other letters" in prompt
+    assert "NO TEXT." in prompt
+    assert "LARGER" not in prompt
 
 
-def test_editorial_text_changes_negative_text_instruction() -> None:
+def test_legacy_editorial_text_does_not_change_negative_text_instruction() -> None:
     builder = ImagePromptBuilder()
 
     scene = sample_scene()
@@ -403,9 +399,10 @@ def test_editorial_text_changes_negative_text_instruction() -> None:
     prompt = builder.build(scene)
 
     assert "Avoid photorealism" in prompt
+    assert "NO TEXT." in prompt
 
 
-def test_editorial_text_is_trimmed() -> None:
+def test_legacy_editorial_text_is_not_trimmed_into_a_video_overlay() -> None:
     builder = ImagePromptBuilder()
 
     scene = sample_scene()
@@ -415,10 +412,10 @@ def test_editorial_text_is_trimmed() -> None:
 
     prompt = builder.build(scene)
 
-    assert "exact editorial word REASON" in prompt
+    assert "REASON" not in prompt
 
 
-def test_editorial_text_is_part_of_generated_image() -> None:
+def test_video_image_prompt_never_embeds_legacy_editorial_text() -> None:
     builder = ImagePromptBuilder()
 
     scene = sample_scene()
@@ -426,7 +423,8 @@ def test_editorial_text_is_part_of_generated_image() -> None:
 
     prompt = builder.build(scene)
 
-    assert "intentionally part of the generated image" in prompt
+    assert "MYSTERY" not in prompt
+    assert "NO TEXT." in prompt
 
 
 def test_prompt_contains_simple_visual_direction() -> None:
@@ -469,10 +467,7 @@ def test_prompt_does_not_turn_scene_into_infographic() -> None:
         sample_scene()
     )
 
-    assert (
-        "Do not turn the scene into an infographic."
-        in prompt
-    )
+    assert "NO INFOGRAPHICS." in prompt
 
 
 @pytest.mark.parametrize(

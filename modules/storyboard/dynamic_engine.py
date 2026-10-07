@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from modules.image.prompt_builder import ImagePromptBuilder
+from modules.project.config import ProductionConfig
 from modules.storyboard.editorial_planner import (
     EditorialContext,
     EditorialDecision,
@@ -26,25 +27,25 @@ class DynamicStoryboardEngine:
     Dynamic RITZZ storyboard engine.
 
     Production rules:
-    - 1–3 second scenes.
+    - 3–4 second scenes.
     - Dynamic pacing.
     - Static camera.
     - Hard cuts.
-    - Contextual editorial callouts target roughly every 3–4 scenes, with
-      an explicit reason when a scene does not warrant one.
-    - Exactly one word for production editorial text.
+    - No editorial text is embedded in video images.
     - Exact target duration.
     """
 
     WORDS_PER_SECOND = 2.4
 
-    MIN_SCENE_DURATION = 1.0
-    MAX_SCENE_DURATION = 3.0
+    MIN_SCENE_DURATION = ProductionConfig().scene_minimum_duration_seconds
+    MAX_SCENE_DURATION = ProductionConfig().scene_maximum_duration_seconds
 
     MAX_WORDS_PER_BEAT = 7
     MIN_WORDS_PER_BEAT = 2
 
-    DEFAULT_TARGET_SCENE_DURATION = 2.0
+    DEFAULT_TARGET_SCENE_DURATION = (
+        MIN_SCENE_DURATION + MAX_SCENE_DURATION
+    ) / 2
 
     MIN_EDITORIAL_GAP_SCENES = 3
     MAX_EDITORIAL_GAP_SCENES = 4
@@ -295,10 +296,18 @@ class DynamicStoryboardEngine:
 
     def __init__(
         self,
-        target_scene_duration_seconds: float = DEFAULT_TARGET_SCENE_DURATION,
+        target_scene_duration_seconds: float | None = None,
         editorial_planner: EditorialTextPlanner | None = None,
         prompt_builder: ImagePromptBuilder | None = None,
+        production_config: ProductionConfig | None = None,
     ) -> None:
+        config = production_config or ProductionConfig()
+        self.MIN_SCENE_DURATION = config.scene_minimum_duration_seconds
+        self.MAX_SCENE_DURATION = config.scene_maximum_duration_seconds
+        if target_scene_duration_seconds is None:
+            target_scene_duration_seconds = (
+                self.MIN_SCENE_DURATION + self.MAX_SCENE_DURATION
+            ) / 2
         if target_scene_duration_seconds <= 0:
             raise ValueError(
                 "target_scene_duration_seconds must be greater than zero."
@@ -376,10 +385,6 @@ class DynamicStoryboardEngine:
         scenes = self._build_dynamic_scenes(
             selected_beats,
             topic=source_storyboard.topic,
-        )
-
-        scenes = self._apply_editorial_callouts(
-            scenes
         )
 
         scenes = self._fit_total_duration(
@@ -1542,7 +1547,7 @@ class DynamicStoryboardEngine:
             ):
                 raise ValueError(
                     "Final duration correction would violate "
-                    "the 1–3 second scene duration limits."
+                    "the 3–4 second scene duration limits."
                 )
 
             fitted[-1] = last.model_copy(

@@ -1,3 +1,4 @@
+import re
 from itertools import pairwise
 
 import pytest
@@ -23,10 +24,29 @@ def make_storyboard(lines, descriptions):
 
 
 def alignment_for(text, audio_duration, interval=0.1):
-    starts, ends = [], []
-    for index in range(len(text)):
-        starts.append(index * interval)
-        ends.append((index + 1) * interval)
+    del interval
+    starts = [0.0] * len(text)
+    ends = [0.0] * len(text)
+    words = list(re.finditer(r"\S+", text))
+    word_duration = audio_duration / len(words)
+    for word_index, word in enumerate(words):
+        word_start = word_index * word_duration
+        character_duration = word_duration / len(word.group())
+        for offset, character_index in enumerate(range(word.start(), word.end())):
+            starts[character_index] = word_start + offset * character_duration
+            ends[character_index] = word_start + (offset + 1) * character_duration
+    for whitespace in re.finditer(r"\s+", text):
+        next_word_index = next(
+            (
+                index
+                for index, word in enumerate(words)
+                if word.start() >= whitespace.end()
+            ),
+            len(words),
+        )
+        boundary = next_word_index * word_duration
+        for character_index in range(whitespace.start(), whitespace.end()):
+            starts[character_index] = ends[character_index] = boundary
     return NarrationAlignment(characters=list(text), character_start_times_seconds=starts,
         character_end_times_seconds=ends, audio_duration_seconds=audio_duration)
 
@@ -37,14 +57,14 @@ def test_coalesces_fragments_of_same_narrative_and_uses_audio_times():
     text = " ".join(lines)
     timed = AudioTimedStoryboardEngine().build(
         storyboard,
-        alignment_for(text, 10, interval=10 / len(text)),
+        alignment_for(text, 13, interval=13 / len(text)),
     )
     assert len(timed.scenes) > 1
     assert " ".join(scene.narration for scene in timed.scenes) == " ".join(
         part.strip() for part in lines
     )
     assert timed.scenes[0].start_seconds == 0
-    assert all(1.8 <= scene.duration_seconds <= 4 for scene in timed.scenes)
+    assert all(3 <= scene.duration_seconds <= 4 for scene in timed.scenes)
     assert all(
         scene.timing_boundary
         in {"sentence", "clause", "pause", "word_fallback"}
@@ -60,7 +80,7 @@ def test_visual_change_respects_maximum_hold_and_keeps_complete_words():
     text = " ".join(lines)
     timed = AudioTimedStoryboardEngine().build(
         storyboard,
-        alignment_for(text, 7, interval=7 / len(text)),
+        alignment_for(text, 7.2, interval=7.2 / len(text)),
     )
     assert len(timed.scenes) == 2
     assert " ".join(" ".join(scene.narration for scene in timed.scenes).split()) == (
@@ -70,6 +90,17 @@ def test_visual_change_respects_maximum_hold_and_keeps_complete_words():
     assert all(scene.narration[-1].isalnum() or scene.narration[-1] in ".!?,;:" for scene in timed.scenes)
     assert timed.scenes[1].start_seconds < 4
     assert timed.scenes[0].duration_seconds == timed.scenes[1].start_seconds
+
+
+def test_audio_timed_storyboard_fails_when_word_boundaries_cannot_meet_scene_bounds():
+    line = "A simple visual test sentence."
+    storyboard = make_storyboard([line], ["A simple visual"])
+
+    with pytest.raises(ValueError, match="cannot be grouped"):
+        AudioTimedStoryboardEngine().build(
+            storyboard,
+            alignment_for(line, 5),
+        )
 
 
 def test_production_callouts_are_one_word_and_spaced_three_or_four_scenes_apart():
@@ -122,7 +153,7 @@ def test_production_callouts_are_one_word_and_spaced_three_or_four_scenes_apart(
     )
 
 
-def test_audio_timed_build_assigns_callouts_after_final_scene_grouping():
+def test_audio_timed_build_never_assigns_video_editorial_callouts():
     callout_terms = [
         "evidence", "mystery", "myth", "history", "symbol", "vision",
         "adaptation", "survival", "culture", "theory", "proof", "legend",
@@ -166,18 +197,10 @@ def test_audio_timed_build_assigns_callouts_after_final_scene_grouping():
     timed = AudioTimedStoryboardEngine().build(storyboard, alignment)
 
     assert len(timed.scenes) == 12
-    positions = [
-        index for index, scene in enumerate(timed.scenes)
-        if scene.text_overlay
-    ]
-    assert positions
-    assert positions[0] == 2
-    assert all(3 <= right - left <= 4 for left, right in pairwise(positions))
+    assert not any(scene.text_overlay for scene in timed.scenes)
     assert all(
-        len(timed.scenes[index].text_overlay.split()) == 1
-        and timed.scenes[index].text_overlay.isupper()
-        and len(timed.scenes[index].text_overlay) <= 20
-        for index in positions
+        "DO NOT DRAW EDITORIAL CALLOUT TEXT." in scene.image_prompt
+        for scene in timed.scenes
     )
 
 
@@ -190,10 +213,10 @@ def test_same_visual_idea_does_not_exceed_four_seconds():
     text = " ".join(lines)
     timed = AudioTimedStoryboardEngine().build(
         storyboard,
-        alignment_for(text, 10, interval=10 / len(text)),
+        alignment_for(text, 13, interval=13 / len(text)),
     )
     assert len(timed.scenes) >= 3
-    assert all(scene.duration_seconds <= 4 for scene in timed.scenes)
+    assert all(3 <= scene.duration_seconds <= 4 for scene in timed.scenes)
     assert all(scene.timing_boundary in {"sentence", "clause", "pause", "word_fallback"} for scene in timed.scenes[1:])
     assert all(scene.transition == "cut" for scene in timed.scenes)
 
@@ -237,8 +260,8 @@ def test_sentence_end_and_visual_idea_change_create_a_scene():
         storyboard,
         alignment_for(
             " ".join(lines),
-            8,
-            interval=8 / len(" ".join(lines)),
+            7.5,
+            interval=7.5 / len(" ".join(lines)),
         ),
     )
 
@@ -267,8 +290,8 @@ def test_section_boilerplate_does_not_hide_a_visual_idea_change():
         storyboard,
         alignment_for(
             " ".join(lines),
-            8,
-            interval=8 / len(" ".join(lines)),
+            7.5,
+            interval=7.5 / len(" ".join(lines)),
         ),
     )
 
@@ -281,23 +304,25 @@ def test_natural_pause_can_create_boundary_without_sentence_punctuation():
     storyboard = make_storyboard(lines, ["A sailor waits", "A cannon fires"])
     text = " ".join(lines)
     pause_start = text.index("then")
-    starts = []
-    ends = []
-    for index in range(len(text)):
-        start = index * 0.04 + (1.4 if index >= pause_start else 0)
-        starts.append(start)
-        ends.append(start + 0.02)
+    interval = 0.18
     alignment = NarrationAlignment(
         characters=list(text),
-        character_start_times_seconds=starts,
-        character_end_times_seconds=ends,
-        audio_duration_seconds=4.6,
+        character_start_times_seconds=[
+            index * interval + (0.4 if index >= pause_start else 0)
+            for index in range(len(text))
+        ],
+        character_end_times_seconds=[
+            index * interval + (0.4 if index >= pause_start else 0) + 0.1
+            for index in range(len(text))
+        ],
+        audio_duration_seconds=len(text) * interval + 0.4,
     )
 
     timed = AudioTimedStoryboardEngine().build(storyboard, alignment)
 
     assert len(timed.scenes) == 2
     assert timed.scenes[0].narration == lines[0]
+    assert all(3 <= scene.duration_seconds <= 4 for scene in timed.scenes)
 
 
 def test_adjacent_same_visual_beats_are_merged_and_scene_duration_stays_safe():
@@ -318,10 +343,8 @@ def test_adjacent_same_visual_beats_are_merged_and_scene_duration_stays_safe():
     assert len(timed.scenes) >= 2
     assert all(scene.duration_seconds <= 4 for scene in timed.scenes)
     assert " ".join(scene.narration for scene in timed.scenes) == " ".join(lines)
-    if timed.scenes[0].text_overlay:
-        assert f"exact editorial word {timed.scenes[0].text_overlay}" in timed.scenes[0].image_prompt
-    else:
-        assert "DO NOT DRAW EDITORIAL CALLOUT TEXT." in timed.scenes[0].image_prompt
+    assert not any(scene.text_overlay for scene in timed.scenes)
+    assert all("NO TEXT." in scene.image_prompt for scene in timed.scenes)
 
 
 def test_repeated_composition_gets_a_meaningful_variation_prompt():
@@ -418,11 +441,11 @@ def test_review_failure_blocks_approval_but_review_remains_reviewable():
 
 def test_audio_timed_storyboard_save_records_callout_review(tmp_path):
     storyboard = make_storyboard(["The pirate waits."], ["A pirate on deck"])
-    storyboard.scenes[0].duration_seconds = 2
+    storyboard.scenes[0].duration_seconds = 4
     storyboard.scenes[0].text_overlay = "THE MYTH"
     storyboard.scenes[0].camera_motion = "slow_zoom_in"
     storyboard.scenes[0].transition = "fade"
-    storyboard.total_scene_duration_seconds = 2
+    storyboard.total_scene_duration_seconds = 4
     output = tmp_path / "storyboard" / "storyboard_audio_timed.json"
 
     AudioTimedStoryboardEngine.save_storyboard(storyboard, output)
@@ -432,9 +455,8 @@ def test_audio_timed_storyboard_save_records_callout_review(tmp_path):
     assert attempts[0].checks["timeline_coverage"] == "PASS"
     assert attempts[0].checks["static_camera"] == "FAIL"
     assert attempts[0].checks["hard_cuts"] == "FAIL"
-    assert attempts[0].metrics["total_scenes"] == 1
-    assert attempts[0].metrics["malformed_callouts"] == 1
-    assert attempts[0].details["scene_001"] == "malformed_callout"
+    assert "total_scenes" not in attempts[0].metrics
+    assert "editorial_callouts" not in attempts[0].checks
     repaired = Storyboard.model_validate_json(output.read_text())
     assert repaired.scenes[0].camera_motion == "static"
     assert repaired.scenes[0].transition == "cut"

@@ -14,8 +14,8 @@ class ImagePromptBuilder:
     - Consistent characters within a video
     - Simple backgrounds
     - Minimal props
-    - Optional deterministic editorial-word composition
-    - No accidental text when editorial text is absent
+    - Historically grounded, unambiguous visual communication
+    - No intentional text in video artwork
     """
 
     RITZZ_HAND_DRAWN_STYLE = (
@@ -60,20 +60,13 @@ class ImagePromptBuilder:
     )
 
     RITZZ_STRICT_NO_TEXT = (
-        "NO TEXT. "
-        "DO NOT DRAW EDITORIAL CALLOUT TEXT. "
-        "NO TITLES. "
-        "NO HEADLINES. "
-        "NO LABELS. "
-        "NO ARROWS. "
-        "NO CAPTIONS. "
-        "NO SUBTITLES. "
-        "NO SPEECH BUBBLES. "
-        "NO INFOGRAPHICS. "
-        "NO DIAGRAMS. "
-        "NO TIMELINES. "
-        "NO ANNOTATIONS. "
-        "NO EXPLANATORY WRITING."
+        "NO TEXT. DO NOT DRAW EDITORIAL CALLOUT TEXT. NO TITLES. NO HEADLINES. "
+        "NO LABELS. NO ARROWS. NO CAPTIONS. NO SUBTITLES. NO SPEECH BUBBLES. "
+        "NO INFOGRAPHICS. NO DIAGRAMS. NO TIMELINES. NO ANNOTATIONS. "
+        "NO EXPLANATORY WRITING. Do not add editorial words, captions, labels, "
+        "subtitles, callout text, UI text, decorative typography, titles, "
+        "headlines, arrows, speech bubbles, infographics, diagrams, timelines, "
+        "annotations, or explanatory writing. Keep the artwork purely visual."
     )
 
     RITZZ_NEGATIVE_STYLE_WITH_EDITORIAL_TEXT = (
@@ -152,26 +145,17 @@ class ImagePromptBuilder:
         self,
         scene: StoryboardScene,
     ) -> str:
-        """
-        Build a production-ready image prompt.
-        """
-
-        parts: list[str] = [
-            self.base_style,
-            "Landscape 16:9 composition.",
+        """Build a structured, production-ready prompt for one visual scene."""
+        parts = [
+            f"RITZZ VISUAL STYLE: {self.base_style}",
+            "OUTPUT: landscape 16:9 still illustration for an educational explainer.",
         ]
-
         if self.character_profile:
             parts.append(
-                "Character design reference for this video: "
-                f"{self.character_profile}"
+                "CHARACTER CONTINUITY: "
+                f"{self.character_profile}. Preserve recognizable identity, clothing, "
+                "and proportions across scenes while changing action and composition."
             )
-
-            parts.append(
-                "Keep this character design consistent "
-                "throughout this video."
-            )
-
         if self.visual_world:
             parts.append(
                 "PROJECT VISUAL WORLD: "
@@ -179,12 +163,12 @@ class ImagePromptBuilder:
             )
             if self.visual_world.historical:
                 parts.append(
-                    "HISTORICAL / TECHNOLOGY CONSTRAINT: "
-                    f"{self.visual_world.technology_ceiling} "
-                    "Historical accuracy is mandatory. Do not introduce technology, "
-                    "objects, architecture, infrastructure, clothing, tools, "
-                    "transportation, or materials belonging to a later period unless "
-                    "the scene explicitly depicts a later development."
+                    "HISTORICAL CONTEXT AND TECHNOLOGY CEILING: "
+                    f"{self.visual_world.technology_ceiling} Use only period-, "
+                    "geography-, and society-appropriate clothing, architecture, "
+                    "materials, tools, transport, and technology. Do not introduce "
+                    "later-period or modern objects unless the scene explicitly "
+                    "depicts a later development."
                 )
             if self.visual_world.forbidden_visuals:
                 parts.append(
@@ -195,25 +179,27 @@ class ImagePromptBuilder:
                     )
                 )
 
-        if scene.visual_contract:
-            contract = scene.visual_contract
+        contract = scene.visual_contract
+        if contract:
             parts.extend(
                 [
                     f"SCENE PURPOSE: {contract.purpose}",
-                    f"SCENE SUBJECT: {contract.subject}",
-                    f"SCENE ACTION: {contract.action}",
-                    f"SCENE ENVIRONMENT: {contract.environment}",
+                    f"SCENE SUBJECT (WHO/WHAT): {contract.subject}",
+                    f"SCENE ACTION (WHAT HAPPENS): {contract.action}",
+                    f"SCENE ENVIRONMENT (WHERE): {contract.environment}",
                     f"SCENE HISTORICAL CONTEXT: {contract.historical_context}",
+                    (
+                        "SEMANTIC DISAMBIGUATION: "
+                        f"{contract.ambiguity_resolution}"
+                    ),
                     "REQUIRED OBJECTS: "
                     + (", ".join(contract.required_objects) or "None specified."),
                     "FORBIDDEN OBJECTS: "
                     + (", ".join(contract.forbidden_objects) or "None specified."),
-                    "AMBIGUITY RESOLUTION: "
-                    f"{contract.ambiguity_resolution}",
-                    "CONTINUITY REQUIREMENTS: "
+                    "CONTINUITY: "
                     + (
                         "; ".join(contract.continuity_requirements)
-                        or "Maintain the project world and recurring identities."
+                        or "Maintain established recurring identities and project world."
                     ),
                 ]
             )
@@ -224,101 +210,43 @@ class ImagePromptBuilder:
                 )
 
         if scene.visual_description:
-            parts.append(
-                f"Scene: {scene.visual_description}"
-            )
-
+            parts.append(f"Scene: {scene.visual_description}")
         if scene.character_action:
-            parts.append(
-                f"Action: {scene.character_action}"
-            )
-
+            parts.append(f"Action: {scene.character_action}")
         if scene.background:
-            parts.append(
-                f"Background: {scene.background}"
-            )
-
+            parts.append(f"Background: {scene.background}")
         if scene.props:
+            parts.append(f"Props: {', '.join(scene.props[:3])}")
+        if self.character_profile:
             parts.append(
-                f"Props: {', '.join(scene.props[:3])}"
+                "Character design reference for this video: "
+                f"{self.character_profile}. Keep this character design consistent "
+                "throughout this video."
             )
 
-        editorial_word = scene.text_overlay.strip()
-        has_editorial_text = bool(editorial_word)
-
-        if has_editorial_text:
-            position = self.EDITORIAL_POSITION_MAP.get(
-                scene.callout_position or "",
-                "a clear negative-space plane chosen away from the main action",
-            )
-            protected_elements = [
-                item
-                for item in (
-                    scene.visual_contract.subject
-                    if scene.visual_contract
-                    else "",
-                    scene.visual_contract.action
-                    if scene.visual_contract
-                    else "",
-                    *(
-                        scene.visual_contract.required_objects
-                        if scene.visual_contract
-                        else []
-                    ),
-                    *scene.props,
-                )
-                if item
+        parts.extend(
+            [
+                (
+                    "Landscape 16:9 composition. COMPOSITION: Communicate one coherent idea immediately. Use one "
+                    "large, clearly silhouetted focal subject; make the main action "
+                    "obvious; show enough setting to establish where it happens; avoid "
+                    "tiny subjects, competing focal points, and unnecessary empty scenery."
+                ),
+                (
+                    "LIGHTING AND COLOR: Use simple, readable, context-appropriate lighting "
+                    "and a small, coherent flat-color palette."
+                ),
+                (
+                    "SIMPLICITY AND READABILITY: Keep the scene visually simple. Use one "
+                    "main visual idea. Use one main character whenever possible. Use only "
+                    "the necessary props. Keep the background simple and secondary. Use "
+                    "expressive poses, clear shapes, and prefer "
+                    "visual communication over decorative detail."
+                ),
+                self.RITZZ_STRICT_NO_TEXT,
+                "NEGATIVE CONSTRAINTS: "
+                + self.RITZZ_NEGATIVE_STYLE,
+                "Static camera; the video uses hard cuts between still images.",
             ]
-            protected_text = (
-                "; ".join(dict.fromkeys(protected_elements))
-                or "the face, character, primary action, and important scene objects"
-            )
-            parts.append(
-                f"EDITORIAL COMPOSITION REQUIREMENT: Reserve the {position} as a "
-                "clean, uncluttered plane with enough open area for one large word. "
-                "Compose the subject and action away from this reserved plane. "
-                "Keep all faces, eyes, hands, important objects, evidence, and the "
-                "primary action completely outside it. Do not place lettering on, "
-                "across, behind, or partly outside any protected visual element. "
-                "Protected scene elements: "
-                f"{protected_text}. The illustration should naturally contain this "
-                "open space; if the described composition is crowded, recompose it "
-                "while preserving the same narrative meaning."
-            )
-            parts.append(
-                f"Render the exact editorial word {editorial_word} inside the illustration. "
-                "The word must be uppercase, spelled exactly as provided, clearly legible, "
-                f"and contained entirely within the reserved {position}. "
-                "This word is intentionally part of the generated image, not a subtitle. "
-                "Do not add any other letters, words, captions, labels, or typography."
-            )
-            parts.append(self.RITZZ_EDITORIAL_TEXT_STYLE)
-            parts.append(
-                self.EDITORIAL_ILLUSTRATION_COLOR_INSTRUCTION
-            )
-
-        parts.append(
-            "Keep the scene visually simple. "
-            "Use one main visual idea. "
-            "Use one main character whenever possible. "
-            "Use only the necessary props. "
-            "Keep the background simple and secondary. "
-            "Do not turn the scene into an infographic."
         )
-
-        parts.append("Static camera; the video uses hard cuts between still images.")
-
-        if has_editorial_text:
-            parts.append(
-                self.RITZZ_NEGATIVE_STYLE_WITH_EDITORIAL_TEXT
-            )
-        else:
-            parts.append(
-                self.RITZZ_STRICT_NO_TEXT
-            )
-
-            parts.append(
-                self.RITZZ_NEGATIVE_STYLE
-            )
-
         return " ".join(parts)

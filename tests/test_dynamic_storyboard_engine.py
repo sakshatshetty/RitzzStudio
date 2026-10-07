@@ -108,7 +108,7 @@ def test_dynamic_storyboard_creates_scenes() -> None:
     )
 
 
-def test_scene_duration_between_one_and_three_seconds() -> None:
+def test_scene_duration_between_three_and_four_seconds() -> None:
     engine = DynamicStoryboardEngine()
 
     source = create_source_storyboard()
@@ -119,7 +119,7 @@ def test_scene_duration_between_one_and_three_seconds() -> None:
     )
 
     for scene in result.scenes:
-        assert 1.0 <= scene.duration_seconds <= 3.0
+        assert 3.0 <= scene.duration_seconds <= 4.0
 
 
 def test_scene_timeline_is_continuous() -> None:
@@ -202,7 +202,7 @@ def test_transitions_are_hard_cuts() -> None:
     )
 
 
-def test_editorial_text_is_mandatory_every_three_to_four_scenes() -> None:
+def test_pilot_storyboard_video_images_have_no_editorial_text() -> None:
     engine = DynamicStoryboardEngine()
 
     source = create_source_storyboard()
@@ -212,29 +212,7 @@ def test_editorial_text_is_mandatory_every_three_to_four_scenes() -> None:
         target_duration_seconds=12,
     )
 
-    editorial_positions = [
-        index
-        for index, scene in enumerate(
-            result.scenes,
-            start=1,
-        )
-        if scene.text_overlay.strip()
-    ]
-
-    assert editorial_positions
-
-    assert editorial_positions[0] in (
-        3,
-        4,
-    )
-
-    for previous, current in zip(
-        editorial_positions,
-        editorial_positions[1:],
-    ):
-        gap = current - previous
-
-        assert 3 <= gap <= 4
+    assert all(not scene.text_overlay for scene in result.scenes)
 
 
 def test_contextual_editorial_zone_moves_away_from_subject_side():
@@ -254,7 +232,7 @@ def test_contextual_editorial_zone_moves_away_from_subject_side():
     assert DynamicStoryboardEngine._contextual_callout_position(right_subject) == "top_left"
 
 
-def test_editorial_text_has_maximum_four_words() -> None:
+def test_pilot_storyboard_ignores_legacy_editorial_fields() -> None:
     engine = DynamicStoryboardEngine()
 
     source = create_source_storyboard()
@@ -264,11 +242,7 @@ def test_editorial_text_has_maximum_four_words() -> None:
         target_duration_seconds=12,
     )
 
-    for scene in result.scenes:
-        if scene.text_overlay.strip():
-            assert len(
-                scene.text_overlay.split()
-            ) <= 4
+    assert not any(scene.text_overlay for scene in result.scenes)
 
 
 def test_real_reason_generates_contextual_editorial_text() -> None:

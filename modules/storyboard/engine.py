@@ -97,11 +97,8 @@ class StoryboardEngine:
         """
         Build a visual storyboard from the script.
 
-        Editorial text is optional. The storyboard engine does
-        not force text onto every scene and does not automatically
-        convert narration into image text.
-
-        When editorial text is not intentionally assigned,
+        Video images are intentionally free of editorial text.
+        Legacy text fields remain readable for existing storyboards.
         """
 
         config = production_config or ProductionConfig(

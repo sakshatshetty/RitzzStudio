@@ -8,14 +8,14 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from modules.image.character_profile import load_character_profile
+from modules.image.prompt_builder import ImagePromptBuilder
 from modules.project.config import ProductionConfig
 from modules.project.manager import ProjectManager
+from modules.research.models import Research
 from modules.storyboard.engine import StoryboardEngine
 from modules.storyboard.models import Storyboard
 from modules.storyboard.visual_context import VisualContextEngine
-from modules.research.models import Research
-from modules.image.prompt_builder import ImagePromptBuilder
-from modules.image.character_profile import load_character_profile
 from modules.video.audio_timed_storyboard import AudioTimedStoryboardEngine
 from modules.video.sync_engine import VideoSynchronizationEngine
 
@@ -34,7 +34,10 @@ def main() -> int:
 
     config = ProductionConfig.model_validate_json(config_file.read_text(encoding="utf-8"))
     narrative = StoryboardEngine(
-        target_scene_duration_seconds=config.scene_minimum_duration_seconds,
+        target_scene_duration_seconds=(
+            config.scene_minimum_duration_seconds
+            + config.scene_maximum_duration_seconds
+        ) / 2,
     ).create_storyboard(
         script_file=script_file,
         output_file=narrative_file,
@@ -64,7 +67,7 @@ def main() -> int:
             for scene in timed.scenes
         ]
     })
-    AudioTimedStoryboardEngine.save_storyboard(timed, timed_file)
+    AudioTimedStoryboardEngine.save_storyboard(timed, timed_file, config)
     Storyboard.model_validate_json(timed_file.read_text(encoding="utf-8"))
     print(f"Narrative storyboard: {narrative_file} ({len(narrative.scenes)} scenes)")
     print(f"Audio-timed storyboard: {timed_file} ({len(timed.scenes)} scenes)")

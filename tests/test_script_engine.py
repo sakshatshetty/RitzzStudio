@@ -213,8 +213,9 @@ def test_hook_evaluation_selects_supported_candidate_and_writes_report(
         update={"hook": old_hook, "sections": [first_section, *script.sections[1:]]}
     )
     candidate_text = (
-        "One unexpected clue reveals how a familiar object changed the course "
-        "of history."
+        "Without central heating, what actually kept people alive through an "
+        "ancient winter: clothing, shelter, fire, or food stores? The surprising "
+        "answer lies in how these defenses worked together before the cold arrived."
     )
 
     def scores(text: str, score: int, factual_support: int, sources: list[str]):
@@ -630,6 +631,7 @@ def test_script_profile_and_duration_pacing_are_configurable():
     assert "Aim for about 240 spoken words" in system_prompt
     assert "240 spoken words (120 seconds)" in user_prompt
     assert ScriptEngine._calculate_duration_seconds(240, 120) == 120
+    assert ScriptEngine._ten_second_hook_word_target(140) == 30
 
 
 def test_script_input_fingerprint_tracks_profile_pacing_and_research():
@@ -706,6 +708,33 @@ def test_script_validation_rejects_unknown_section_research_sources():
         )
 
 
+def test_profiled_script_validation_rejects_a_short_opening_hook():
+    script = create_script()
+    short_hook = "A short hook."
+    script = script.model_copy(
+        update={
+            "hook": short_hook,
+            "script_profile": "RITZZ_ANCIENT_HUMAN_CURIOSITY",
+            "sections": [
+                script.sections[0].model_copy(
+                    update={"narration": f"{short_hook} Continue the story."}
+                ),
+                script.sections[1],
+            ],
+        }
+    )
+
+    with pytest.raises(ValueError, match="roughly 10-second opening"):
+        ScriptEngine._validate_script(
+            script,
+            create_research(),
+            create_outline(),
+            minimum_word_count=1,
+            minimum_duration_seconds=1,
+            maximum_duration_seconds=600,
+        )
+
+
 def test_script_validation_enforces_configured_maximum_duration():
     script = create_script()
     actual_duration = ScriptEngine._calculate_duration_seconds(
@@ -734,15 +763,15 @@ def test_script_prompts_require_a_ten_second_spoken_hook():
         create_outline(),
     )
 
-    assert "about 25 spoken words (roughly 10 seconds)" in prompt
+    assert "about 30 spoken words (roughly 10 seconds)" in prompt
     assert "first spoken words of the first hook section" in prompt
     assert "Script.hook field must match this opening text" in prompt
     assert "do not repeat the hook later" in prompt
 
 
 def test_ten_second_hook_target_scales_and_stays_within_validation_range():
-    assert ScriptEngine._ten_second_hook_word_target(80) == 14
-    assert ScriptEngine._ten_second_hook_word_target(140) == 25
+    assert ScriptEngine._ten_second_hook_word_target(80) == 17
+    assert ScriptEngine._ten_second_hook_word_target(140) == 30
     assert ScriptEngine._ten_second_hook_word_target(220) == 38
 
 
@@ -762,5 +791,5 @@ def test_script_retry_prompts_preserve_the_ten_second_hook():
         config=ProductionConfig(),
     )
 
-    assert "opening hook of about 25 words" in expansion_prompt
-    assert "opening hook of about 25 words" in contraction_prompt
+    assert "opening hook of about 30 words" in expansion_prompt
+    assert "opening hook of about 30 words" in contraction_prompt

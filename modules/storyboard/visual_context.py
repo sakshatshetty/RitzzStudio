@@ -15,7 +15,6 @@ from modules.storyboard.visual_models import (
     VisualWorldBible,
 )
 
-
 VISUAL_WORLD_BIBLE_FILENAME = "visual_world_bible.json"
 SCENE_VISUAL_CONTRACTS_FILENAME = "scene_visual_contracts.json"
 
@@ -128,7 +127,6 @@ class VisualContextEngine:
                     "character_action": scene.character_action,
                     "background": scene.background,
                     "props": scene.props,
-                    "editorial_word": scene.text_overlay,
                 }
                 for scene in batch
             ]
