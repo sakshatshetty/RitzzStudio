@@ -145,17 +145,22 @@ class ImagePromptBuilder:
         self,
         scene: StoryboardScene,
     ) -> str:
-        """Build a structured, production-ready prompt for one visual scene."""
-        parts = [
-            f"RITZZ VISUAL STYLE: {self.base_style}",
-            "OUTPUT: landscape 16:9 still illustration for an educational explainer.",
+        """Build a production-ready image prompt."""
+        parts: list[str] = [
+            self.base_style,
+            "Landscape 16:9 composition.",
         ]
+
         if self.character_profile:
             parts.append(
-                "CHARACTER CONTINUITY: "
-                f"{self.character_profile}. Preserve recognizable identity, clothing, "
-                "and proportions across scenes while changing action and composition."
+                "Character design reference for this video: "
+                f"{self.character_profile}"
             )
+            parts.append(
+                "Keep this character design consistent "
+                "throughout this video."
+            )
+
         if self.visual_world:
             parts.append(
                 "PROJECT VISUAL WORLD: "
@@ -163,12 +168,12 @@ class ImagePromptBuilder:
             )
             if self.visual_world.historical:
                 parts.append(
-                    "HISTORICAL CONTEXT AND TECHNOLOGY CEILING: "
-                    f"{self.visual_world.technology_ceiling} Use only period-, "
-                    "geography-, and society-appropriate clothing, architecture, "
-                    "materials, tools, transport, and technology. Do not introduce "
-                    "later-period or modern objects unless the scene explicitly "
-                    "depicts a later development."
+                    "HISTORICAL / TECHNOLOGY CONSTRAINT: "
+                    f"{self.visual_world.technology_ceiling} "
+                    "Historical accuracy is mandatory. Do not introduce technology, "
+                    "objects, architecture, infrastructure, clothing, tools, "
+                    "transportation, or materials belonging to a later period unless "
+                    "the scene explicitly depicts a later development."
                 )
             if self.visual_world.forbidden_visuals:
                 parts.append(
@@ -184,22 +189,22 @@ class ImagePromptBuilder:
             parts.extend(
                 [
                     f"SCENE PURPOSE: {contract.purpose}",
-                    f"SCENE SUBJECT (WHO/WHAT): {contract.subject}",
-                    f"SCENE ACTION (WHAT HAPPENS): {contract.action}",
-                    f"SCENE ENVIRONMENT (WHERE): {contract.environment}",
+                    f"SCENE SUBJECT: {contract.subject}",
+                    f"SCENE ACTION: {contract.action}",
+                    f"SCENE ENVIRONMENT: {contract.environment}",
                     f"SCENE HISTORICAL CONTEXT: {contract.historical_context}",
-                    (
-                        "SEMANTIC DISAMBIGUATION: "
-                        f"{contract.ambiguity_resolution}"
-                    ),
                     "REQUIRED OBJECTS: "
                     + (", ".join(contract.required_objects) or "None specified."),
                     "FORBIDDEN OBJECTS: "
                     + (", ".join(contract.forbidden_objects) or "None specified."),
-                    "CONTINUITY: "
+                    (
+                        "AMBIGUITY RESOLUTION: "
+                        f"{contract.ambiguity_resolution}"
+                    ),
+                    "CONTINUITY REQUIREMENTS: "
                     + (
                         "; ".join(contract.continuity_requirements)
-                        or "Maintain established recurring identities and project world."
+                        or "Maintain the project world and recurring identities."
                     ),
                 ]
             )
@@ -217,36 +222,18 @@ class ImagePromptBuilder:
             parts.append(f"Background: {scene.background}")
         if scene.props:
             parts.append(f"Props: {', '.join(scene.props[:3])}")
-        if self.character_profile:
-            parts.append(
-                "Character design reference for this video: "
-                f"{self.character_profile}. Keep this character design consistent "
-                "throughout this video."
-            )
 
-        parts.extend(
-            [
-                (
-                    "Landscape 16:9 composition. COMPOSITION: Communicate one coherent idea immediately. Use one "
-                    "large, clearly silhouetted focal subject; make the main action "
-                    "obvious; show enough setting to establish where it happens; avoid "
-                    "tiny subjects, competing focal points, and unnecessary empty scenery."
-                ),
-                (
-                    "LIGHTING AND COLOR: Use simple, readable, context-appropriate lighting "
-                    "and a small, coherent flat-color palette."
-                ),
-                (
-                    "SIMPLICITY AND READABILITY: Keep the scene visually simple. Use one "
-                    "main visual idea. Use one main character whenever possible. Use only "
-                    "the necessary props. Keep the background simple and secondary. Use "
-                    "expressive poses, clear shapes, and prefer "
-                    "visual communication over decorative detail."
-                ),
-                self.RITZZ_STRICT_NO_TEXT,
-                "NEGATIVE CONSTRAINTS: "
-                + self.RITZZ_NEGATIVE_STYLE,
-                "Static camera; the video uses hard cuts between still images.",
-            ]
+        parts.append(
+            "Keep the scene visually simple. "
+            "Use one main visual idea. "
+            "Use one main character whenever possible. "
+            "Use only the necessary props. "
+            "Keep the background simple and secondary. "
+            "Do not turn the scene into an infographic."
         )
+
+        parts.append("Static camera; the video uses hard cuts between still images.")
+        parts.append(self.RITZZ_STRICT_NO_TEXT)
+        parts.append("NEGATIVE CONSTRAINTS: " + self.RITZZ_NEGATIVE_STYLE)
+
         return " ".join(parts)

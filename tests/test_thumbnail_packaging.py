@@ -536,6 +536,40 @@ def test_invalid_thumbnail_hook_is_rejected(tmp_path, updates, message):
         )
 
 
+def test_small_secondary_detail_does_not_fail_prominent_focal_subject(tmp_path):
+    project = _project(tmp_path)
+    draft = _concepts()
+    draft.concepts[0] = draft.concepts[0].model_copy(
+        update={"main_character_or_object": "A pirate with a small eye patch"}
+    )
+
+    result = _engine(concepts=FakeConceptGenerator(draft)).create_concepts(
+        project,
+        production_id="production-1",
+        project_id="20261005_001",
+    )
+
+    assert result["status"] == "AWAITING_CONCEPT_SELECTION"
+
+
+def test_undersized_focal_subject_without_prominent_composition_is_rejected(tmp_path):
+    project = _project(tmp_path)
+    draft = _concepts()
+    draft.concepts[0] = draft.concepts[0].model_copy(
+        update={
+            "main_character_or_object": "A tiny pirate far in the distance",
+            "composition": "A tiny pirate far away on the horizon",
+        }
+    )
+
+    with pytest.raises(ValueError, match="undersized focal subject"):
+        _engine(concepts=FakeConceptGenerator(draft)).create_concepts(
+            project,
+            production_id="production-1",
+            project_id="20261005_001",
+        )
+
+
 def test_thumbnail_concept_retry_feedback_includes_measured_hook_width(tmp_path):
     project = _project(tmp_path)
     invalid = _concepts()

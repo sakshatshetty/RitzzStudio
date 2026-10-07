@@ -256,7 +256,7 @@ def test_legacy_editorial_fields_do_not_override_visual_contract():
 
     prompt = ImagePromptBuilder().build(scene)
 
-    assert "SCENE ACTION (WHAT HAPPENS): raises a lantern" in prompt
+    assert "SCENE ACTION: raises a lantern" in prompt
     assert "REQUIRED OBJECTS: wooden lantern, ship wheel" in prompt
     assert "SURVIVAL" not in prompt
     assert "NO TEXT." in prompt
@@ -348,7 +348,7 @@ def test_prompt_includes_project_world_and_scene_contract() -> None:
     assert "No powered machinery or modern materials" in prompt
     assert "No electric lighting." in prompt
     assert "SCENE PURPOSE: SHOW_PROCESS" in prompt
-    assert "SCENE ACTION (WHAT HAPPENS): raises a wooden lantern" in prompt
+    assert "SCENE ACTION: raises a wooden lantern" in prompt
     assert "REQUIRED OBJECTS: wooden lantern" in prompt
     assert "FORBIDDEN OBJECTS: electric lamp" in prompt
 
