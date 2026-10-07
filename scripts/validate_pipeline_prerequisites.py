@@ -37,10 +37,6 @@ def validate_prerequisites(*, creative_package: bool = False) -> dict[str, str]:
             for name in REQUIRED_ENVIRONMENT_VARIABLES
             if name != "VIDIQ_MCP_API_KEY"
         )
-        + (
-            "RITZZ_CREATIVE_PACKAGE_HOST",
-            "RITZZ_CREATIVE_PACKAGE_DOWNLOAD_TOKEN",
-        )
         if creative_package
         else REQUIRED_ENVIRONMENT_VARIABLES
     )

@@ -41,3 +41,14 @@ def test_primary_workflow_does_not_run_legacy_creative_generation():
         encoding="utf-8"
     )
     assert legacy.startswith("name: RITZZ Legacy Generated-Creative Pipeline")
+
+
+def test_new_production_downloads_zip_from_a_github_release_asset():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+
+    assert "creative_package_release_tag:" in workflow
+    assert "python scripts/download_creative_package.py" in workflow
+    assert "GH_TOKEN: ${{ github.token }}" in workflow
+    assert "creative_package_url" not in workflow
+    assert "RITZZ_CREATIVE_PACKAGE_HOST" not in workflow
+    assert "RITZZ_CREATIVE_PACKAGE_DOWNLOAD_TOKEN" not in workflow
