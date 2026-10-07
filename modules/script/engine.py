@@ -1,5 +1,6 @@
 import hashlib
 import json
+import math
 import os
 import re
 from pathlib import Path
@@ -32,7 +33,8 @@ class ScriptEngine:
     # ---------------------------------------------------------
 
     WORDS_PER_MINUTE = 140
-    TEN_SECOND_HOOK_WORDS = 30
+    MINIMUM_HOOK_SECONDS = 20
+    MAXIMUM_HOOK_SECONDS = 35
 
     MINIMUM_DURATION_SECONDS = 480
 
@@ -96,26 +98,44 @@ class ScriptEngine:
         ):
             cached = self._load_script(script_file)
             quality_report_file = script_directory / "script_quality_review.json"
-            hook_report_file = script_directory / "hook_evaluation.json"
             if (
                 cached.script_profile == config.script_profile
                 and cached.input_fingerprint == input_fingerprint
                 and cached.narrative_arc
                 and quality_report_file.is_file()
-                and hook_report_file.is_file()
             ):
                 quality_report = json.loads(
                     quality_report_file.read_text(encoding="utf-8")
                 )
-                hook_report = json.loads(
-                    hook_report_file.read_text(encoding="utf-8")
-                )
-                if (
-                    quality_report.get("profile") == config.script_profile
-                    and quality_report.get("status") == "PASS"
-                    and hook_report.get("status") == "PASS"
-                    and hook_report.get("version") == 2
+                if quality_report.get("profile") == config.script_profile and (
+                    quality_report.get("status") == "PASS"
                 ):
+                    if quality_report.get("version") != 2:
+                        cached = self._review_and_repair_narrative(
+                            cached,
+                            research,
+                            outline,
+                            script_directory,
+                            config,
+                        )
+                    hook_report_path = script_directory / "hook_evaluation.json"
+                    hook_report = (
+                        json.loads(hook_report_path.read_text(encoding="utf-8"))
+                        if hook_report_path.is_file()
+                        else {}
+                    )
+                    if (
+                        hook_report.get("status") != "PASS"
+                        or hook_report.get("version") != 3
+                        or hook_report.get("quality_weights")
+                        != config.hook_quality_weights
+                    ):
+                        cached = self._review_and_strengthen_hook(
+                            cached,
+                            research,
+                            script_directory,
+                            config,
+                        )
                     try:
                         self._validate_script(
                             cached,
@@ -134,6 +154,7 @@ class ScriptEngine:
                             outline,
                             profile_id=config.script_profile,
                         )
+                        self._validate_hook_metadata(cached, research)
                     except ValueError as exc:
                         qa_feedback = f"Saved script cache failed validation: {exc}"
                     else:
@@ -311,6 +332,7 @@ class ScriptEngine:
                     words_per_minute=config.words_per_minute,
                     maximum_duration_seconds=maximum_duration_seconds,
                 )
+                self._validate_hook_metadata(script, research)
 
                 # -----------------------------------------
                 # Save
@@ -337,12 +359,50 @@ class ScriptEngine:
             f"{last_word_count} words."
         )
 
+    def repair_opening_hook(
+        self,
+        script_file: str | Path,
+        research_file: str | Path,
+        feedback: str,
+        production_config: ProductionConfig | None = None,
+    ) -> Script:
+        """Repair only the saved opening hook using its approved research."""
+
+        script_path = Path(script_file)
+        script = self._load_script(script_path)
+        config = production_config or ProductionConfig(
+            target_duration_seconds=script.target_duration_seconds,
+            minimum_duration_seconds=script.target_duration_seconds,
+        )
+        research = self._load_research(Path(research_file))
+        repaired = self._review_and_strengthen_hook(
+            script,
+            research,
+            script_path.parent,
+            config,
+            hook_feedback=feedback,
+        )
+        self._validate_script(
+            repaired,
+            research,
+            self._load_outline(script_path.parent.parent / "outline" / "outline.json"),
+            minimum_word_count=config.minimum_word_count,
+            minimum_duration_seconds=config.minimum_duration_seconds,
+            words_per_minute=config.words_per_minute,
+            maximum_duration_seconds=config.maximum_acceptable_duration_seconds,
+        )
+        self._validate_hook_metadata(repaired, research)
+        self._save_script(script_path, repaired)
+        return repaired
+
     def _review_and_strengthen_hook(
         self,
         script: Script,
         research: Research,
         script_directory: Path,
         config: ProductionConfig | None = None,
+        *,
+        hook_feedback: str | None = None,
     ) -> Script:
         config = config or ProductionConfig()
         threshold_text = os.getenv("RITZZ_HOOK_MIN_SCORE", "3.5")
@@ -354,58 +414,92 @@ class ScriptEngine:
             raise ValueError("RITZZ_HOOK_MIN_SCORE must be a number from 0 to 5.")
 
         source_ids = {source.id for source in research.sources}
-        minimum_hook_words = self._ten_second_hook_word_target(
+        minimum_hook_words, maximum_hook_words = self._hook_word_bounds(
             config.words_per_minute
         )
+        hook_section = next(
+            (
+                section
+                for section in script.sections
+                if section.section_type == "hook"
+            ),
+            script.sections[0] if script.sections else None,
+        )
+        if hook_section is None:
+            raise ValueError("Cannot evaluate a hook without script sections.")
+        allowed_source_ids = (
+            source_ids & set(hook_section.research_sources)
+            if hook_section.research_sources
+            else source_ids
+        )
         report: dict = {
-            "version": 2,
+            "version": 3,
             "topic": script.topic,
             "words_per_minute": config.words_per_minute,
             "minimum_hook_words": minimum_hook_words,
-            "minimum_hook_seconds": 10,
+            "maximum_hook_words": maximum_hook_words,
+            "minimum_hook_seconds": self.MINIMUM_HOOK_SECONDS,
+            "maximum_hook_seconds": self.MAXIMUM_HOOK_SECONDS,
+            "quality_weights": config.hook_quality_weights,
             "retention_gate": {
                 "minimum_curiosity": 4,
                 "minimum_open_loop": 4,
                 "minimum_payoff_promise": 4,
+                "minimum_factual_support": 4,
+                "modern_connection_required_only_when_relevant": True,
             },
             "threshold": threshold,
             "original_hook": script.hook,
             "selected_hook": script.hook,
+            "targeted_repair_feedback": hook_feedback,
             "iterations": [],
         }
         report_path = script_directory / "hook_evaluation.json"
 
         for iteration in range(1, 3):
-            hook_section = next(
-                (
-                    section
-                    for section in script.sections
-                    if section.section_type == "hook"
-                ),
-                script.sections[0] if script.sections else None,
-            )
-            if hook_section is None:
-                raise ValueError("Cannot evaluate a hook without script sections.")
             response = self.client.responses.parse(
                 model=OPENAI_MODEL,
                 input=[
                     {
                         "role": "system",
                         "content": (
-                            "Evaluate and improve a fact-grounded YouTube opening hook. "
-                            "Score curiosity, tension, specificity, stakes, novelty, clarity, "
-                            "open loop, payoff promise, viewer relevance, and factual support "
-                            "from 0 to 5. "
-                            "Do not use simplistic banned-phrase rules. Judge whether the "
-                            "actual opening earns attention and promises a supported answer. "
-                            "Use a modern-life connection only when it fits the approved "
-                            "topic and evidence; do not force one. "
-                            "Provide three distinct, stronger alternatives when the current "
-                            f"hook is weak. Each alternative must be {minimum_hook_words}–38 "
-                            "spoken words and "
-                            "score at least 4/5 for curiosity, open loop, and payoff promise, "
-                            "and cite source IDs that support its claims. Do not rewrite the "
-                            "script or reveal the full answer in the hook."
+                            "Evaluate the current RITZZ opening and produce 3 to 5 "
+                            "meaningfully different hook candidates. Prefer a concrete "
+                            "current-day problem and familiar modern solution, then connect "
+                            "that same underlying problem to the ancient situation and ask "
+                            "how people managed without the modern solution, when the "
+                            "approved topic and research genuinely support that comparison. "
+                            "Set modern_connection_applicable=false and do not invent a "
+                            "modern parallel when it would be artificial. "
+                            "Vary the curiosity mechanism (for example everyday convenience, "
+                            "modern assumption reversal, contrast, or apparent impossibility) "
+                            "based on topic fit; do not rotate these mechanically. For targeted "
+                            "repair: HOOK_TOO_GENERIC means replace vague language with a "
+                            "concrete situation; NO_MODERN_CONNECTION or NO_ANCIENT_CONNECTION "
+                            "means add only a research-supported missing side of the bridge; "
+                            "NO_OPEN_LOOP or ANSWER_REVEALED_TOO_EARLY means preserve the "
+                            "question and withhold the mechanism; TOO_LONG means compress; "
+                            "UNSUPPORTED_CLAIM means remove or qualify it using research; "
+                            "WEAK_CURIOSITY means choose a different mechanism. "
+                            "For each candidate, provide modern_situation, modern_solution, "
+                            "shared_problem, ancient_problem, curiosity_question, "
+                            "open_loop_description, stakes_description, visual_opportunity, "
+                            "and a distinct curiosity_mechanism. The curiosity question must "
+                            "appear early in the spoken text. The hook must open a loop, not "
+                            "state the answer or its complete mechanism. Keep it within "
+                            f"{minimum_hook_words}–{maximum_hook_words} spoken words "
+                            f"(about {self.MINIMUM_HOOK_SECONDS}–"
+                            f"{self.MAXIMUM_HOOK_SECONDS} seconds at the configured pace). "
+                            "Score modern relevance, problem clarity, ancient connection, "
+                            "curiosity, open loop, surprise, stakes, specificity, "
+                            "conversational quality, factual support, and visual potential "
+                            "and story continuity to the opening section from 0 to 5; "
+                            "describe that continuity as first_investigation. Cite only "
+                            "approved source IDs and score factual "
+                            "support conservatively. Report issue codes for any weakness in "
+                            "the current hook. Make the candidates structurally and verbally "
+                            "distinct; do not copy competitor wording or repeat one hook "
+                            "with superficial edits."
                         ),
                     },
                     {
@@ -416,13 +510,23 @@ class ScriptEngine:
                             f"{hook_section.narration}\n\n"
                             "Approved research and source IDs:\n"
                             f"{research.model_dump_json(indent=2)}\n\n"
-                            f"Minimum average quality score: {threshold:.2f}/5.\n"
-                            "Return scores for the current hook and three alternatives. "
-                            "If prior alternatives were supplied, do not repeat their wording; "
-                            "address the prior weaknesses."
+                            "Approved opening-section source IDs:\n"
+                            f"{sorted(allowed_source_ids)}\n\n"
+                            f"Minimum weighted quality score: {threshold:.2f}/5.\n"
+                            "Return scores and structured hook metadata for the current "
+                            "hook and 3–5 candidates. Address each prior issue code directly. "
+                            "Do not regenerate the full script."
                             + (
-                                "\n\nPreviously attempted alternatives:\n"
-                                + json.dumps(report["iterations"], ensure_ascii=False)
+                                "\n\nTargeted actual-audio repair:\n"
+                                + hook_feedback
+                                if hook_feedback
+                                else ""
+                            )
+                            + (
+                                "\n\nPrevious hook-only QA attempt and alternatives to avoid:\n"
+                                + json.dumps(
+                                    report["iterations"], ensure_ascii=False
+                                )
                                 if report["iterations"]
                                 else ""
                             )
@@ -439,25 +543,39 @@ class ScriptEngine:
                     "Hook evaluator scored a different current hook than the script contains."
                 )
             current = review.current
+            distinct_alternatives = self._distinct_hook_candidates(
+                review.alternatives
+            )
             valid_alternatives = [
                 candidate
                 for candidate in review.alternatives
                 if self._hook_meets_retention_gate(
                     candidate,
                     minimum_hook_words,
-                    source_ids,
+                    maximum_hook_words,
+                    allowed_source_ids,
                 )
             ]
+            if not distinct_alternatives:
+                valid_alternatives = []
             iteration_result = {
                 "iteration": iteration,
                 "current": current.model_dump(mode="json"),
-                "current_score": current.quality_score,
+                "current_score": self._hook_candidate_score(
+                    current, config.hook_quality_weights
+                ),
+                "current_issue_codes": review.current_issue_codes,
                 "alternatives": [
                     {
                         **candidate.model_dump(mode="json"),
-                        "quality_score": candidate.quality_score,
+                        "quality_score": self._hook_candidate_score(
+                            candidate, config.hook_quality_weights
+                        ),
                         "word_count": self._count_words(candidate.text),
-                        "eligible": candidate in valid_alternatives,
+                        "eligible": (
+                            candidate in valid_alternatives
+                            and distinct_alternatives
+                        ),
                     }
                     for candidate in review.alternatives
                 ],
@@ -466,70 +584,72 @@ class ScriptEngine:
             report["iterations"].append(iteration_result)
 
             current_is_supported = (
-                self._hook_meets_retention_gate(
+                not hook_feedback
+                and distinct_alternatives
+                and self._hook_meets_retention_gate(
                     current,
                     minimum_hook_words,
-                    source_ids,
+                    maximum_hook_words,
+                    allowed_source_ids,
                 )
             )
-            if current.quality_score >= threshold and current_is_supported:
-                report["status"] = "PASS"
-                report["selected_hook"] = script.hook
-                report["regenerated"] = script.hook != report["original_hook"]
-                report_path.write_text(
-                    json.dumps(report, indent=2, ensure_ascii=False),
-                    encoding="utf-8",
-                )
-                self._save_script(script_directory / "script.json", script)
-                return script
-
             qualified_alternatives = [
                 candidate
                 for candidate in valid_alternatives
-                if candidate.quality_score >= threshold
+                if self._hook_candidate_score(
+                    candidate, config.hook_quality_weights
+                )
+                >= threshold
             ]
-            if not qualified_alternatives:
-                qualified_alternatives = [
-                    candidate
-                    for candidate in valid_alternatives
-                    if candidate.quality_score > current.quality_score
-                ]
-            if not qualified_alternatives:
+            qualified_candidates = list(qualified_alternatives)
+            if current_is_supported and self._hook_candidate_score(
+                current, config.hook_quality_weights
+            ) >= threshold:
+                qualified_candidates.append(current)
+            if not qualified_candidates:
                 if iteration < 2:
                     continue
                 report["status"] = "FAIL"
                 report["failure"] = (
-                    "No fact-supported alternative met the minimum hook length "
-                    "and curiosity/open-loop/payoff retention gate."
+                    "No distinct, fact-supported hook met the configured 20–35 "
+                    "second duration, structural, and quality gates."
                 )
                 report_path.write_text(
                     json.dumps(report, indent=2, ensure_ascii=False),
                     encoding="utf-8",
                 )
                 raise ValueError(
-                    "Hook quality did not meet the minimum duration and retention gate; "
-                    "no fact-supported alternative passed after two attempts. "
+                    "Hook quality did not meet the duration, factual-support, "
+                    "curiosity, or structure gates; no distinct supported candidate "
+                    "passed after two hook-only attempts. "
                     "Inspect hook_evaluation.json."
                 )
             selected = max(
-                qualified_alternatives,
-                key=lambda candidate: candidate.quality_score,
+                qualified_candidates,
+                key=lambda candidate: self._hook_candidate_score(
+                    candidate, config.hook_quality_weights
+                ),
             )
-            script = self._replace_opening_hook(
+            script = self._apply_hook_candidate(
                 script,
-                selected.text,
+                selected,
+                score=self._hook_candidate_score(
+                    selected, config.hook_quality_weights
+                ),
                 words_per_minute=config.words_per_minute,
             )
             report["selected_hook"] = selected.text
-            if selected.quality_score >= threshold:
-                report["status"] = "PASS"
-                report["regenerated"] = selected.text != report["original_hook"]
-                report_path.write_text(
-                    json.dumps(report, indent=2, ensure_ascii=False),
-                    encoding="utf-8",
-                )
-                self._save_script(script_directory / "script.json", script)
-                return script
+            report["selected_score"] = self._hook_candidate_score(
+                selected, config.hook_quality_weights
+            )
+            report["regenerated"] = selected.text != report["original_hook"]
+            report["status"] = "PASS"
+            report_path.write_text(
+                json.dumps(report, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            self._save_script(script_directory / "script.json", script)
+            return script
 
         report["status"] = "FAIL"
         report["failure"] = "Hook remained below the configured quality threshold."
@@ -543,21 +663,227 @@ class ScriptEngine:
         )
 
     @classmethod
+    def _hook_word_bounds(cls, words_per_minute: int) -> tuple[int, int]:
+        return (
+            math.ceil(words_per_minute * cls.MINIMUM_HOOK_SECONDS / 60),
+            math.floor(words_per_minute * cls.MAXIMUM_HOOK_SECONDS / 60),
+        )
+
+    @staticmethod
+    def _hook_candidate_score(
+        candidate: HookCandidateScores,
+        weights: dict[str, float],
+    ) -> float:
+        fallback_scores = {
+            "modern_relevance": candidate.viewer_relevance,
+            "problem_clarity": candidate.clarity,
+            "ancient_connection": candidate.specificity,
+            "curiosity": candidate.curiosity,
+            "open_loop": candidate.open_loop,
+            "specificity": candidate.specificity,
+            "factual_support": candidate.factual_support,
+            "visual_potential": candidate.specificity,
+            "conversational_quality": candidate.clarity,
+            "surprise": candidate.novelty,
+            "stakes": candidate.stakes,
+            "story_continuity": candidate.clarity,
+        }
+        values = {
+            "modern_relevance": candidate.modern_relevance,
+            "problem_clarity": candidate.problem_clarity,
+            "ancient_connection": candidate.ancient_connection,
+            "curiosity": candidate.curiosity,
+            "open_loop": candidate.open_loop,
+            "specificity": candidate.specificity,
+            "factual_support": candidate.factual_support,
+            "visual_potential": candidate.visual_potential,
+            "story_continuity": candidate.story_continuity,
+            "conversational_quality": candidate.conversational_quality,
+            "surprise": candidate.surprise,
+            "stakes": candidate.stakes,
+        }
+        applicable_weights = {
+            dimension: weight
+            for dimension, weight in weights.items()
+            if not (
+                dimension == "modern_relevance"
+                and not candidate.modern_connection_applicable
+            )
+        }
+        weight_total = sum(applicable_weights.values())
+        if weight_total <= 0:
+            raise ValueError(
+                "Hook quality scoring has no applicable positive weight."
+            )
+        return sum(
+            (
+                value
+                if value is not None
+                else fallback_scores[dimension]
+            )
+            * weight
+            for dimension, value in values.items()
+            if (weight := applicable_weights.get(dimension, 0)) > 0
+        ) / weight_total
+
+    @classmethod
+    def _distinct_hook_candidates(
+        cls,
+        candidates: list[HookCandidateScores],
+    ) -> bool:
+        if not 3 <= len(candidates) <= 5:
+            return False
+        mechanisms = [
+            cls._normalize_hook_text(candidate.curiosity_mechanism)
+            for candidate in candidates
+        ]
+        if any(not mechanism for mechanism in mechanisms) or len(set(mechanisms)) != len(
+            mechanisms
+        ):
+            return False
+        token_sets = [
+            set(cls._normalize_hook_text(candidate.text).split())
+            for candidate in candidates
+        ]
+        for index, tokens in enumerate(token_sets):
+            for previous in token_sets[:index]:
+                union = tokens | previous
+                if union and len(tokens & previous) / len(union) >= 0.75:
+                    return False
+        return True
+
+    @classmethod
     def _hook_meets_retention_gate(
         cls,
         candidate: HookCandidateScores,
         minimum_words: int,
+        maximum_words: int,
         source_ids: set[str],
     ) -> bool:
-        return (
-            minimum_words <= cls._count_words(candidate.text) <= 38
-            and candidate.curiosity >= 4
+        word_count = cls._count_words(candidate.text)
+        normalized_hook = cls._normalize_hook_text(candidate.text)
+        question = candidate.curiosity_question.strip()
+        question_is_early = False
+        if question and "?" in question:
+            hook_tokens = normalized_hook.split()
+            question_tokens = cls._normalize_hook_text(question).split()
+            try:
+                question_start = next(
+                    index
+                    for index in range(len(hook_tokens))
+                    if hook_tokens[index : index + len(question_tokens)]
+                    == question_tokens
+                )
+            except StopIteration:
+                pass
+            else:
+                question_is_early = question_start / max(1, len(hook_tokens)) <= 0.65
+        modern_fields_complete = all(
+            value.strip()
+            for value in (
+                candidate.modern_situation,
+                candidate.modern_solution,
+                candidate.shared_problem,
+                candidate.ancient_problem,
+            )
+        )
+        problem_clarity = (
+            candidate.problem_clarity
+            if candidate.problem_clarity is not None
+            else candidate.clarity
+        )
+        ancient_connection = (
+            candidate.ancient_connection
+            if candidate.ancient_connection is not None
+            else candidate.specificity
+        )
+        conversational_quality = (
+            candidate.conversational_quality
+            if candidate.conversational_quality is not None
+            else candidate.clarity
+        )
+        visual_potential = (
+            candidate.visual_potential
+            if candidate.visual_potential is not None
+            else candidate.specificity
+        )
+        scores_are_strong = (
+            candidate.curiosity >= 4
             and candidate.open_loop >= 4
             and candidate.payoff_promise >= 4
             and candidate.factual_support >= 4
+            and problem_clarity >= 4
+            and ancient_connection >= 4
+            and conversational_quality >= 3
+            and visual_potential >= 3
+            and (candidate.story_continuity or 0) >= 4
+            and (
+                not candidate.modern_connection_applicable
+                or (
+                    modern_fields_complete
+                    and (candidate.modern_relevance or 0) >= 4
+                )
+            )
+        )
+        return (
+            minimum_words <= word_count <= maximum_words
+            and scores_are_strong
+            and bool(candidate.ancient_problem.strip())
+            and bool(candidate.open_loop_description.strip())
+            and bool(candidate.visual_opportunity.strip())
+            and bool(candidate.first_investigation.strip())
+            and question_is_early
             and bool(candidate.source_ids)
             and set(candidate.source_ids).issubset(source_ids)
         )
+
+    @staticmethod
+    def _normalize_hook_text(text: str) -> str:
+        return " ".join(re.findall(r"[a-z0-9]+", text.casefold()))
+
+    @classmethod
+    def _apply_hook_candidate(
+        cls,
+        script: Script,
+        candidate: HookCandidateScores,
+        *,
+        score: float,
+        words_per_minute: int,
+    ) -> Script:
+        updated = script
+        if candidate.text.strip() != script.hook.strip():
+            updated = cls._replace_opening_hook(
+                script,
+                candidate.text,
+                words_per_minute=words_per_minute,
+            )
+        plan = updated.hook_plan.model_copy(
+            update={
+                "modern_connection": (
+                    candidate.modern_situation
+                    if candidate.modern_connection_applicable
+                    else ""
+                ),
+                "modern_situation": candidate.modern_situation,
+                "modern_solution": candidate.modern_solution,
+                "shared_problem": candidate.shared_problem,
+                "ancient_problem": candidate.ancient_problem,
+                "central_question": candidate.curiosity_question,
+                "curiosity_question": candidate.curiosity_question,
+                "open_loop": candidate.open_loop_description,
+                "open_loop_description": candidate.open_loop_description,
+                "stakes": candidate.stakes_description or updated.hook_plan.stakes,
+                "stakes_description": candidate.stakes_description,
+                "visual_opportunity": candidate.visual_opportunity,
+                "first_investigation": candidate.first_investigation,
+                "modern_connection_applicable": (
+                    candidate.modern_connection_applicable
+                ),
+                "quality_score": score,
+                "source_ids": candidate.source_ids,
+            }
+        )
+        return updated.model_copy(update={"hook_plan": plan})
 
     def _review_and_repair_narrative(
         self,
@@ -568,12 +894,12 @@ class ScriptEngine:
         config: ProductionConfig,
     ) -> Script:
         profile = get_script_profile(config.script_profile)
-        minimum_hook_words = self._ten_second_hook_word_target(
+        minimum_hook_words, maximum_hook_words = self._hook_word_bounds(
             config.words_per_minute
         )
         section_by_id = {section.section_id: section for section in outline.sections}
         report: dict = {
-            "version": 1,
+            "version": 2,
             "status": "RUNNING",
             "profile": profile.profile_id,
             "topic": script.topic,
@@ -595,6 +921,9 @@ class ScriptEngine:
                             "Research is the only factual authority: flag claims not "
                             "supported there and ensure uncertainty is not strengthened. "
                             "Check that the hook opens a question without resolving it, "
+                            "prefer a supported modern-problem-to-ancient-problem bridge "
+                            "without forcing a false parallel, and ensure the first "
+                            "investigation immediately begins answering the hook question; "
                             "questions evolve, sections have narrative purpose, evidence "
                             "is interpreted rather than listed, any modern connection is "
                             "relevant and not forced, the ending pays off the opening, and "
@@ -853,10 +1182,11 @@ class ScriptEngine:
                                     "section plus its narrative movement metadata. Do "
                                     "not rewrite other sections, add facts, or alter "
                                     "the section ID. If this is the hook section, provide "
-                                    f"a {minimum_hook_words}–38-word hook that exactly "
-                                    "begins the revised narration, scores at least 4/5 "
-                                    "for curiosity, open loop, and payoff promise, and "
-                                    "keeps the central mystery open."
+                                    f"a {minimum_hook_words}–{maximum_hook_words}-word "
+                                    "hook (about 20–35 seconds) that exactly begins the "
+                                    "revised narration, connects a concrete modern problem "
+                                    "to the same ancient problem when supported, asks an "
+                                    "early unanswered question, and withholds the answer."
                                 ),
                             },
                             {
@@ -908,10 +1238,11 @@ class ScriptEngine:
                     )
                 if section.section_type == "hook":
                     hook_words = self._count_words(revision.hook)
-                    if not minimum_hook_words <= hook_words <= 38:
+                    if not minimum_hook_words <= hook_words <= maximum_hook_words:
                         raise ValueError(
-                            "Targeted hook revision must contain at least "
-                            f"{minimum_hook_words} words for the 10-second opening."
+                            "Targeted hook revision must contain "
+                            f"{minimum_hook_words}–{maximum_hook_words} words for a "
+                            "20–35-second opening."
                         )
                     if not revision.narration.lstrip().casefold().startswith(
                         revision.hook.strip().casefold()
@@ -1056,6 +1387,69 @@ class ScriptEngine:
                     "evidence source IDs."
                 )
 
+    @classmethod
+    def _validate_hook_metadata(cls, script: Script, research: Research) -> None:
+        plan = script.hook_plan
+        if not all(
+            value.strip()
+            for value in (
+                plan.ancient_problem,
+                plan.curiosity_question,
+                plan.open_loop_description,
+                plan.visual_opportunity,
+                plan.first_investigation,
+            )
+        ):
+            raise ValueError("Script hook metadata is incomplete.")
+        if "?" not in plan.curiosity_question or plan.quality_score <= 0:
+            raise ValueError(
+                "Script hook metadata must include a scored curiosity question."
+            )
+        if plan.modern_connection_applicable and not all(
+            value.strip()
+            for value in (
+                plan.modern_situation,
+                plan.modern_solution,
+                plan.shared_problem,
+            )
+        ):
+            raise ValueError(
+                "A claimed modern connection must identify the situation, solution, "
+                "and shared problem."
+            )
+        known_sources = {source.id for source in research.sources}
+        hook_section = next(
+            (
+                section
+                for section in script.sections
+                if section.section_type == "hook"
+            ),
+            script.sections[0] if script.sections else None,
+        )
+        if hook_section is None:
+            raise ValueError("Hook metadata cannot be validated without a section.")
+        allowed_sources = (
+            known_sources & set(hook_section.research_sources)
+            if hook_section.research_sources
+            else known_sources
+        )
+        if (
+            not plan.source_ids
+            or not set(plan.source_ids).issubset(allowed_sources)
+        ):
+            raise ValueError(
+                "Hook metadata must cite only its approved research sources."
+            )
+        question_tokens = cls._normalize_hook_text(plan.curiosity_question).split()
+        hook_tokens = cls._normalize_hook_text(script.hook).split()
+        if not any(
+            hook_tokens[index : index + len(question_tokens)] == question_tokens
+            for index in range(len(hook_tokens))
+        ):
+            raise ValueError(
+                "The structured hook question does not appear in the spoken opening."
+            )
+
     @staticmethod
     def _script_input_fingerprint(
         research: Research,
@@ -1138,7 +1532,7 @@ class ScriptEngine:
 
         config = config or ProductionConfig()
         profile = get_script_profile(config.script_profile)
-        ten_second_hook_words = ScriptEngine._ten_second_hook_word_target(
+        minimum_hook_words, maximum_hook_words = ScriptEngine._hook_word_bounds(
             config.words_per_minute
         )
         target_words = round(
@@ -1164,7 +1558,7 @@ class ScriptEngine:
 
             f"Aim for about {target_words} spoken words and do not exceed {maximum_words} words unless the approved research cannot be explained accurately within that length.\n\n"
 
-            f"The first spoken words of the first hook section must be a compelling hook of about {ten_second_hook_words} words (roughly 10 seconds). Start with a vivid question, surprising contrast, or specific curiosity gap that is supported by the research. Build interest without giving away the full answer. Avoid greetings, channel introductions, generic setup, and unsupported or exaggerated claims. The Script.hook field must match this opening text; the voice reads the section narration, so do not repeat the hook later.\n\n"
+            f"The first spoken words of the first hook section must be a compelling, research-grounded hook of {minimum_hook_words}–{maximum_hook_words} words (about 20–35 seconds at the configured pace). Prefer a concrete current-day problem and familiar solution, then connect the same underlying problem to the ancient situation and ask how people managed without that modern solution when supported by the topic and research. Do not force an artificial modern comparison. Put the unanswered curiosity question early, open a loop, and withhold the complete answer. The first investigation must begin answering that same question. Avoid greetings, channel introductions, generic background, unsupported claims, and competitor wording. The Script.hook field must match this opening text; the voice reads the section narration, so do not repeat the hook later.\n\n"
 
             "The final narration MUST contain at least "
             f"{config.minimum_word_count} words of actual spoken narration.\n\n"
@@ -1194,7 +1588,10 @@ class ScriptEngine:
             f"{profile.instructions()}\n\n"
 
             "Create useful structured narrative metadata: a hook plan with the "
-            "central question, open loop, stakes, and any supported modern connection; "
+            "modern situation and solution, the same shared problem in the ancient "
+            "context, curiosity question, open loop, stakes, visual opportunity, "
+            "first-investigation continuity, weighted quality score, and source IDs; "
+            "also state whether the modern connection is applicable; "
             "one narrative movement per outline section with its purpose, question, "
             "evidence source IDs, reveal, next question/problem, and visual opportunity; "
             "and a final payoff that resolves or reframes the opening mystery. "
@@ -1254,7 +1651,7 @@ class ScriptEngine:
 
         config = config or ProductionConfig()
         profile = get_script_profile(config.script_profile)
-        ten_second_hook_words = cls._ten_second_hook_word_target(
+        minimum_hook_words, maximum_hook_words = cls._hook_word_bounds(
             config.words_per_minute
         )
         target_script_words = round(
@@ -1299,7 +1696,7 @@ class ScriptEngine:
             f"HARD UPPER LIMIT: {maximum_words} words ({config.maximum_acceptable_duration_seconds} seconds).\n"
             f"The narration must meet the configured minimum of {config.minimum_word_count} words.\n\n"
 
-            f"OPENING HOOK: The first spoken words of the first hook section must be a compelling, fact-grounded hook of about {ten_second_hook_words} spoken words (roughly 10 seconds). Use a specific curiosity gap, surprising contrast, or question; do not give away the full answer. No greeting, channel introduction, generic setup, or unsupported/exaggerated claim. The Script.hook field must match this opening text exactly; narration speaks it once, so do not repeat the hook later.\n\n"
+            f"OPENING HOOK: The first spoken words of the first hook section must be a compelling, fact-grounded hook of {minimum_hook_words}–{maximum_hook_words} words (about 20–35 seconds). Prefer a relatable modern problem and its familiar solution, then connect to the same ancient problem and ask how people managed without the modern solution when appropriate. Do not force a modern comparison. Ask an early unanswered question, do not reveal the full answer, and make the first investigation begin answering it. Avoid greetings, generic background, unsupported claims, and competitor wording. Keep Script.hook exactly equal to this opening; do not repeat it later.\n\n"
 
             "Use approximately "
             f"{config.words_per_minute} spoken words per minute "
@@ -1308,7 +1705,12 @@ class ScriptEngine:
             f"APPLY SCRIPT PROFILE {profile.profile_id}:\n"
             f"{profile.instructions()}\n\n"
 
-            "After the narration, populate the Script artifact's hook_plan, "
+            "After the narration, populate the Script artifact's hook_plan with the "
+            "modern situation, modern solution, shared underlying problem, ancient "
+            "problem, curiosity question, open loop, stakes, visual opportunity, and "
+            "first-investigation continuity, quality score, and source IDs; set "
+            "modern_connection_applicable=false "
+            "when a modern parallel would be artificial. Also populate "
             "narrative_arc (exactly one movement per section), viewer_connection, "
             "myth_or_assumption when supported, major_reveals, uncertainties, "
             "visual_opportunities, and final_payoff. Narrative evidence IDs must "
@@ -1361,7 +1763,7 @@ class ScriptEngine:
         config: ProductionConfig,
     ) -> str:
         profile = get_script_profile(config.script_profile)
-        ten_second_hook_words = cls._ten_second_hook_word_target(
+        minimum_hook_words, maximum_hook_words = cls._hook_word_bounds(
             config.words_per_minute
         )
         maximum_words = round(
@@ -1376,7 +1778,7 @@ class ScriptEngine:
             f"than {maximum_words} words. Keep every outline section, preserve source "
             "IDs, and retain all important supported facts. Remove repetition, "
             "redundant transitions, and nonessential detail; do not invent facts.\n\n"
-            f"Preserve a compelling, fact-grounded opening hook of about {ten_second_hook_words} words at the beginning of the first hook section. Keep Script.hook exactly matched to those first spoken words; do not repeat the hook later.\n\n"
+            f"Preserve a compelling, fact-grounded opening hook of {minimum_hook_words}–{maximum_hook_words} words (about 20–35 seconds) at the beginning of the first hook section. Prefer a supported modern-problem-to-ancient-problem connection without forcing one; keep an early open question, withhold the answer, and preserve continuity into the first investigation. Keep Script.hook exactly matched to those first spoken words; do not repeat the hook later.\n\n"
             f"Maintain the {profile.profile_id} profile and its structured hook plan, "
             "section movements, evidence links, uncertainties, visual opportunities, "
             "and final payoff.\n\n"
@@ -1405,7 +1807,7 @@ class ScriptEngine:
 
         config = config or ProductionConfig()
         profile = get_script_profile(config.script_profile)
-        ten_second_hook_words = cls._ten_second_hook_word_target(
+        minimum_hook_words, maximum_hook_words = cls._hook_word_bounds(
             config.words_per_minute
         )
         required_words = config.minimum_word_count
@@ -1439,7 +1841,7 @@ class ScriptEngine:
             "Generate the COMPLETE script again. "
             "Do not return only the additional paragraphs.\n\n"
 
-            f"Preserve the compelling, fact-grounded opening hook of about {ten_second_hook_words} words at the beginning of the first hook section. Keep Script.hook exactly matched to those first spoken words; do not repeat the hook later.\n\n"
+            f"Preserve the compelling, fact-grounded opening hook of {minimum_hook_words}–{maximum_hook_words} words (about 20–35 seconds) at the beginning of the first hook section. Prefer a supported modern-problem-to-ancient-problem connection without forcing one; keep an early open question, withhold the answer, and preserve continuity into the first investigation. Keep Script.hook exactly matched to those first spoken words; do not repeat the hook later.\n\n"
 
             "Fully preserve all existing sections.\n\n"
 
@@ -1584,22 +1986,6 @@ class ScriptEngine:
     # ---------------------------------------------------------
     # Word counting
     # ---------------------------------------------------------
-
-    @classmethod
-    def _ten_second_hook_word_target(cls, words_per_minute: int) -> int:
-        """Scale the default spoken hook length to the configured narration pace."""
-
-        return min(
-            38,
-            max(
-                13,
-                round(
-                    words_per_minute
-                    * cls.TEN_SECOND_HOOK_WORDS
-                    / cls.WORDS_PER_MINUTE
-                ),
-            ),
-        )
 
     @staticmethod
     def _count_words(
@@ -1781,13 +2167,14 @@ class ScriptEngine:
                 script.sections[0],
             )
             hook_words = cls._count_words(script.hook)
-            minimum_hook_words = cls._ten_second_hook_word_target(
+            minimum_hook_words, maximum_hook_words = cls._hook_word_bounds(
                 used_words_per_minute
             )
-            if not minimum_hook_words <= hook_words <= 38:
+            if not minimum_hook_words <= hook_words <= maximum_hook_words:
                 raise ValueError(
                     f"Profiled script hook has {hook_words} words; expected "
-                    f"{minimum_hook_words}–38 for a roughly 10-second opening."
+                    f"{minimum_hook_words}–{maximum_hook_words} for a "
+                    "20–35-second opening."
                 )
             if not hook_section.narration.lstrip().casefold().startswith(
                 script.hook.strip().casefold()

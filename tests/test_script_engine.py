@@ -146,6 +146,47 @@ def _quality_review(status, *, failed_check=None, findings=None):
     )
 
 
+def _qualified_hook_candidate(**updates):
+    values = {
+        "text": (
+            "People once faced this challenge without the tools we now take for "
+            "granted. The clues they left behind do not point to an obvious answer. "
+            "How did they solve the problem? The evidence can reveal the choices "
+            "available to them, but the mechanism is not as simple as it first "
+            "appears. Follow the sources and we can separate documented possibilities "
+            "from assumptions."
+        ),
+        "modern_connection_applicable": False,
+        "ancient_problem": "People in the past faced the same basic human challenge.",
+        "curiosity_question": "How did they solve the problem?",
+        "open_loop_description": "The available evidence does not settle the mechanism.",
+        "stakes_description": "The answer changes how the evidence is interpreted.",
+        "visual_opportunity": "Show people confronting the problem and the evidence left behind.",
+        "first_investigation": "The opening section begins comparing the available evidence.",
+        "curiosity_mechanism": "EVIDENCE_LED_MYSTERY",
+        "curiosity": 5,
+        "tension": 5,
+        "specificity": 5,
+        "stakes": 5,
+        "novelty": 5,
+        "clarity": 5,
+        "open_loop": 5,
+        "payoff_promise": 5,
+        "viewer_relevance": 5,
+        "factual_support": 5,
+        "source_ids": ["source_001"],
+        "modern_relevance": 5,
+        "problem_clarity": 5,
+        "ancient_connection": 5,
+        "surprise": 5,
+        "conversational_quality": 5,
+        "visual_potential": 5,
+        "story_continuity": 5,
+    }
+    values.update(updates)
+    return HookCandidateScores(**values)
+
+
 def test_load_research(tmp_path):
     research_file = tmp_path / "research.json"
 
@@ -213,14 +254,73 @@ def test_hook_evaluation_selects_supported_candidate_and_writes_report(
         update={"hook": old_hook, "sections": [first_section, *script.sections[1:]]}
     )
     candidate_text = (
-        "Without central heating, what actually kept people alive through an "
-        "ancient winter: clothing, shelter, fire, or food stores? The surprising "
-        "answer lies in how these defenses worked together before the cold arrived."
+        "Today, a familiar task feels easy because modern tools hide the hard part. "
+        "But people in the ancient world faced the same underlying problem without "
+        "those tools. How did they make it work? The surviving evidence offers clues, "
+        "but not one universal answer. By comparing what sources actually show, we "
+        "can uncover the choices and constraints behind a solution that is easy to "
+        "overlook now."
     )
+    alternatives = [
+        (
+            (
+                "Picture an ordinary modern moment when a device solves an annoying "
+                "problem before you even think about it. Now remove that convenience and "
+                "place the same challenge in an ancient setting. What could people do "
+                "instead? The answer is not a single trick; it depends on what they had, "
+                "what the evidence records, and which risks mattered most. That is the "
+                "puzzle we can test."
+            ),
+            "EVERYDAY_CONVENIENCE",
+            "What could people do instead?",
+        ),
+        (
+            (
+                "We assume the simplest way to handle a daily problem has always been "
+                "obvious. It has not. Before the familiar modern fix existed, people "
+                "still faced the same basic challenge. Which choices helped them cope, "
+                "and what can the surviving evidence really prove? The most interesting "
+                "clue may not be the one we expect, so let's separate documented methods "
+                "from later assumptions."
+            ),
+            "ASSUMPTION_REVERSAL",
+            "Which choices helped them cope, and what can the surviving evidence really prove?",
+        ),
+        (
+            (
+                "A modern shortcut can make a difficult job feel almost automatic. "
+                "Remove that shortcut, and the same human need becomes a very different "
+                "puzzle. People in the ancient world still had to face it, but the traces "
+                "they left behind are incomplete. What do those traces let us say with "
+                "confidence, and what remains uncertain? The answer starts with the "
+                "problem, not a dramatic guess."
+            ),
+            "EVIDENCE_MYSTERY",
+            "What do those traces let us say with confidence, and what remains uncertain?",
+        ),
+    ]
 
-    def scores(text: str, score: int, factual_support: int, sources: list[str]):
+    def scores(
+        text: str,
+        score: int,
+        factual_support: int,
+        sources: list[str],
+        mechanism: str,
+        question: str,
+    ):
         return HookCandidateScores(
             text=text,
+            modern_connection_applicable=True,
+            modern_situation="A familiar task feels easy with modern tools.",
+            modern_solution="Modern tools hide the difficult part.",
+            shared_problem="The same underlying human challenge.",
+            ancient_problem="People faced the same challenge in the ancient world.",
+            curiosity_question=question,
+            open_loop_description="The evidence offers clues without resolving every detail.",
+            stakes_description="The problem affected ordinary choices.",
+            visual_opportunity="Contrast a modern tool with an ancient person facing the same task.",
+            first_investigation="The opening section immediately examines evidence about that problem.",
+            curiosity_mechanism=mechanism,
             curiosity=score,
             tension=score,
             specificity=score,
@@ -232,11 +332,35 @@ def test_hook_evaluation_selects_supported_candidate_and_writes_report(
             viewer_relevance=score,
             factual_support=factual_support,
             source_ids=sources,
+            modern_relevance=score,
+            problem_clarity=score,
+            ancient_connection=score,
+            surprise=score,
+            conversational_quality=score,
+            visual_potential=score,
+            story_continuity=score,
         )
 
     review = HookQualityReview(
-        current=scores(old_hook, 2, 4, ["source_001"]),
-        alternatives=[scores(candidate_text, 5, 5, ["source_001"])],
+        current=scores(
+            old_hook,
+            2,
+            4,
+            ["source_001"],
+            "GENERIC_OPENING",
+            "How did they make it work?",
+        ),
+        alternatives=[
+            scores(text, 5, 5, ["source_001"], mechanism, question)
+            for text, mechanism, question in [
+                (
+                    candidate_text,
+                    "MODERN_CONTRAST",
+                    "How did they make it work?",
+                ),
+                *alternatives,
+            ]
+        ],
     )
 
     class FakeResponses:
@@ -254,20 +378,57 @@ def test_hook_evaluation_selects_supported_candidate_and_writes_report(
     )
 
     report = json.loads((tmp_path / "hook_evaluation.json").read_text())
+    assert ScriptEngine._distinct_hook_candidates(
+        review.alternatives
+    )
     assert updated.hook == candidate_text
     assert updated.sections[0].narration.startswith(candidate_text)
+    assert updated.sections[1] == script.sections[1]
     assert report["status"] == "PASS"
     assert report["regenerated"] is True
     assert report["iterations"][0]["alternatives"][0]["eligible"] is True
+    assert report["version"] == 3
+    assert report["selected_score"] >= 4
+    assert updated.hook_plan.modern_connection_applicable is True
+    assert updated.hook_plan.ancient_problem
+    assert updated.hook_plan.curiosity_question in updated.hook
+    assert updated.hook_plan.source_ids == ["source_001"]
     assert (tmp_path / "script.json").is_file()
 
 
 def test_hook_quality_rejects_a_weak_hook_without_supported_replacement(tmp_path):
     script = create_script()
 
-    def scores(text, score, factual_support, sources):
+    alternatives = [
+        (
+            "A vivid unsupported claim could transform the entire story, but the sources "
+            "do not establish what happened. What hidden force changed everything? The "
+            "evidence cannot answer that question, and this dramatic possibility rests "
+            "on speculation rather than documented findings."
+        ),
+        (
+            "An astonishing explanation may rewrite the past, if a secret event occurred. "
+            "What powerful discovery did people conceal? No approved source supports this "
+            "claim, so the exciting answer would be invented rather than researched."
+        ),
+        (
+            "Imagine a shocking twist that changes every historical account. Could an "
+            "unknown invention explain the mystery? The available research gives no basis "
+            "for that claim, and presenting it as true would mislead the viewer."
+        ),
+    ]
+
+    def scores(text, score, factual_support, sources, mechanism, question):
         return HookCandidateScores(
             text=text,
+            modern_connection_applicable=False,
+            ancient_problem="The historical question described in the supplied research.",
+            curiosity_question=question,
+            open_loop_description="The evidence leaves the historical explanation unresolved.",
+            stakes_description="The evidence matters to the interpretation.",
+            visual_opportunity="Show the historical evidence being examined.",
+            first_investigation="The opening section starts testing the historical evidence.",
+            curiosity_mechanism=mechanism,
             curiosity=score,
             tension=score,
             specificity=score,
@@ -279,17 +440,42 @@ def test_hook_quality_rejects_a_weak_hook_without_supported_replacement(tmp_path
             viewer_relevance=score,
             factual_support=factual_support,
             source_ids=sources,
+            modern_relevance=score,
+            problem_clarity=score,
+            ancient_connection=score,
+            surprise=score,
+            conversational_quality=score,
+            visual_potential=score,
+            story_continuity=score,
         )
 
     weak_review = HookQualityReview(
-        current=scores(script.hook, 1, 2, ["source_001"]),
+        current=scores(
+            script.hook,
+            1,
+            2,
+            ["source_001"],
+            "GENERIC",
+            "What happened?",
+        ),
         alternatives=[
             scores(
-                "A vivid but unsupported explanation promises a dramatic historical answer "
-                "that would change everything we know about this mystery.",
+                text,
                 5,
                 1,
                 ["source_001"],
+                mechanism,
+                question,
+            )
+            for text, mechanism, question in zip(
+                alternatives,
+                ["SECRET_TWIST", "HIDDEN_DISCOVERY", "SHOCKING_EXPLANATION"],
+                [
+                    "What hidden force changed everything?",
+                    "What powerful discovery did people conceal?",
+                    "Could an unknown invention explain the mystery?",
+                ],
+                strict=True,
             )
         ],
     )
@@ -301,7 +487,7 @@ def test_hook_quality_rejects_a_weak_hook_without_supported_replacement(tmp_path
     engine = ScriptEngine.__new__(ScriptEngine)
     engine.client = SimpleNamespace(responses=FakeResponses())
 
-    with pytest.raises(ValueError, match="no fact-supported"):
+    with pytest.raises(ValueError, match="factual-support"):
         engine._review_and_strengthen_hook(
             script,
             create_research(),
@@ -311,6 +497,171 @@ def test_hook_quality_rejects_a_weak_hook_without_supported_replacement(tmp_path
     report = json.loads((tmp_path / "hook_evaluation.json").read_text())
     assert report["status"] == "FAIL"
     assert report["iterations"][0]["alternatives"][0]["eligible"] is False
+
+
+def test_hook_gate_does_not_force_a_modern_comparison_for_topic_specific_hooks():
+    candidate = _qualified_hook_candidate()
+
+    assert ScriptEngine._hook_meets_retention_gate(
+        candidate,
+        47,
+        81,
+        {"source_001"},
+    )
+
+
+def test_hook_gate_requires_a_supported_modern_to_ancient_bridge_when_applicable():
+    candidate = _qualified_hook_candidate(
+        modern_connection_applicable=True,
+        modern_situation="A modern person solves the problem with a familiar tool.",
+        modern_solution="The tool makes the task convenient.",
+        shared_problem="The same underlying human problem.",
+        modern_relevance=5,
+        problem_clarity=5,
+        ancient_connection=5,
+    )
+    assert ScriptEngine._hook_meets_retention_gate(
+        candidate,
+        47,
+        81,
+        {"source_001"},
+    )
+
+    unsupported_bridge = candidate.model_copy(
+        update={
+            "shared_problem": "",
+            "ancient_connection": 2,
+        }
+    )
+    assert not ScriptEngine._hook_meets_retention_gate(
+        unsupported_bridge,
+        47,
+        81,
+        {"source_001"},
+    )
+
+
+@pytest.mark.parametrize(
+    "updates",
+    [
+        {"open_loop": 2},
+        {"factual_support": 2},
+        {"source_ids": ["unapproved_source"]},
+        {"curiosity_question": "What did people do?", "text": "A hook with a late question. " + _qualified_hook_candidate().text.replace("How did they solve the problem?", "") + " What did people do?"},
+    ],
+)
+def test_hook_gate_rejects_missing_curiosity_or_research_support(updates):
+    assert not ScriptEngine._hook_meets_retention_gate(
+        _qualified_hook_candidate(**updates),
+        47,
+        81,
+        {"source_001"},
+    )
+
+
+def test_hook_candidates_must_use_distinct_mechanisms_and_wording():
+    first = _qualified_hook_candidate(curiosity_mechanism="EVERYDAY_PROBLEM")
+    second = _qualified_hook_candidate(curiosity_mechanism="MODERN_CONTRAST")
+    third = _qualified_hook_candidate(curiosity_mechanism="IMPOSSIBILITY")
+
+    assert not ScriptEngine._distinct_hook_candidates([first, second, third])
+    distinct = [
+        first,
+        second.model_copy(
+            update={
+                "text": (
+                    "Before familiar modern tools, a routine task could demand "
+                    "careful choices. People in the ancient world met the same "
+                    "fundamental challenge with different limits. What options did "
+                    "they have? The records are incomplete, so no single answer fits "
+                    "every place. By following the evidence, we can see how their "
+                    "decisions shaped what happened next."
+                )
+            }
+        ),
+        third.model_copy(
+            update={
+                "text": (
+                    "A simple modern fix can make a difficult problem disappear "
+                    "from view. Long before it existed, people still had to deal "
+                    "with the same need. Could they manage without it? The evidence "
+                    "is more complicated than a clever invention or one dramatic "
+                    "trick. Looking closely at what survived reveals which answers "
+                    "are possible and which remain uncertain."
+                ),
+                "curiosity_question": "Could they manage without it?",
+            }
+        ),
+    ]
+    assert ScriptEngine._distinct_hook_candidates(distinct)
+
+
+def test_hook_quality_score_uses_configurable_dimension_weights():
+    candidate = _qualified_hook_candidate(open_loop=1, curiosity=5)
+
+    curiosity_weighted = ScriptEngine._hook_candidate_score(
+        candidate,
+        {"curiosity": 1.0},
+    )
+    loop_weighted = ScriptEngine._hook_candidate_score(
+        candidate,
+        {"open_loop": 1.0},
+    )
+
+    assert curiosity_weighted == 5
+    assert loop_weighted == 1
+    assert ScriptEngine._hook_candidate_score(
+        _qualified_hook_candidate(modern_relevance=0),
+        ProductionConfig().hook_quality_weights,
+    ) == pytest.approx(5)
+
+
+def test_hook_candidate_metadata_is_persisted_and_validated():
+    candidate = _qualified_hook_candidate(
+        modern_connection_applicable=True,
+        modern_situation="A modern person solves the problem with a familiar tool.",
+        modern_solution="The tool makes the task convenient.",
+        shared_problem="The same underlying human problem.",
+    )
+    script = create_script()
+    script = script.model_copy(
+        update={
+            "sections": [
+                script.sections[0].model_copy(
+                    update={
+                        "narration": (
+                            f"{script.hook} The first section investigates that same "
+                            "question using the available evidence."
+                        )
+                    }
+                ),
+                *script.sections[1:],
+            ]
+        }
+    )
+    updated = ScriptEngine._apply_hook_candidate(
+        script,
+        candidate,
+        score=4.75,
+        words_per_minute=140,
+    )
+
+    ScriptEngine._validate_hook_metadata(updated, create_research())
+    assert updated.hook_plan.modern_situation == candidate.modern_situation
+    assert updated.hook_plan.modern_solution == candidate.modern_solution
+    assert updated.hook_plan.shared_problem == candidate.shared_problem
+    assert updated.hook_plan.quality_score == 4.75
+    assert updated.hook_plan.source_ids == ["source_001"]
+
+    mismatched = updated.model_copy(
+        update={
+            "hook_plan": updated.hook_plan.model_copy(
+                update={"curiosity_question": "What happened instead?"}
+            )
+        }
+    )
+    with pytest.raises(ValueError, match="does not appear in the spoken opening"):
+        ScriptEngine._validate_hook_metadata(mismatched, create_research())
 
 
 def test_script_quality_repair_revises_only_flagged_section(tmp_path):
@@ -631,7 +982,7 @@ def test_script_profile_and_duration_pacing_are_configurable():
     assert "Aim for about 240 spoken words" in system_prompt
     assert "240 spoken words (120 seconds)" in user_prompt
     assert ScriptEngine._calculate_duration_seconds(240, 120) == 120
-    assert ScriptEngine._ten_second_hook_word_target(140) == 30
+    assert ScriptEngine._hook_word_bounds(140) == (47, 81)
 
 
 def test_script_input_fingerprint_tracks_profile_pacing_and_research():
@@ -724,7 +1075,7 @@ def test_profiled_script_validation_rejects_a_short_opening_hook():
         }
     )
 
-    with pytest.raises(ValueError, match="roughly 10-second opening"):
+    with pytest.raises(ValueError, match="20–35-second opening"):
         ScriptEngine._validate_script(
             script,
             create_research(),
@@ -757,25 +1108,27 @@ def test_script_validation_enforces_configured_maximum_duration():
         )
 
 
-def test_script_prompts_require_a_ten_second_spoken_hook():
+def test_script_prompts_require_a_twenty_to_thirty_five_second_spoken_hook():
     prompt = ScriptEngine._build_user_prompt(
         create_research(),
         create_outline(),
     )
 
-    assert "about 30 spoken words (roughly 10 seconds)" in prompt
+    assert "about 20–35 seconds" in prompt
+    assert "modern problem" in prompt
+    assert "Do not force an artificial modern comparison" in ScriptEngine._system_prompt()
     assert "first spoken words of the first hook section" in prompt
-    assert "Script.hook field must match this opening text" in prompt
-    assert "do not repeat the hook later" in prompt
+    assert "Keep Script.hook exactly equal to this opening" in prompt
+    assert "do not repeat it later" in prompt
 
 
-def test_ten_second_hook_target_scales_and_stays_within_validation_range():
-    assert ScriptEngine._ten_second_hook_word_target(80) == 17
-    assert ScriptEngine._ten_second_hook_word_target(140) == 30
-    assert ScriptEngine._ten_second_hook_word_target(220) == 38
+def test_hook_word_bounds_scale_to_twenty_thirty_five_seconds():
+    assert ScriptEngine._hook_word_bounds(80) == (27, 46)
+    assert ScriptEngine._hook_word_bounds(140) == (47, 81)
+    assert ScriptEngine._hook_word_bounds(220) == (74, 128)
 
 
-def test_script_retry_prompts_preserve_the_ten_second_hook():
+def test_script_retry_prompts_preserve_the_twenty_to_thirty_five_second_hook():
     research = create_research()
     outline = create_outline()
 
@@ -791,5 +1144,5 @@ def test_script_retry_prompts_preserve_the_ten_second_hook():
         config=ProductionConfig(),
     )
 
-    assert "opening hook of about 30 words" in expansion_prompt
-    assert "opening hook of about 30 words" in contraction_prompt
+    assert "opening hook of 47–81 words (about 20–35 seconds)" in expansion_prompt
+    assert "opening hook of 47–81 words (about 20–35 seconds)" in contraction_prompt

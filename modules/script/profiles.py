@@ -21,8 +21,13 @@ RITZZ_ANCIENT_HUMAN_CURIOSITY = ScriptProfile(
     ),
     narrative_principles=(
         (
-            "Lead with a specific curiosity gap that matters to a present-day viewer; "
-            "connect to modern experience only when the approved topic and research support it."
+            "Prefer a concrete present-day problem and familiar solution, then connect it "
+            "to the same problem in the ancient world when the approved topic and research "
+            "support that comparison; never force a modern parallel."
+        ),
+        (
+            "Open a question about how people solved the ancient problem, withhold the full "
+            "answer, and make the first investigation begin answering that exact question."
         ),
         (
             "Establish one central mystery, then let each major movement answer one question "

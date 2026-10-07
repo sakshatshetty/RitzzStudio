@@ -39,9 +39,21 @@ class ScriptSection(BaseModel):
 
 class ScriptHookPlan(BaseModel):
     modern_connection: str = ""
+    modern_situation: str = ""
+    modern_solution: str = ""
+    shared_problem: str = ""
+    ancient_problem: str = ""
     central_question: str = ""
+    curiosity_question: str = ""
     open_loop: str = ""
+    open_loop_description: str = ""
     stakes: str = ""
+    stakes_description: str = ""
+    visual_opportunity: str = ""
+    first_investigation: str = ""
+    modern_connection_applicable: bool = False
+    quality_score: float = Field(default=0, ge=0, le=5)
+    source_ids: list[str] = Field(default_factory=list)
 
 
 class NarrativeMovement(BaseModel):
@@ -56,6 +68,7 @@ class NarrativeMovement(BaseModel):
 
 class ScriptQualityChecks(BaseModel):
     hook: Literal["PASS", "REVIEW", "FAIL"]
+    hook_continuity: Literal["PASS", "REVIEW", "FAIL"]
     central_mystery: Literal["PASS", "REVIEW", "FAIL"]
     evolving_questions: Literal["PASS", "REVIEW", "FAIL"]
     section_purpose: Literal["PASS", "REVIEW", "FAIL"]
