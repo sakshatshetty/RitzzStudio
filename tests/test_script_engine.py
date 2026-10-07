@@ -12,6 +12,7 @@ from modules.research.models import (
 )
 from modules.script.engine import ScriptEngine
 from modules.script.hook_quality import HookCandidateScores, HookQualityReview
+from modules.script.profiles import get_script_profile
 from modules.script.models import (
     NarrativeMovement,
     Script,
@@ -941,6 +942,129 @@ def test_system_prompt_bans_generic_suspense_filler_and_shows_the_required_shift
     assert "generic suspense filler" in system_prompt
     assert "Weak pattern to avoid" in system_prompt
     assert "Apply this shift throughout every section" in system_prompt
+
+
+def test_profile_offers_retention_techniques_as_a_context_gated_menu():
+    """The narrative techniques are a menu the model selects from based on
+    what the topic and research actually support, not a per-script checklist."""
+    profile = get_script_profile("RITZZ_ANCIENT_HUMAN_CURIOSITY")
+    instructions = profile.instructions()
+    # Each technique is explicitly conditional ("when"/"consider"), not mandatory.
+    assert "open inside that ancient scene instead" in instructions
+    assert "sustaining one continuous concrete scene" in instructions
+    assert "narrating that scrutiny as part of the evidence" in instructions
+    assert "a prediction the viewer makes and then loses" in instructions
+    assert "their day, week, or body" in instructions
+    assert "narrating it as a mechanism closing in explicit causal steps" in instructions
+    assert "echo the opening's specific concrete image" in instructions
+    # The menu framing itself must be explicit so none of the above are forced.
+    assert "a menu, not a checklist" in instructions
+    assert "skip any that would feel forced" in instructions
+    assert instructions in ScriptEngine._system_prompt()
+
+
+def test_hook_evaluator_prompt_varies_opening_order_by_topic_fit(tmp_path):
+    captured: dict = {}
+    script = create_script()
+    old_hook = (
+        "This is a weak opening hook with very little curiosity or specificity."
+    )
+    first_section = script.sections[0].model_copy(
+        update={"narration": f"{old_hook} The remaining spoken section continues."}
+    )
+    script = script.model_copy(
+        update={"hook": old_hook, "sections": [first_section, *script.sections[1:]]}
+    )
+    def weak_candidate(text: str, mechanism: str) -> HookCandidateScores:
+        return HookCandidateScores(
+            text=text,
+            curiosity_mechanism=mechanism,
+            curiosity=2,
+            tension=2,
+            specificity=2,
+            stakes=2,
+            novelty=2,
+            clarity=2,
+            open_loop=2,
+            payoff_promise=2,
+            factual_support=4,
+            source_ids=["source_001"],
+        )
+
+    passing_review = HookQualityReview(
+        current=weak_candidate(old_hook, "GENERIC_OPENING"),
+        alternatives=[
+            weak_candidate("A still-too-weak first alternative hook.", "MODERN_CONTRAST"),
+            weak_candidate("A still-too-weak second alternative hook.", "ASSUMPTION_REVERSAL"),
+            weak_candidate("A still-too-weak third alternative hook.", "CONSTRAINT"),
+        ],
+    )
+
+    class FakeResponses:
+        def parse(self, **kwargs):
+            captured["input"] = kwargs["input"]
+            return SimpleNamespace(output_parsed=passing_review)
+
+    engine = ScriptEngine.__new__(ScriptEngine)
+    engine.client = SimpleNamespace(responses=FakeResponses())
+
+    with pytest.raises(ValueError):
+        engine._review_and_strengthen_hook(script, create_research(), tmp_path)
+
+    system_message = next(
+        message["content"]
+        for message in captured["input"]
+        if message["role"] == "system"
+    )
+    assert "vary opening order across candidates" in system_message
+    assert "concrete ancient scene before any modern comparison" in system_message
+
+
+def test_narrative_reviewer_prompt_asks_for_earned_not_asserted_evidence(tmp_path):
+    captured: dict = {}
+    script = create_script().model_copy(
+        update={
+            "script_profile": "RITZZ_ANCIENT_HUMAN_CURIOSITY",
+            "hook_plan": ScriptHookPlan(
+                central_question="How did this work?",
+                open_loop="The evidence suggests a less obvious answer.",
+                stakes="The explanation changes how we see daily life.",
+            ),
+            "narrative_arc": [
+                _movement("s1", reveal="The opening establishes a real puzzle."),
+                _movement("s2", reveal="The closing supplies the supported answer."),
+            ],
+            "final_payoff": "The conclusion resolves the opening mystery.",
+            "viewer_connection": "The same question matters to modern viewers.",
+        }
+    )
+    passing_review = _quality_review("PASS")
+
+    class FakeResponses:
+        def parse(self, **kwargs):
+            captured["input"] = kwargs["input"]
+            return SimpleNamespace(output_parsed=passing_review)
+
+    engine = ScriptEngine.__new__(ScriptEngine)
+    engine.client = SimpleNamespace(responses=FakeResponses())
+    script_directory = tmp_path / "project" / "script"
+    script_directory.mkdir(parents=True)
+
+    engine._review_and_repair_narrative(
+        script,
+        create_research(),
+        create_outline(),
+        script_directory,
+        ProductionConfig(),
+    )
+
+    system_message = next(
+        message["content"]
+        for message in captured["input"]
+        if message["role"] == "system"
+    )
+    assert "doubted, tested, or independently replicated" in system_message
+    assert "WEAK_EVIDENCE" in system_message
 
 
 def test_hook_evaluator_prompt_bans_generic_suspense_filler(tmp_path):
