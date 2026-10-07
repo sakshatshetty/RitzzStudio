@@ -12,7 +12,6 @@ from modules.research.models import (
 )
 from modules.script.engine import ScriptEngine
 from modules.script.hook_quality import HookCandidateScores, HookQualityReview
-from modules.script.profiles import get_script_profile
 from modules.script.models import (
     NarrativeMovement,
     Script,
@@ -23,6 +22,7 @@ from modules.script.models import (
     ScriptSection,
     ScriptSectionRevision,
 )
+from modules.script.profiles import get_script_profile
 
 
 def create_research() -> Research:
@@ -481,14 +481,17 @@ def test_hook_quality_rejects_a_weak_hook_without_supported_replacement(tmp_path
         ],
     )
 
+    captured_inputs = []
+
     class FakeResponses:
-        def parse(self, **_kwargs):
+        def parse(self, **kwargs):
+            captured_inputs.append(kwargs["input"])
             return SimpleNamespace(output_parsed=weak_review)
 
     engine = ScriptEngine.__new__(ScriptEngine)
     engine.client = SimpleNamespace(responses=FakeResponses())
 
-    with pytest.raises(ValueError, match="factual-support"):
+    with pytest.raises(ValueError, match="Factual support"):
         engine._review_and_strengthen_hook(
             script,
             create_research(),
@@ -498,6 +501,24 @@ def test_hook_quality_rejects_a_weak_hook_without_supported_replacement(tmp_path
     report = json.loads((tmp_path / "hook_evaluation.json").read_text())
     assert report["status"] == "FAIL"
     assert report["iterations"][0]["alternatives"][0]["eligible"] is False
+    assert any(
+        "minimum is 47" in reason
+        for reason in report["blocking_reasons"]
+    )
+    retry_prompt = str(captured_inputs[1])
+    assert "Hook has 34 words; minimum is 47." in retry_prompt
+    assert "target approximately" in retry_prompt
+
+
+def test_hook_candidate_rejection_reasons_explain_short_word_count():
+    candidate = _qualified_hook_candidate(text="A hook that is much too short.")
+
+    assert ScriptEngine._hook_candidate_rejection_reasons(
+        candidate,
+        47,
+        81,
+        {"source_001"},
+    )[0] == "Hook has 7 words; minimum is 47."
 
 
 def test_hook_gate_does_not_force_a_modern_comparison_for_topic_specific_hooks():

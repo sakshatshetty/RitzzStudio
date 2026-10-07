@@ -2,7 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from modules.storyboard.visual_models import SceneVisualContract
+from modules.storyboard.visual_models import ScenePurpose, SceneVisualContract
 
 VisualStyle = Literal[
     "stickman",
@@ -78,6 +78,10 @@ class StoryboardScene(BaseModel):
     props: list[str] = Field(
         default_factory=list
     )
+    scene_purpose: ScenePurpose = "EXPLAIN"
+    visual_weight: int = Field(default=3, ge=1, le=5)
+    narration_density: float = Field(default=0, ge=0)
+    hold_reason: str = ""
 
     # Editorial words are rendered as part of selected generated images.
     text_overlay: str = Field(

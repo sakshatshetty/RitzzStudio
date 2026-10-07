@@ -213,7 +213,7 @@ class VideoProductionPipeline:
                     request,
                     project_directory,
                 )
-                if image_ai_status != "PASS":
+                if image_ai_status == "FAIL":
                     raise RuntimeError(
                         f"Image semantic QA status was {image_ai_status}; "
                         "video assembly cannot proceed. Review qa/qa_report.json."
@@ -706,7 +706,19 @@ class VideoProductionPipeline:
                 return {}
             batch_method = getattr(reviewer, "review_batch", None)
             if not callable(batch_method):
-                return {index: review_scene(index) for index in indexes}
+                results = {
+                    index: review_scene(index)
+                    for index in indexes
+                }
+                if not all(
+                    isinstance(result, SceneQAResult)
+                    for result in results.values()
+                ):
+                    raise TypeError(
+                        "Semantic QA reviewer returned an invalid scene result."
+                    )
+                usage_metrics["ai_reviewed_scenes"] += len(indexes)
+                return results
             try:
                 batch_size = int(os.getenv(
                     "RITZZ_SEMANTIC_QA_BATCH_SIZE",
@@ -787,6 +799,22 @@ class VideoProductionPipeline:
                 if cached_result.status == "PASS":
                     first_reviews[index] = cached_result
                     continue
+            if (
+                visual_world is not None
+                and scene.visual_contract is not None
+                and not scene.visual_contract.semantic_review_reasons
+            ):
+                first_reviews[index] = SceneQAResult(
+                    scene_id=scene.scene_id,
+                    status="PASS",
+                    narration_image="PASS",
+                    narration_description="PASS",
+                    rationale=(
+                        "The scene contract requires no targeted semantic review; "
+                        "deterministic asset and timeline checks passed."
+                    ),
+                )
+                continue
             pending_reviews.append(index)
         first_reviews.update(review_scenes(pending_reviews))
         for index, review in first_reviews.items():

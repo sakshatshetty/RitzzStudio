@@ -57,6 +57,17 @@ class AudioTimedStoryboardEngine:
         "pause": 3,
         "word_fallback": 1,
     }
+    LONG_HOLD_REASONS: ClassVar[set[str]] = {
+        "SUSTAINED_SCENE_SETTING",
+        "SINGLE_VISUAL_IDEA",
+        "DELIBERATE_EXPLANATION",
+        "REVEAL",
+    }
+    SHORT_HOLD_REASONS: ClassVar[set[str]] = {
+        "HIGH_INFORMATION_DENSITY",
+        "RAPID_VISUAL_BEAT",
+        "DISCRETE_VISUAL_BEAT",
+    }
 
     def __init__(self, prompt_builder: ImagePromptBuilder | None = None,
                  production_config: ProductionConfig | None = None) -> None:
@@ -82,6 +93,7 @@ class AudioTimedStoryboardEngine:
                           end_seconds=match["end_seconds"],
                           boundary_before=self._boundary_before(
                               storyboard.scenes[index - 1] if index else None,
+                              scene,
                               match["start_seconds"],
                               timing_matches[index - 1]["end_seconds"] if index else 0.0,
                           ))
@@ -203,6 +215,17 @@ class AudioTimedStoryboardEngine:
             scene.duration_seconds >= config.scene_minimum_duration_seconds
             for scene in storyboard.scenes
         )
+        hold_rationale_findings = [
+            f"{scene.scene_id}: {scene.duration_seconds:.3f}s hold has no "
+            f"valid rationale ({scene.hold_reason or 'missing'})."
+            for scene in storyboard.scenes
+            if not AudioTimedStoryboardEngine._valid_hold_rationale(scene)
+        ]
+        hold_rationale_findings.extend(
+            f"{scene.scene_id}: no natural cut boundary was found within this long hold."
+            for scene in storyboard.scenes
+            if scene.hold_reason == "NO_NATURAL_BOUNDARY_FOUND"
+        )
         findings = []
         if not timeline_valid:
             findings.append("Storyboard timing has gaps, overlaps, or incomplete coverage.")
@@ -216,6 +239,7 @@ class AudioTimedStoryboardEngine:
             findings.append("One or more scenes exceed the configured visual hold maximum.")
         if not preferred_pacing:
             findings.append("One or more scenes are shorter than the configured minimum.")
+        findings.extend(hold_rationale_findings)
         if any(scene.timing_boundary == "word_fallback" for scene in storyboard.scenes[1:]):
             findings.append(
                 "One or more cuts use a word boundary because no natural clause or pause "
@@ -236,7 +260,7 @@ class AudioTimedStoryboardEngine:
             if any(
                 scene.timing_boundary == "word_fallback"
                 for scene in storyboard.scenes[1:]
-            )
+            ) or hold_rationale_findings
             else "PASS"
         )
         return QAStageResult(
@@ -250,6 +274,9 @@ class AudioTimedStoryboardEngine:
                 "maximum_scene_duration": "PASS" if maximum_duration_valid else "FAIL",
                 "minimum_scene_duration": "PASS" if preferred_pacing else "FAIL",
                 "preferred_scene_pacing": "PASS" if preferred_pacing else "FAIL",
+                "variable_hold_rationale": (
+                    "REVIEW" if hold_rationale_findings else "PASS"
+                ),
                 "natural_cut_boundaries": (
                     "REVIEW"
                     if any(scene.timing_boundary == "word_fallback" for scene in storyboard.scenes[1:])
@@ -263,6 +290,31 @@ class AudioTimedStoryboardEngine:
                 else []
             ),
         )
+
+    @classmethod
+    def _valid_hold_rationale(cls, scene: StoryboardScene) -> bool:
+        if scene.duration_seconds < 2:
+            if scene.hold_reason not in cls.SHORT_HOLD_REASONS:
+                return False
+            if scene.hold_reason == "HIGH_INFORMATION_DENSITY":
+                return scene.narration_density >= 2.5
+            if scene.hold_reason == "DISCRETE_VISUAL_BEAT":
+                return scene.visual_weight >= 4
+            return scene.narration_density < 2.5 and scene.visual_weight < 4
+        if scene.duration_seconds > 6:
+            if scene.hold_reason not in cls.LONG_HOLD_REASONS:
+                return False
+            if scene.hold_reason == "SUSTAINED_SCENE_SETTING":
+                return scene.scene_purpose == "ESTABLISH"
+            if scene.hold_reason == "SINGLE_VISUAL_IDEA":
+                return scene.visual_weight <= 2
+            if scene.hold_reason == "REVEAL":
+                return scene.scene_purpose == "REVEAL"
+            return (
+                scene.scene_purpose == "EXPLAIN"
+                and scene.narration_density < 2.5
+            )
+        return True
 
     @staticmethod
     def _repair_storyboard(storyboard: Storyboard) -> Storyboard:
@@ -372,9 +424,13 @@ class AudioTimedStoryboardEngine:
                     boundary_score += priority * 100
                     if visual_change:
                         boundary_score += 25
-                boundary_score -= abs(
-                    duration - self.preferred_visual_hold_seconds
-                ) * 10
+                target_hold = self._target_hold_seconds(
+                    aligned[start_index:end_index],
+                    duration,
+                    self.minimum_visual_hold_seconds,
+                    self.maximum_visual_hold_seconds,
+                )
+                boundary_score -= abs(duration - target_hold) * 10
                 candidate_score = prior_score + boundary_score
                 current_score = scores[end_index]
                 if current_score is None or candidate_score > current_score:
@@ -442,19 +498,114 @@ class AudioTimedStoryboardEngine:
             ),
             first.background,
         )
+        visual_weight = self._visual_weight(group)
+        narration_density = len(narration.split()) / max(duration_seconds, 0.001)
         merged = StoryboardScene(
             scene_id=f"scene_{number:03d}", section_id=first.section_id,
             start_seconds=start_seconds, duration_seconds=duration_seconds,
             narration=narration, visual_style=first.visual_style,
             visual_description=visual_description,
             character_action=action, background=background,
-            props=props, text_overlay="",
+            props=props,
+            scene_purpose=first.scene_purpose,
+            visual_weight=visual_weight,
+            narration_density=narration_density,
+            hold_reason=self._hold_reason(
+                group,
+                duration_seconds,
+                narration_density,
+                visual_weight,
+            ),
+            text_overlay="",
             timing_boundary=group[0].boundary_before,
             camera_motion="static", transition="cut",
             research_sources=sources, image_prompt="audio-timed placeholder",
         )
         merged.image_prompt = self.prompt_builder.build(merged)
         return merged
+
+    @classmethod
+    def _target_hold_seconds(
+        cls,
+        group: list[_AlignedScene],
+        duration: float,
+        minimum: float,
+        maximum: float,
+    ) -> float:
+        narration_density = sum(
+            len(item.scene.narration.split()) for item in group
+        ) / max(duration, 0.001)
+        density_factor = min(1.0, max(0.0, (narration_density - 1.2) / 2.4))
+        visual_factor = (cls._visual_weight(group) - 1) / 4
+        purpose = group[0].scene.scene_purpose
+        purpose_adjustment = (
+            0.08
+            if purpose in {"ESTABLISH", "REVEAL"}
+            else -0.08
+            if purpose in {"SHOW_PROCESS", "TRANSITION"}
+            else 0.0
+        )
+        preferred_fraction = min(
+            1.0,
+            max(
+                0.0,
+                1.0 - (0.65 * density_factor + 0.35 * visual_factor)
+                + purpose_adjustment,
+            ),
+        )
+        return minimum + (maximum - minimum) * preferred_fraction
+
+    @classmethod
+    def _visual_weight(cls, group: list[_AlignedScene]) -> int:
+        descriptions = {
+            cls._base_visual_description(item.scene).casefold()
+            for item in group
+            if cls._base_visual_description(item.scene)
+        }
+        actions = {
+            item.scene.character_action.strip().casefold()
+            for item in group
+            if item.scene.character_action.strip()
+        }
+        props = {
+            prop.strip().casefold()
+            for item in group
+            for prop in item.scene.props
+            if prop.strip()
+        }
+        distinct_visuals = len(descriptions) + len(actions) + min(2, len(props))
+        return min(5, max(1, distinct_visuals))
+
+    @classmethod
+    def _hold_reason(
+        cls,
+        group: list[_AlignedScene],
+        duration: float,
+        narration_density: float,
+        visual_weight: int,
+    ) -> str:
+        purpose = group[0].scene.scene_purpose
+        natural_internal_boundary = any(
+            item.boundary_before in {"sentence", "clause", "pause"}
+            for item in group[1:]
+        )
+        if duration >= 8 and not natural_internal_boundary:
+            return "NO_NATURAL_BOUNDARY_FOUND"
+        if duration <= 2:
+            if narration_density >= 2.5:
+                return "HIGH_INFORMATION_DENSITY"
+            if visual_weight >= 4:
+                return "DISCRETE_VISUAL_BEAT"
+            return "RAPID_VISUAL_BEAT"
+        if duration >= 5:
+            if purpose == "ESTABLISH":
+                return "SUSTAINED_SCENE_SETTING"
+            if purpose == "REVEAL":
+                return "REVEAL"
+            if visual_weight <= 2:
+                return "SINGLE_VISUAL_IDEA"
+            return "DELIBERATE_EXPLANATION"
+        return "NORMAL_EXPLANATION"
 
     @staticmethod
     def _ends_sentence(narration: str) -> bool:
@@ -464,6 +615,7 @@ class AudioTimedStoryboardEngine:
     def _boundary_before(
         cls,
         previous_scene: StoryboardScene | None,
+        current_scene: StoryboardScene,
         start_seconds: float,
         previous_end_seconds: float,
     ) -> TimingBoundary:
@@ -473,7 +625,13 @@ class AudioTimedStoryboardEngine:
             return "sentence"
         if start_seconds - previous_end_seconds >= cls.STRONG_NARRATION_PAUSE_SECONDS:
             return "pause"
-        return "clause"
+        if re.search(r"[,;:—]$", previous_scene.narration.strip()) or re.match(
+            r"^(?:and|but|because|while|although|whereas|which|so|when|before|after|then)\b",
+            current_scene.narration.strip(),
+            re.IGNORECASE,
+        ):
+            return "clause"
+        return "word_fallback"
 
     def _expand_to_aligned_words(
         self,

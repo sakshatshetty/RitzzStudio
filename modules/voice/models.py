@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 from modules.voice.text import ensure_terminal_punctuation
 
@@ -54,6 +54,8 @@ class VoiceGenerationRequest(BaseModel):
         "eleven_multilingual_v2"
     )
 
+    preserve_text: bool = False
+
     text: str = Field(
         min_length=1
     )
@@ -79,9 +81,15 @@ class VoiceGenerationRequest(BaseModel):
 
     @field_validator("text")
     @classmethod
-    def prepare_text_for_speech(cls, value: str) -> str:
+    def prepare_text_for_speech(
+        cls,
+        value: str,
+        info: ValidationInfo,
+    ) -> str:
         if not value.strip():
             raise ValueError("Narration text cannot be blank.")
+        if info.data.get("preserve_text"):
+            return value
         return ensure_terminal_punctuation(value)
 
 

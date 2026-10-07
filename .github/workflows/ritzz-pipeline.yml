@@ -1,4 +1,4 @@
-name: RITZZ Video Pipeline
+name: RITZZ Legacy Generated-Creative Pipeline
 
 on:
   workflow_dispatch:

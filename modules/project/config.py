@@ -24,8 +24,8 @@ class ProductionConfig(BaseModel):
     minimum_duration_seconds: int = Field(default=480, ge=1)
     words_per_minute: int = Field(default=140, ge=80, le=220)
     script_profile: str = "RITZZ_ANCIENT_HUMAN_CURIOSITY"
-    scene_minimum_duration_seconds: float = Field(default=3.0, ge=3.0)
-    scene_maximum_duration_seconds: float = Field(default=4.0, gt=0, le=4.0)
+    scene_minimum_duration_seconds: float = Field(default=3.0, ge=1.0)
+    scene_maximum_duration_seconds: float = Field(default=4.0, gt=0, le=10.0)
     constraints: list[str] = Field(default_factory=list)
     hook_quality_weights: dict[str, float] = Field(
         default_factory=lambda: DEFAULT_HOOK_QUALITY_WEIGHTS.copy()

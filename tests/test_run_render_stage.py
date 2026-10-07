@@ -1,3 +1,4 @@
+import hashlib
 import json
 from types import SimpleNamespace
 
@@ -6,6 +7,7 @@ import pytest
 from modules.project.manager import ProjectManager
 from scripts import run_render_stage
 from scripts.run_render_stage import (
+    _copy_supplied_thumbnail,
     _reject_semantic_qa_fail,
     _reuse_or_create_thumbnail,
     _validate_production_render_format,
@@ -99,6 +101,40 @@ def test_invalid_existing_thumbnail_is_not_silently_replaced(tmp_path, monkeypat
             "Title",
             probe_media=lambda _path: {"width": 640, "height": 360},
         )
+
+
+def test_supplied_thumbnail_is_copied_exactly_without_generation(tmp_path, monkeypatch):
+    project_directory = tmp_path / "project"
+    source_directory = project_directory / "creative_input"
+    source_directory.mkdir(parents=True)
+    source = source_directory / "thumbnail.png"
+    source.write_bytes(b"supplied PNG bytes")
+    (source_directory / "acceptance.json").write_text(
+        json.dumps(
+            {
+                "status": "ACCEPTED",
+                "manifest": {"thumbnail_file": "thumbnail.png"},
+                "source_files_sha256": {
+                    "thumbnail.png": hashlib.sha256(
+                        b"supplied PNG bytes"
+                    ).hexdigest()
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "scripts.run_render_stage.inspect_image_asset",
+        lambda _path: SimpleNamespace(width=1280, height=720),
+    )
+
+    result = _copy_supplied_thumbnail(
+        project_directory,
+        tmp_path / "video",
+    )
+
+    assert result == tmp_path / "video" / "thumbnail.png"
+    assert result.read_bytes() == source.read_bytes()
 
 
 def test_main_generates_thumbnail_after_successful_render(tmp_path, monkeypatch):

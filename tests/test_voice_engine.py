@@ -161,6 +161,40 @@ def test_build_narration_adds_terminal_punctuation_per_section():
     assert narration.startswith("A pirate waits below deck.")
 
 
+def test_user_supplied_narration_is_not_modified_or_auto_rewritten(tmp_path):
+    script = make_script().model_copy(
+        update={
+            "user_supplied": True,
+            "script_profile": "",
+            "sections": [
+                make_script().sections[0].model_copy(
+                    update={"narration": "  Keep this wording exactly\n"}
+                )
+            ],
+        }
+    )
+    assert VoiceEngine._build_narration(script) == "  Keep this wording exactly\n"
+
+    request = VoiceEngine(provider=MockVoiceProvider()).create_request(
+        script=script,
+        voice_id="ritzz_voice",
+        output_directory=tmp_path / "voice",
+    )
+    assert request.text == "  Keep this wording exactly\n"
+
+    script_file = tmp_path / "script.json"
+    script_file.write_text(script.model_dump_json(), encoding="utf-8")
+    provider = MockVoiceProvider()
+    engine = VoiceEngine(provider, duration_probe=lambda _: 30.0)
+    with pytest.raises(NarrationTooShortError):
+        engine.create_voice(
+            script_file,
+            "ritzz_voice",
+            tmp_path / "voice",
+        )
+    assert len(provider.requests) == 1
+
+
 def test_create_request():
     script = make_script()
 

@@ -287,8 +287,8 @@ class PublishingEngine:
             return self.publish_video(
                 project=project,
                 video_file=video_file,
-                title=artifact.selected_title.strip(),
-                description=artifact.metadata.description.strip(),
+                title=artifact.selected_title,
+                description=artifact.metadata.description,
                 metadata=metadata,
                 scheduled_for=scheduled_for,
                 upload_details=upload_details,
@@ -297,8 +297,8 @@ class PublishingEngine:
         return self.publish_video(
             project=project,
             video_file=video_file,
-            title=artifact.selected_title.strip(),
-            description=artifact.metadata.description.strip(),
+            title=artifact.selected_title,
+            description=artifact.metadata.description,
             metadata={**metadata, "privacy_status": "private"},
             upload_details=upload_details,
         )

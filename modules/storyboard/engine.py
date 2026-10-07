@@ -1,6 +1,7 @@
 import json
 from math import ceil
 from pathlib import Path
+from typing import ClassVar
 
 from modules.project.config import ProductionConfig
 from modules.script.models import Script
@@ -9,10 +10,22 @@ from modules.storyboard.models import (
     Storyboard,
     StoryboardScene,
 )
+from modules.storyboard.visual_models import ScenePurpose
 
 
 class StoryboardEngine:
     """Creates and manages visual storyboards for Ritzz videos."""
+
+    SCENE_PURPOSE_BY_SECTION: ClassVar[dict[str, ScenePurpose]] = {
+        "hook": "ESTABLISH",
+        "setup": "ESTABLISH",
+        "question": "EXPLAIN",
+        "explanation": "EXPLAIN",
+        "myth": "COMPARE",
+        "context": "ESTABLISH",
+        "payoff": "REVEAL",
+        "conclusion": "SUMMARY",
+    }
 
     def __init__(
         self,
@@ -228,6 +241,10 @@ class StoryboardEngine:
                         "the narration."
                     ),
                     props=[],
+                    scene_purpose=self.SCENE_PURPOSE_BY_SECTION.get(
+                        section.section_type,
+                        "EXPLAIN",
+                    ),
                     text_overlay=editorial_text,
                     camera_motion=camera_motion,
                     transition=transition,

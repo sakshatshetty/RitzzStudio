@@ -93,6 +93,7 @@ class VoiceEngine:
         return VoiceGenerationRequest(
             voice_id=voice_id,
             model_id=model_id,
+            preserve_text=script.user_supplied,
             text=text,
             output_directory=str(output_directory),
             output_filename=output_filename,
@@ -418,6 +419,8 @@ class VoiceEngine:
         try:
             return self.generate(request)
         except NarrationTooShortError as exc:
+            if script.user_supplied:
+                raise
             return self.generate(regenerate_request(str(exc)))
         except OpeningHookValidationError as exc:
             feedback = (
@@ -439,8 +442,10 @@ class VoiceEngine:
         parts: list[str] = []
 
         for section in script.sections:
-            narration = ensure_terminal_punctuation(
+            narration = (
                 section.narration
+                if script.user_supplied
+                else ensure_terminal_punctuation(section.narration)
             )
 
             if narration:

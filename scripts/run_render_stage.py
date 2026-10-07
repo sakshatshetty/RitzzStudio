@@ -1,12 +1,13 @@
 """Render and technically validate the approved test project."""
 
+import hashlib
 import json
 import os
 import shutil
 import subprocess
 import sys
 from collections.abc import Callable
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -16,6 +17,7 @@ from modules.image.image_overlays import create_thumbnail
 from modules.project.manager import ProjectManager
 from modules.project.packaging import PackagingArtifact
 from modules.storyboard.engine import StoryboardEngine
+from modules.video.image_asset_qa import inspect_image_asset
 from modules.video.pipeline_engine import VideoProductionPipeline
 
 
@@ -87,6 +89,68 @@ def _reuse_or_create_thumbnail(
     return create_thumbnail(source_image, thumbnail, title)
 
 
+def _copy_supplied_thumbnail(
+    project_directory: str | Path,
+    output_directory: str | Path,
+) -> Path | None:
+    project_path = Path(project_directory)
+    acceptance_path = project_path / "creative_input" / "acceptance.json"
+    if not acceptance_path.is_file():
+        return None
+
+    acceptance = json.loads(acceptance_path.read_text(encoding="utf-8"))
+    if acceptance.get("status") != "ACCEPTED":
+        raise RuntimeError("Creative package has not completed input acceptance.")
+    manifest = acceptance.get("manifest")
+    if not isinstance(manifest, dict):
+        raise TypeError("Accepted creative package is missing its manifest.")
+    relative = manifest.get("thumbnail_file")
+    if not isinstance(relative, str) or "\\" in relative:
+        raise RuntimeError("Accepted creative package has an invalid thumbnail path.")
+    thumbnail_relative = PurePosixPath(relative)
+    if (
+        thumbnail_relative.is_absolute()
+        or not thumbnail_relative.parts
+        or any(part in {"", ".", ".."} for part in thumbnail_relative.parts)
+        or any(":" in part for part in thumbnail_relative.parts)
+    ):
+        raise RuntimeError("Accepted creative package has an unsafe thumbnail path.")
+
+    source = project_path / "creative_input"
+    for part in thumbnail_relative.parts:
+        source = source / part
+    if not source.is_file():
+        raise FileNotFoundError(
+            f"Supplied creative thumbnail is missing: {thumbnail_relative.as_posix()}"
+        )
+    source_hashes = acceptance.get("source_files_sha256")
+    expected_hash = (
+        source_hashes.get(thumbnail_relative.as_posix())
+        if isinstance(source_hashes, dict)
+        else None
+    )
+    if (
+        not isinstance(expected_hash, str)
+        or hashlib.sha256(source.read_bytes()).hexdigest() != expected_hash
+    ):
+        raise RuntimeError("Supplied thumbnail failed its creative ZIP integrity check.")
+    inspection = inspect_image_asset(source)
+    if (
+        inspection.width < 1280
+        or inspection.height < 720
+        or inspection.width * 9 != inspection.height * 16
+    ):
+        raise RuntimeError(
+            "Supplied thumbnail must be 16:9 and at least 1280x720."
+        )
+    destination = Path(output_directory) / "thumbnail.png"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, destination)
+    if destination.read_bytes() != source.read_bytes():
+        raise RuntimeError("Supplied thumbnail was not copied byte-for-byte.")
+    return destination
+
+
 def main() -> int:
     project_id = os.environ["RITZZ_PROJECT_ID"]
     project_manager = ProjectManager(Path("projects"))
@@ -122,13 +186,18 @@ def main() -> int:
     artifact = PackagingArtifact.from_dict(
         json.loads(packaging_file.read_text(encoding="utf-8"))
     )
-    thumbnail_file = output_directory / "thumbnail.jpg"
-    _reuse_or_create_thumbnail(
-        thumbnail_file,
-        image_directory / f"{storyboard.scenes[0].scene_id}.png",
-        artifact.selected_title,
-        probe_media=pipeline.renderer._probe_media,
+    thumbnail_file = _copy_supplied_thumbnail(
+        project_directory,
+        output_directory,
     )
+    if thumbnail_file is None:
+        thumbnail_file = output_directory / "thumbnail.jpg"
+        _reuse_or_create_thumbnail(
+            thumbnail_file,
+            image_directory / f"{storyboard.scenes[0].scene_id}.png",
+            artifact.selected_title,
+            probe_media=pipeline.renderer._probe_media,
+        )
     if not thumbnail_file.is_file() or thumbnail_file.stat().st_size == 0:
         raise RuntimeError(
             f"Thumbnail generation did not produce a valid file: {thumbnail_file}"

@@ -33,6 +33,41 @@ def main() -> int:
     timed_file = storyboard_directory / "storyboard_audio_timed.json"
 
     config = ProductionConfig.model_validate_json(config_file.read_text(encoding="utf-8"))
+    if os.environ.get("RITZZ_RESUME") == "true" and timed_file.is_file():
+        timed = Storyboard.model_validate_json(
+            timed_file.read_text(encoding="utf-8")
+        )
+        alignment = VideoSynchronizationEngine.load_narration_alignment(
+            narration_result_file
+        )
+        if timed.topic != project.title or not timed.scenes:
+            raise ValueError(
+                "Saved audio-timed storyboard does not match the accepted project."
+            )
+        if any(
+            scene.visual_contract is None
+            or not scene.image_prompt.strip()
+            or scene.camera_motion != "static"
+            or scene.transition != "cut"
+            for scene in timed.scenes
+        ):
+            raise ValueError(
+                "Saved audio-timed storyboard is incomplete or violates static hard-cut requirements."
+            )
+        VideoSynchronizationEngine._validate_alignment(alignment)
+        VideoSynchronizationEngine()._match_scene_narration(timed, alignment)
+        AudioTimedStoryboardEngine._validate_timeline(
+            timed,
+            alignment.audio_duration_seconds,
+            config.scene_minimum_duration_seconds,
+            config.scene_maximum_duration_seconds,
+        )
+        print(
+            f"Reusing saved context-driven storyboard: {timed_file} "
+            f"({len(timed.scenes)} scenes)."
+        )
+        return 0
+
     narrative = StoryboardEngine(
         target_scene_duration_seconds=(
             config.scene_minimum_duration_seconds
