@@ -79,7 +79,9 @@ OpenAI generates concepts and only the human-selected concept's artwork.
 FFmpeg adds the exact approved uppercase hook to a dedicated 1280×720 image;
 the original clean artwork is also saved for visual review. Image-model text
 cannot be proven absent mechanically, so the final human approval includes a
-visual check of the clean art and thumbnail preview.
+visual check of the clean art and thumbnail preview. Thumbnail concept QA
+rejects a small or distant focal subject only when its composition does not
+explicitly make it prominent, such as with a close-up or foreground framing.
 
 Topic duplicate prevention reads the durable repository inventory at
 `data/content_inventory.json`. Test runs do not write to this file and therefore

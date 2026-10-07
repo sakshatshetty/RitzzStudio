@@ -48,6 +48,15 @@ _PLACEHOLDER_PATTERN = re.compile(
     r"\b(?:todo|tbd|placeholder|lorem ipsum|insert (?:text|title))\b",
     re.IGNORECASE,
 )
+_UNDERSIZED_FOCAL_PATTERN = re.compile(
+    r"\b(?:tiny|miniature|distant|small)\b",
+    re.IGNORECASE,
+)
+_PROMINENT_FOCAL_PATTERN = re.compile(
+    r"\b(?:large|larger|enlarged|close[\s-]?up|foreground|prominent|"
+    r"oversized|dominant|fills? (?:the )?(?:frame|canvas))\b",
+    re.IGNORECASE,
+)
 _TEXT_STOP_WORDS = {
     "a", "an", "and", "are", "did", "do", "does", "for", "from", "how",
     "in", "is", "it", "of", "on", "the", "this", "to", "was", "were",
@@ -279,7 +288,10 @@ class OpenAIThumbnailConceptGenerator:
                         "characters, marker/ink appearance, controlled imperfection, thick "
                         "black outlines, flat bright colors, exaggerated readable poses, one "
                         "dominant idea, a large focal character or object, minimal "
-                        "clutter, playful educational tone. No "
+                        "clutter, playful educational tone. If the focal item is physically "
+                        "small, make it visually prominent with a close-up, enlargement, or "
+                        "foreground composition; never depict the focal subject as tiny or "
+                        "distant. No "
                         "photorealism, 3D, glossy/anime/vector polish, tiny details, or dark "
                         "complex backgrounds. Give the three concepts distinct curiosity "
                         "angles: DISCOVERY_REVEAL, PROBLEM_DANGER, and "
@@ -903,12 +915,13 @@ class ThumbnailPackagingEngine:
             visual_key = cls._normalize(concept.visual_concept)
             if visual_key in seen_visuals:
                 raise ValueError("Thumbnail concepts must be visually distinct.")
-            if re.search(
-                r"\b(tiny|miniature|distant|small)\b",
-                concept.main_character_or_object.casefold(),
-            ):
+            if _UNDERSIZED_FOCAL_PATTERN.search(
+                concept.main_character_or_object
+            ) and not _PROMINENT_FOCAL_PATTERN.search(concept.composition):
                 raise ValueError(
-                    f"Thumbnail concept {index} uses a tiny or distant focal subject."
+                    f"Thumbnail concept {index} describes an undersized focal "
+                    "subject; make it visually prominent with a close-up, "
+                    "enlargement, or foreground composition."
                 )
             signature_text = (
                 f"{concept.visual_concept} {concept.main_character_or_object} "
