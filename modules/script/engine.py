@@ -42,6 +42,22 @@ class ScriptEngine:
 
     MAX_GENERATION_ATTEMPTS = 3
 
+    # Generic suspense filler that announces curiosity instead of earning it.
+    # Flagged as a REVIEW/repair instruction in the LLM quality passes below
+    # rather than a hard validation gate, since a single incidental match
+    # (for example a quoted historical reaction) should not crash the run.
+    BANNED_NARRATION_FILLER_PHRASES: tuple[str, ...] = (
+        "you won't believe",
+        "wait until you hear this",
+        "things get crazy",
+        "scientists were shocked",
+        "let that sink in",
+        "little did they know",
+        "but here's the thing",
+        "picture this",
+        "what they discovered next would change everything",
+    )
+
     # ---------------------------------------------------------
     # Initialization
     # ---------------------------------------------------------
@@ -499,7 +515,10 @@ class ScriptEngine:
                             "support conservatively. Report issue codes for any weakness in "
                             "the current hook. Make the candidates structurally and verbally "
                             "distinct; do not copy competitor wording or repeat one hook "
-                            "with superficial edits."
+                            "with superficial edits. "
+                            + ScriptEngine._banned_filler_instruction()
+                            + " A candidate that relies on this filler is WEAK_CURIOSITY, "
+                            "not a strong hook, even if it reads as dramatic."
                         ),
                     },
                     {
@@ -660,6 +679,18 @@ class ScriptEngine:
         raise ValueError(
             "Hook remained below the configured quality and retention thresholds "
             "after two hook-only improvement attempts; inspect hook_evaluation.json."
+        )
+
+    @classmethod
+    def _banned_filler_instruction(cls) -> str:
+        phrase_list = ", ".join(
+            f'"{phrase}"' for phrase in cls.BANNED_NARRATION_FILLER_PHRASES
+        )
+        return (
+            "Do not use generic suspense filler that announces curiosity instead "
+            f"of earning it, such as {phrase_list}. Curiosity must come from the "
+            "specific problem, constraint, and evidence, not from telling the "
+            "viewer that something surprising or unbelievable is coming."
         )
 
     @classmethod
@@ -927,7 +958,11 @@ class ScriptEngine:
                             "questions evolve, sections have narrative purpose, evidence "
                             "is interpreted rather than listed, any modern connection is "
                             "relevant and not forced, the ending pays off the opening, and "
-                            "major beats can be visualized. Do not imitate or quote any "
+                            "major beats can be visualized. Flag any section using generic "
+                            "suspense filler instead of earning curiosity from the specific "
+                            "problem and evidence under category FACT_LISTING or OTHER; "
+                            f"{ScriptEngine._banned_filler_instruction()} "
+                            "Do not imitate or quote any "
                             "reference transcript. For each actionable defect, return "
                             "the exact affected section IDs and one concrete revision "
                             "instruction. Do not request edits to passing sections. "
@@ -1559,6 +1594,26 @@ class ScriptEngine:
             f"Aim for about {target_words} spoken words and do not exceed {maximum_words} words unless the approved research cannot be explained accurately within that length.\n\n"
 
             f"The first spoken words of the first hook section must be a compelling, research-grounded hook of {minimum_hook_words}–{maximum_hook_words} words (about 20–35 seconds at the configured pace). Prefer a concrete current-day problem and familiar solution, then connect the same underlying problem to the ancient situation and ask how people managed without that modern solution when supported by the topic and research. Do not force an artificial modern comparison. Put the unanswered curiosity question early, open a loop, and withhold the complete answer. The first investigation must begin answering that same question. Avoid greetings, channel introductions, generic background, unsupported claims, and competitor wording. The Script.hook field must match this opening text; the voice reads the section narration, so do not repeat the hook later.\n\n"
+
+            f"{ScriptEngine._banned_filler_instruction()}\n\n"
+
+            "Weak pattern to avoid: a general statement that information or "
+            "challenges exist, followed by a list of supporting facts in source "
+            "order. Example of the required shift — weak: 'Ancient people faced "
+            "many challenges and used several clever methods to cope with them. "
+            "Researchers have studied a number of these solutions.' Strong: 'They "
+            "had already solved most of the problem. One piece was still missing, "
+            "and without it the rest of the plan did not work anyway.' The strong "
+            "version makes one concrete, specific claim that creates a question in "
+            "the viewer's mind; it does not announce that interesting information "
+            "is coming. Apply this shift throughout every section, not only the "
+            "hook.\n\n"
+
+            "When an answered question naturally creates a new problem the "
+            "approved research actually supports, continue investigating it "
+            "instead of moving on to an unrelated fact; when it does not, "
+            "advance through consequence or stronger evidence instead of "
+            "inventing a question for its own sake.\n\n"
 
             "The final narration MUST contain at least "
             f"{config.minimum_word_count} words of actual spoken narration.\n\n"
