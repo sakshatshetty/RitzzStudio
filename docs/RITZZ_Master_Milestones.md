@@ -56,9 +56,10 @@ with the selected number.
 - Hard cuts only.
 - Scene duration is driven by narration timing and visual context.
 - Aim for approximately three seconds per image where the narrative supports it.
-- Editorial callouts are embedded in images, not subtitles.
-- Editorial callouts are exactly one uppercase word and maximum 20 characters.
-- Plan callouts after audio-timed scene grouping; target one contextual emphasis every 3–4 scenes without forcing weak callouts. Every no-callout scene must include `callout_not_warranted: true` and a reason. QA reports valid, intentionally skipped, unexpectedly missing, and malformed decisions plus spacing metrics. Prompts prohibit generating callout lettering; FFmpeg composites the approved word.
+- Video images contain no editorial words or other intentional text; thumbnail hooks are composed separately.
+- Use actual narration alignment for scene times; cut only at complete-word boundaries, prefer natural sentence/clause ends and visual changes, and keep scene holds between 3 and 4 seconds.
+- Prefer clear, large, hand-drawn cartoon subjects, specific environments, strong silhouette, simple visual action, and relevant continuity details in image prompts.
+- Thumbnail hooks use a large, single-line, high-contrast yellow/white fill with a dark outline and safe margins, inspired by the supplied visual reference.
 - Video target duration and minimum allowed duration are configurable. During topic approval, the user selects both values; the current default target remains approximately eight minutes.
 - The eight-minute value is the current backward-compatible baseline inherited from the existing Outline and Script engines, not a permanent product restriction. Full user-selected duration propagation is completed in M3.
 - Publishing cadence is configurable; the current target is Tuesday and Saturday.

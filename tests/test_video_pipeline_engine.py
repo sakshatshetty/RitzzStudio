@@ -94,7 +94,7 @@ def create_audio(
     tmp_path: Path,
 ) -> Path:
     """
-    Create a valid 3-second WAV file.
+    Create a valid 12-second WAV file.
     """
 
     audio_file = (
@@ -110,7 +110,7 @@ def create_audio(
             "-f",
             "lavfi",
             "-i",
-            "sine=frequency=440:sample_rate=48000:duration=3",
+            "sine=frequency=440:sample_rate=48000:duration=12",
             "-ac",
             "1",
             "-c:a",
@@ -140,7 +140,7 @@ def create_storyboard(
             "scene_id": "scene_001",
             "section_id": "s1",
             "start_seconds": 0.0,
-            "duration_seconds": 1.0,
+            "duration_seconds": 4.0,
             "narration": (
                 "The pirate looks across the sea."
             ),
@@ -164,8 +164,8 @@ def create_storyboard(
         {
             "scene_id": "scene_002",
             "section_id": "s1",
-            "start_seconds": 1.0,
-            "duration_seconds": 1.0,
+            "start_seconds": 4.0,
+            "duration_seconds": 4.0,
             "narration": (
                 "He suddenly notices something."
             ),
@@ -189,8 +189,8 @@ def create_storyboard(
         {
             "scene_id": "scene_003",
             "section_id": "s1",
-            "start_seconds": 2.0,
-            "duration_seconds": 1.0,
+            "start_seconds": 8.0,
+            "duration_seconds": 4.0,
             "narration": (
                 "The mystery begins."
             ),
@@ -215,10 +215,10 @@ def create_storyboard(
 
     storyboard = {
         "topic": "Why Do Pirates Wear Eye Patches?",
-        "target_duration_seconds": 3,
+        "target_duration_seconds": 12,
         "scenes": scenes,
-        "total_scene_duration_seconds": 3.0,
-        "target_scene_duration_seconds": 5.0,
+        "total_scene_duration_seconds": 12.0,
+        "target_scene_duration_seconds": 4.0,
     }
 
     storyboard_file = (
@@ -241,34 +241,31 @@ def create_alignment(
     the three storyboard narrations.
     """
 
-    script = (
-        "The pirate looks across the sea. "
-        "He suddenly notices something. "
-        "The mystery begins."
-    )
-
-    characters = list(script)
+    sections = [
+        "The pirate looks across the sea.",
+        "He suddenly notices something.",
+        "The mystery begins.",
+    ]
+    characters: list[str] = []
 
     starts: list[float] = []
     ends: list[float] = []
 
     current = 0.0
-
-    for _ in characters:
-        starts.append(
-            round(current, 3)
-        )
-
-        current += (
-            3.0 / len(characters)
-        )
-
-        ends.append(
-            round(current, 3)
-        )
+    for index, section in enumerate(sections):
+        step = 4.0 / len(section)
+        for character_index, character in enumerate(section):
+            characters.append(character)
+            starts.append(round(current + character_index * step, 3))
+            ends.append(round(current + (character_index + 1) * step, 3))
+        current += 4.0
+        if index + 1 < len(sections):
+            characters.append(" ")
+            starts.append(round(current, 3))
+            ends.append(round(current, 3))
 
     data = {
-        "duration_seconds": 3.0,
+        "duration_seconds": 12.0,
         "alignment": {
             "characters": characters,
             "character_start_times_seconds": starts,
@@ -379,7 +376,7 @@ def test_complete_three_scene_pipeline(
     assert result.scene_count == 3
 
     assert result.duration_seconds == pytest.approx(
-        3.0,
+        12.0,
         abs=0.25,
     )
 
@@ -416,7 +413,7 @@ def test_complete_three_scene_pipeline(
     assert state["stages"]["render"]["status"] == "completed"
 
 
-def test_image_ai_qa_moves_editorial_and_repairs_impacted_images(
+def test_image_ai_qa_ignores_legacy_editorial_fields_and_repairs_visual_mismatch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -436,23 +433,17 @@ def test_image_ai_qa_moves_editorial_and_repairs_impacted_images(
     class Reviewer:
         def review(self, image_path, scene, editorial_candidates=None):
             assert image_path.is_file()
-            assert editorial_candidates is not None
-            assert any(candidate["scene_id"] == scene.scene_id for candidate in editorial_candidates)
+            assert editorial_candidates is None
             review_attempts[scene.scene_id] = review_attempts.get(scene.scene_id, 0) + 1
             if scene.scene_id == "scene_001" and review_attempts[scene.scene_id] == 1:
                 return SceneQAResult(
                     scene_id=scene.scene_id,
-                    status="FAIL",
+                    status="PASS",
                     narration_image="PASS",
                     narration_description="PASS",
-                    editorial_context="PASS",
                     editorial_obstruction="FAIL",
                     editorial_safe_space="FAIL",
-                    rationale="The word overlaps the face and has no clear negative space.",
-                    correction_prompt=(
-                        "Recompose the image with a clear upper-right area and move "
-                        "the face away from it."
-                    ),
+                    rationale="Legacy text fields are not semantic QA criteria.",
                     suggested_editorial_scene_id="scene_002",
                     failure_category="EDITORIAL_OVER_FACE",
                 )
@@ -509,24 +500,9 @@ def test_image_ai_qa_moves_editorial_and_repairs_impacted_images(
     updated_storyboard = StoryboardEngine.load_storyboard(storyboard_file)
     report = load_project_qa(tmp_path)
     assert status == "PASS"
-    assert [scene.text_overlay for scene in updated_storyboard.scenes] == ["", "ICONIC", ""]
-    assert updated_storyboard.scenes[0].callout_not_warranted is True
-    assert updated_storyboard.scenes[0].callout_not_warranted_reason
-    assert updated_storyboard.scenes[1].callout_not_warranted is False
-    assert updated_storyboard.scenes[1].callout_not_warranted_reason is None
-    assert updated_storyboard.scenes[1].callout_position in {
-        "top_left",
-        "top_center",
-        "top_right",
-        "middle_left",
-        "middle_center",
-        "middle_right",
-        "lower_left",
-        "lower_center",
-        "lower_right",
-    }
-    assert provider.generated_scenes == ["scene_001", "scene_002", "scene_003"]
-    assert (tmp_path / "qa" / "image_repair" / "attempt_1" / "originals" / "scene_001.png").is_file()
+    assert [scene.text_overlay for scene in updated_storyboard.scenes] == ["ICONIC", "", ""]
+    assert provider.generated_scenes == ["scene_003"]
+    assert not (tmp_path / "qa" / "image_repair" / "attempt_1" / "originals" / "scene_001.png").exists()
     assert (tmp_path / "qa" / "image_repair" / "attempt_1" / "originals" / "scene_003.png").is_file()
     repair_history = json.loads(
         (tmp_path / "qa" / "visual_repair_history.json").read_text(
@@ -537,16 +513,11 @@ def test_image_ai_qa_moves_editorial_and_repairs_impacted_images(
     assert scene_003_repair["failure_category"] == "WRONG_ACTION"
     assert scene_003_repair["verification"]["status"] == "PASS"
     assert "make the action the primary focal point" in provider.prompts[-1]
-    image_checks = report.stages["image_editorial_qa"][-1]
+    image_checks = report.stages["image_semantic_qa"][-1]
     assert image_checks.status == "PASS"
-    assert "scene_002.editorial_context" in image_checks.checks
     assert "scene_002.narration_description" in image_checks.checks
-    assert image_checks.checks["scene_001.editorial_obstruction"] == "PASS"
-    assert image_checks.checks["scene_001.editorial_safe_space"] == "PASS"
-    assert image_checks.checks["scene_002.editorial_text"] == "PASS"
-    assert image_checks.checks["scene_002.editorial_style"] == "PASS"
-    assert image_checks.checks["scene_002.editorial_placement"] == "PASS"
-    assert [attempt.status for attempt in report.stages["image_editorial_qa"]] == ["FAIL", "PASS"]
+    assert not any("editorial" in name for name in image_checks.checks)
+    assert [attempt.status for attempt in report.stages["image_semantic_qa"]] == ["REVIEW", "PASS"]
 
 
 def test_image_ai_qa_batches_with_bounded_concurrency_and_retries_failed_batch(
@@ -574,7 +545,7 @@ def test_image_ai_qa_batches_with_bounded_concurrency_and_retries_failed_batch(
             with self.lock:
                 self.active += 1
                 self.maximum_active = max(self.maximum_active, self.active)
-                scene_ids = [scene.scene_id for _, scene, _ in items]
+                scene_ids = [scene.scene_id for _, scene in items]
                 for scene_id in scene_ids:
                     self.calls_by_scene[scene_id] = (
                         self.calls_by_scene.get(scene_id, 0) + 1
@@ -596,7 +567,7 @@ def test_image_ai_qa_batches_with_bounded_concurrency_and_retries_failed_batch(
                         editorial_context="PASS",
                         rationale=f"Reviewed full narration: {scene.narration}",
                     )
-                    for _, scene, _ in items
+                    for _, scene in items
                 ]
             finally:
                 with self.lock:
@@ -614,7 +585,7 @@ def test_image_ai_qa_batches_with_bounded_concurrency_and_retries_failed_batch(
     )
 
     assert pipeline._review_and_repair_images(request, tmp_path) == "PASS"
-    metrics = load_project_qa(tmp_path).stages["image_editorial_qa"][-1].metrics
+    metrics = load_project_qa(tmp_path).stages["image_semantic_qa"][-1].metrics
     assert reviewer.maximum_active == 2
     assert reviewer.calls_by_scene == {
         "scene_001": 1,
@@ -679,7 +650,7 @@ def test_image_ai_qa_preserves_uncertain_images_for_human_review(
 
     assert status == "REVIEW"
     assert provider.generated_scenes == []
-    qa_attempts = load_project_qa(tmp_path).stages["image_editorial_qa"]
+    qa_attempts = load_project_qa(tmp_path).stages["image_semantic_qa"]
     assert [attempt.status for attempt in qa_attempts] == ["REVIEW"]
     assert "no actionable image correction was supplied" in qa_attempts[0].findings[0]
 
@@ -691,7 +662,7 @@ def test_image_ai_qa_preserves_uncertain_images_for_human_review(
         (None, "EDITORIAL_NO_SAFE_SPACE"),
     ],
 )
-def test_image_ai_qa_repairs_unsafe_editorial_placement(
+def test_image_ai_qa_ignores_legacy_editorial_review_failures(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     suggested_position: str | None,
@@ -716,25 +687,23 @@ def test_image_ai_qa_repairs_unsafe_editorial_placement(
             review_attempts[scene.scene_id] = (
                 review_attempts.get(scene.scene_id, 0) + 1
             )
-            if scene.scene_id == "scene_001":
-                if review_attempts[scene.scene_id] == 1:
-                    return SceneQAResult(
-                        scene_id=scene.scene_id,
-                        status="FAIL",
-                        narration_image="PASS",
-                        narration_description="PASS",
-                        editorial_context="PASS",
-                        editorial_placement="FAIL",
-                        editorial_obstruction="FAIL",
-                        editorial_safe_space="FAIL",
-                        suggested_editorial_position=suggested_position,
-                        rationale="The editorial word crosses the face and action.",
-                        correction_prompt=(
-                            "Place the word on a clean plane away from the face, "
-                            "hand, and primary action; recompose if needed."
-                        ),
-                        failure_category=failure_category,
-                    )
+            if (
+                scene.scene_id == "scene_001"
+                and review_attempts[scene.scene_id] == 1
+            ):
+                return SceneQAResult(
+                    scene_id=scene.scene_id,
+                    status="PASS",
+                    narration_image="PASS",
+                    narration_description="PASS",
+                    editorial_placement="FAIL",
+                    editorial_obstruction="FAIL",
+                    editorial_safe_space="FAIL",
+                    suggested_editorial_position=suggested_position,
+                    rationale="Legacy callout findings are not active QA criteria.",
+                    correction_prompt="Do not use text-related repair guidance.",
+                    failure_category=failure_category,
+                )
             return SceneQAResult(
                 scene_id=scene.scene_id,
                 status="PASS",
@@ -779,30 +748,18 @@ def test_image_ai_qa_repairs_unsafe_editorial_placement(
     status = pipeline._review_and_repair_images(request, tmp_path)
 
     assert status == "PASS"
-    assert provider.generated_scenes == ["scene_001"]
+    assert provider.generated_scenes == []
     assert review_attempts == {
-        "scene_001": 2,
+        "scene_001": 1,
         "scene_002": 1,
         "scene_003": 1,
     }
-    assert "Place the word on a clean plane" in provider.prompts[0]
-    assert failure_category in provider.prompts[0]
-    assert "EDITORIAL COMPOSITION REQUIREMENT" in provider.prompts[0]
+    assert provider.prompts == []
     repaired_storyboard = StoryboardEngine.load_storyboard(storyboard_file)
-    expected_position = suggested_position or "top_right"
-    assert repaired_storyboard.scenes[0].callout_position == expected_position
-    if suggested_position:
-        assert "upper-left negative space" in provider.prompts[0]
-    else:
-        assert "Create a different composition" in provider.prompts[0]
-    attempts = load_project_qa(tmp_path).stages["image_editorial_qa"]
-    assert [attempt.status for attempt in attempts] == ["FAIL", "PASS"]
-    assert attempts[0].checks["scene_001.editorial_placement"] == "FAIL"
-    assert attempts[0].checks["scene_001.editorial_obstruction"] == "FAIL"
-    assert any(
-        "scene_001: proposed fix" in recommendation
-        for recommendation in attempts[0].recommendations
-    )
+    assert repaired_storyboard.scenes[0].callout_position == "top_right"
+    attempts = load_project_qa(tmp_path).stages["image_semantic_qa"]
+    assert [attempt.status for attempt in attempts] == ["PASS"]
+    assert not any("editorial" in name for name in attempts[0].checks)
 
 
 def test_unresolved_image_qa_blocks_video_render_pipeline(
@@ -853,7 +810,7 @@ def test_pipeline_resynchronizes_and_renders_again_on_timeline_drift_review(
     technical_attempts = 0
     render_attempts = 0
 
-    def run_technical(self, storyboard, plan, audio, video):
+    def run_technical(self, storyboard, plan, audio, video, production_config=None):
         nonlocal technical_attempts
         technical_attempts += 1
         status = "REVIEW" if technical_attempts == 1 else "PASS"
@@ -875,8 +832,8 @@ def test_pipeline_resynchronizes_and_renders_again_on_timeline_drift_review(
             checks=checks,
             issues=["Timeline drift needs synchronization."] if status == "REVIEW" else [],
             scene_count=len(plan.clips),
-            audio_duration_seconds=3.0,
-            video_duration_seconds=3.0,
+            audio_duration_seconds=12.0,
+            video_duration_seconds=12.0,
             maximum_timeline_drift_seconds=1.0 if status == "REVIEW" else 0.0,
             integrated_lufs=-15.1 if status == "REVIEW" else -14.0,
             true_peak_dbtp=-0.7 if status == "REVIEW" else -1.1,
@@ -938,7 +895,7 @@ def test_pipeline_leaves_render_incomplete_when_technical_qa_never_passes(
     qa_attempts = 0
     render_attempts = 0
 
-    def run_technical(self, storyboard, plan, audio, video):
+    def run_technical(self, storyboard, plan, audio, video, production_config=None):
         nonlocal qa_attempts
         qa_attempts += 1
         checks: dict[str, QAStatus] = {
@@ -953,15 +910,14 @@ def test_pipeline_leaves_render_incomplete_when_technical_qa_never_passes(
             "timestamp_coverage": "PASS",
             "timeline_drift": "PASS",
             "audio_loudness": "REVIEW",
-            "editorial_callouts": "PASS",
         }
         return TechnicalQAResult(
             status="REVIEW",
             checks=checks,
             issues=["Audio loudness remains outside target."],
             scene_count=len(plan.clips),
-            audio_duration_seconds=3.0,
-            video_duration_seconds=3.0,
+            audio_duration_seconds=12.0,
+            video_duration_seconds=12.0,
             maximum_timeline_drift_seconds=0.0,
         )
 

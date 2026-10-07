@@ -28,8 +28,8 @@ THUMBNAIL_IMAGE_FILENAME = "thumbnail.jpg"
 THUMBNAIL_ARTWORK_FILENAME = "thumbnail_artwork.png"
 THUMBNAIL_WIDTH = 1280
 THUMBNAIL_HEIGHT = 720
-THUMBNAIL_TEXT_FONT_SIZE = 176
-THUMBNAIL_MIN_TEXT_FONT_SIZE = 88
+THUMBNAIL_TEXT_FONT_SIZE = 256
+THUMBNAIL_MIN_TEXT_FONT_SIZE = 112
 THUMBNAIL_SAFE_MARGIN = 64
 THUMBNAIL_MAX_REPAIR_ATTEMPTS = 2
 THUMBNAIL_QUALITY_CHECKS = (
@@ -1193,10 +1193,10 @@ def _thumbnail_text_layout(
         raise ValueError("Thumbnail text must not be empty.")
     width_units = sum(_FONT_WIDTHS.get(character, 0.66) for character in normalized)
     maximum_width = width - 2 * THUMBNAIL_SAFE_MARGIN
-    maximum_font_width_units = width * 0.55 / THUMBNAIL_MIN_TEXT_FONT_SIZE
+    maximum_font_width_units = maximum_width / THUMBNAIL_MIN_TEXT_FONT_SIZE
     font_size = min(
         THUMBNAIL_TEXT_FONT_SIZE,
-        int((width * 0.55) / width_units),
+        int(maximum_width / width_units),
     )
     if font_size < THUMBNAIL_MIN_TEXT_FONT_SIZE:
         raise ValueError(

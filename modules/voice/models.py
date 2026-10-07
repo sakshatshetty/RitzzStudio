@@ -4,7 +4,6 @@ from pydantic import BaseModel, Field, field_validator
 
 from modules.voice.text import ensure_terminal_punctuation
 
-
 VoiceModel = Literal[
     "eleven_v3",
     "eleven_multilingual_v2",
@@ -43,7 +42,7 @@ class VoiceSettings(BaseModel):
     similarity_boost: float = Field(default=0.75, ge=0, le=1)
     style: float = Field(default=0, ge=0, le=1)
     use_speaker_boost: bool = True
-    speed: float = Field(default=0.95, ge=0.7, le=1.2)
+    speed: float = Field(default=0.9, ge=0.7, le=1.2)
 
 
 class VoiceGenerationRequest(BaseModel):
@@ -70,6 +69,8 @@ class VoiceGenerationRequest(BaseModel):
     )
 
     voice_settings: VoiceSettings = Field(default_factory=VoiceSettings)
+
+    opening_hook: str | None = None
 
     minimum_duration_seconds: float | None = Field(
         default=None,
@@ -122,6 +123,8 @@ class VoiceGenerationResult(BaseModel):
     actual_duration_seconds: float | None = Field(default=None, ge=0)
 
     minimum_duration_seconds: float | None = Field(default=None, ge=0)
+
+    opening_hook_duration_seconds: float | None = Field(default=None, ge=0)
 
     character_count: int = 0
 

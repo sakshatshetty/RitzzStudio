@@ -562,7 +562,11 @@ def test_thumbnail_concept_retry_feedback_includes_measured_hook_width(tmp_path)
     assert len(generator.contexts) == 2
     feedback = generator.contexts[1]["qa_feedback"]
     assert "EXTRAORDINARILY LONG HIDDEN PATH" in feedback
-    assert "maximum is 8.0" in feedback
+    expected_maximum = (
+        thumbnail_packaging.THUMBNAIL_WIDTH
+        - 2 * thumbnail_packaging.THUMBNAIL_SAFE_MARGIN
+    ) / thumbnail_packaging.THUMBNAIL_MIN_TEXT_FONT_SIZE
+    assert f"maximum is {expected_maximum:.1f}" in feedback
     assert "word count alone does not guarantee fit" in feedback
 
 
@@ -633,6 +637,15 @@ def test_ffmpeg_composer_receives_exact_approved_text_and_renders_jpeg(
     assert captured["rendered_text"] == "TWO EYES?"
     assert result == output
     assert output.read_bytes() == b"composited-jpeg"
+
+
+def test_thumbnail_hook_uses_large_single_line_reference_sizing():
+    layout = thumbnail_packaging._thumbnail_text_layout("PATCH WHY?")
+
+    assert layout["line_count"] == 1
+    assert layout["font_size"] >= 180
+    assert layout["width_ratio"] >= 0.85
+    assert layout["mobile_font_size"] >= 45
 
 
 def test_ffmpeg_composer_uses_white_text_on_a_bright_background(

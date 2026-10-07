@@ -11,6 +11,7 @@ from modules.script.models import (
 )
 from modules.voice.engine import (
     NarrationTooShortError,
+    OpeningHookValidationError,
     VoiceEngine,
 )
 from modules.voice.models import (
@@ -196,6 +197,201 @@ def test_create_request():
     )
     assert request.voice_settings.stability == 0.72
     assert request.minimum_duration_seconds == 480
+
+
+def test_profiled_script_request_carries_the_spoken_opening_hook():
+    hook = "A curious question opens this story."
+    script = make_script().model_copy(
+        update={
+            "hook": hook,
+            "script_profile": "RITZZ_ANCIENT_HUMAN_CURIOSITY",
+            "sections": [
+                make_script().sections[0].model_copy(
+                    update={"narration": f"{hook} The rest of the opening follows."}
+                ),
+                make_script().sections[1],
+            ],
+        }
+    )
+
+    request = VoiceEngine(provider=MockVoiceProvider()).create_request(
+        script=script,
+        voice_id="ritzz_voice",
+        output_directory="output/voice",
+    )
+
+    assert request.opening_hook == hook
+    assert request.text.startswith(hook)
+
+
+@pytest.mark.parametrize(
+    ("hook_duration", "should_pass"),
+    [(8.1, False), (10.2, True)],
+)
+def test_generated_audio_must_keep_the_hook_for_ten_seconds(
+    tmp_path,
+    hook_duration,
+    should_pass,
+):
+    hook = "A compelling opening question creates curiosity."
+    text = hook + " The rest of the narration follows."
+
+    class TimedHookProvider:
+        def generate(self, request):
+            audio_file = Path(request.output_directory) / request.output_filename
+            audio_file.parent.mkdir(parents=True, exist_ok=True)
+            audio_file.write_bytes(b"mock audio")
+            characters = list(request.text)
+            seconds_per_character = hook_duration / len(hook)
+            starts = [
+                index * seconds_per_character
+                for index in range(len(characters))
+            ]
+            ends = [
+                (index + 1) * seconds_per_character
+                for index in range(len(characters))
+            ]
+            return VoiceGenerationResult(
+                voice_id=request.voice_id,
+                model_id=request.model_id,
+                status="completed",
+                file_path=str(audio_file),
+                duration_seconds=20,
+                character_count=len(characters),
+                alignment=VoiceAlignment(
+                    characters=characters,
+                    character_start_times_seconds=starts,
+                    character_end_times_seconds=ends,
+                ),
+            )
+
+    request = VoiceGenerationRequest(
+        voice_id="ritzz_voice",
+        text=text,
+        opening_hook=hook,
+        output_directory=str(tmp_path),
+        minimum_duration_seconds=1,
+    )
+    engine = VoiceEngine(
+        TimedHookProvider(),
+        duration_probe=lambda _: 20,
+    )
+
+    if should_pass:
+        result = engine.generate(request)
+        assert result.opening_hook_duration_seconds == pytest.approx(hook_duration)
+    else:
+        with pytest.raises(
+            OpeningHookValidationError,
+            match="must remain the opening hook for at least 10.0s",
+        ):
+            engine.generate(request)
+
+
+def test_create_voice_regenerates_a_hook_that_is_short_in_actual_audio(
+    tmp_path,
+    monkeypatch,
+):
+    manager = ProjectManager(tmp_path / "projects")
+    project = manager.create_project("A hook timing test")
+    project_directory = manager.get_project_path(project)
+    script_directory = project_directory / "script"
+    script_directory.mkdir(exist_ok=True)
+    (project_directory / "research").mkdir(exist_ok=True)
+    (project_directory / "outline").mkdir(exist_ok=True)
+    (project_directory / "research" / "research.json").write_text(
+        "{}", encoding="utf-8"
+    )
+    (project_directory / "outline" / "outline.json").write_text(
+        "{}", encoding="utf-8"
+    )
+
+    hook = (
+        "Without central heating, what actually kept people alive through an "
+        "ancient winter: clothing, shelter, fire, or food stores? The surprising "
+        "answer lies in how these defenses worked together before the cold arrived."
+    )
+    script = make_script().model_copy(
+        update={
+            "hook": hook,
+            "script_profile": "RITZZ_ANCIENT_HUMAN_CURIOSITY",
+            "sections": [
+                make_script().sections[0].model_copy(
+                    update={"narration": f"{hook} The explanation follows."}
+                ),
+                make_script().sections[1],
+            ],
+        }
+    )
+    script_file = script_directory / "script.json"
+    script_file.write_text(script.model_dump_json(), encoding="utf-8")
+
+    from modules.script.engine import ScriptEngine
+
+    regeneration_calls = []
+    monkeypatch.setattr(ScriptEngine, "__init__", lambda _self: None)
+
+    def regenerate(_self, **kwargs):
+        regeneration_calls.append(kwargs["qa_feedback"])
+        return script
+
+    monkeypatch.setattr(ScriptEngine, "create_script", regenerate)
+
+    class CorrectingProvider:
+        def __init__(self):
+            self.calls = 0
+
+        def generate(self, request):
+            self.calls += 1
+            audio_file = Path(request.output_directory) / request.output_filename
+            audio_file.parent.mkdir(parents=True, exist_ok=True)
+            audio_file.write_bytes(b"mock audio")
+            hook_duration = 8.1 if self.calls == 1 else 10.2
+            seconds_per_character = hook_duration / len(hook)
+            characters = list(request.text)
+            return VoiceGenerationResult(
+                voice_id=request.voice_id,
+                model_id=request.model_id,
+                status="completed",
+                file_path=str(audio_file),
+                duration_seconds=20,
+                character_count=len(characters),
+                alignment=VoiceAlignment(
+                    characters=characters,
+                    character_start_times_seconds=[
+                        index * seconds_per_character
+                        for index in range(len(characters))
+                    ],
+                    character_end_times_seconds=[
+                        (index + 1) * seconds_per_character
+                        for index in range(len(characters))
+                    ],
+                ),
+            )
+
+    provider = CorrectingProvider()
+    result = VoiceEngine(
+        provider,
+        duration_probe=lambda _: 20,
+    ).create_voice(
+        script_file=script_file,
+        voice_id="ritzz_voice",
+        output_directory=project_directory / "voice",
+        production_config=ProductionConfig(
+            target_duration_seconds=10,
+            minimum_duration_seconds=10,
+        ),
+    )
+
+    assert provider.calls == 2
+    assert len(regeneration_calls) == 1
+    assert "first 10 seconds" in regeneration_calls[0]
+    assert result.opening_hook_duration_seconds == pytest.approx(10.2)
+    report = load_project_qa(project_directory)
+    assert [
+        attempt.checks["opening_hook_10_seconds"]
+        for attempt in report.stages["voice"]
+    ] == ["FAIL", "PASS"]
 
 
 def test_create_request_uses_configured_minimum_duration():

@@ -14,9 +14,14 @@ from typing import Any, Protocol
 
 from dotenv import load_dotenv
 from openai import OpenAI
-from openai.types.responses import ResponseTextConfigParam
+from openai.types.responses import (
+    ResponseInputImageParam,
+    ResponseInputParam,
+    ResponseInputTextParam,
+    ResponseTextConfigParam,
+)
 
-from modules.storyboard.editorial_qa import review_editorial_callouts
+from modules.project.config import ProductionConfig
 from modules.storyboard.models import Storyboard
 from modules.storyboard.visual_models import VisualWorldBible
 from modules.video.models import VideoAssemblyPlan
@@ -271,6 +276,75 @@ _SCENE_BATCH_REVIEW_RESPONSE_FORMAT: ResponseTextConfigParam = {
 }
 
 
+_SEMANTIC_SCENE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "scene_id": {"type": "string"},
+        "narration_image": {
+            "type": "string",
+            "enum": ["PASS", "REVIEW", "FAIL"],
+        },
+        "narration_description": {
+            "type": "string",
+            "enum": ["PASS", "REVIEW", "FAIL"],
+        },
+        "rationale": {"type": "string"},
+        "correction_prompt": {"type": ["string", "null"]},
+        "failure_category": {
+            "type": ["string", "null"],
+            "enum": [
+                "ANACHRONISM",
+                "AMBIGUITY",
+                "WRONG_ACTION",
+                "WRONG_ENVIRONMENT",
+                "MISSING_REQUIRED_OBJECT",
+                "FORBIDDEN_OBJECT",
+                "CHARACTER_CONTINUITY",
+                "NARRATION_MISMATCH",
+                "VISUAL_DUPLICATE",
+                "OTHER",
+                None,
+            ],
+        },
+    },
+    "required": [
+        "scene_id",
+        "narration_image",
+        "narration_description",
+        "rationale",
+        "correction_prompt",
+        "failure_category",
+    ],
+    "additionalProperties": False,
+}
+_SEMANTIC_SCENE_REVIEW_RESPONSE_FORMAT: ResponseTextConfigParam = {
+    "format": {
+        "type": "json_schema",
+        "name": "rendered_scene_semantic_review",
+        "strict": True,
+        "schema": _SEMANTIC_SCENE_SCHEMA,
+    }
+}
+_SEMANTIC_SCENE_BATCH_REVIEW_RESPONSE_FORMAT: ResponseTextConfigParam = {
+    "format": {
+        "type": "json_schema",
+        "name": "rendered_scene_semantic_batch_review",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "scenes": {
+                    "type": "array",
+                    "items": _SEMANTIC_SCENE_SCHEMA,
+                }
+            },
+            "required": ["scenes"],
+            "additionalProperties": False,
+        },
+    }
+}
+
+
 def _validate_png(path: Path) -> None:
     """Validate PNG chunks, checksums, and decompressed image data."""
     if not path.is_file() or path.stat().st_size == 0:
@@ -360,8 +434,8 @@ def _mp3_duration(path: Path) -> float:
     return total_seconds
 
 
-class OpenAIImageEditorialReviewer:
-    """Review generated image relevance and editorial-word placement only."""
+class OpenAIImageSemanticReviewer:
+    """Review generated image relevance to its narration, scene intent, and world."""
 
     def __init__(
         self,
@@ -380,21 +454,29 @@ class OpenAIImageEditorialReviewer:
         self,
         image_path: Path,
         scene: Any,
-        editorial_candidates: list[dict[str, str]] | None = None,
+        _legacy_editorial_candidates: list[dict[str, str]] | None = None,
     ) -> SceneQAResult:
+        _ = _legacy_editorial_candidates
         return self.review_batch(
-            [(image_path, scene, editorial_candidates)]
+            [(image_path, scene)]
         )[0]
 
     def review_batch(
         self,
-        items: list[tuple[Path, Any, list[dict[str, str]] | None]],
+        items: list[
+            tuple[Path, Any]
+            | tuple[Path, Any, list[dict[str, str]] | None]
+        ],
     ) -> list[SceneQAResult]:
         if not items:
             return []
-        content: list[dict[str, Any]] = []
+        content: list[ResponseInputTextParam | ResponseInputImageParam] = []
         expected_ids: list[str] = []
-        for image_path, scene, editorial_candidates in items:
+        for item in items:
+            if len(item) == 2:
+                image_path, scene = item
+            else:
+                image_path, scene, _ = item
             narration = scene.narration.strip()
             if not narration:
                 raise ValueError(
@@ -405,7 +487,6 @@ class OpenAIImageEditorialReviewer:
                     f"QA_INPUT_INVALID: {scene.scene_id} is missing visual intent or image prompt."
                 )
             expected_ids.append(scene.scene_id)
-            expected_editorial = scene.text_overlay.strip()
             content.append({
                 "type": "input_text",
                 "text": (
@@ -415,14 +496,9 @@ class OpenAIImageEditorialReviewer:
                     f"Image prompt: {scene.image_prompt}\n"
                     f"Scene visual contract: "
                     f"{json.dumps(scene.visual_contract.model_dump(mode='json'), ensure_ascii=False) if scene.visual_contract else '(not supplied)'}\n"
-                    f"Editorial required: {str(bool(expected_editorial)).lower()}\n"
-                    f"Expected editorial word: {expected_editorial or '(none)'}\n"
-                    f"Reserved editorial safe zone: {scene.callout_position or '(unspecified)'}\n"
-                    "Protected visual elements: the face, eyes, head when important, "
-                    "character, hands, primary action, required objects, and evidence "
-                    "objects described by the scene contract\n"
-                    "Nearby editorial candidates: "
-                    f"{json.dumps(editorial_candidates or [], ensure_ascii=False)}"
+                    "Assess only whether the image supports the complete narration, "
+                    "visual intent, visual contract, project world, historical context, "
+                    "required objects, forbidden objects, and continuity."
                 ),
             })
             encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
@@ -435,35 +511,17 @@ class OpenAIImageEditorialReviewer:
             "Review each supplied scene independently for semantic fit between image, full narration, "
             "visual contract, project visual world, historical context, technology ceiling, required "
             "objects, forbidden objects, and continuity requirements. Mark an obvious world or "
-            "historical mismatch as FAIL, not merely as stylistic preference. Editorial text is "
-            "intentionally embedded in the generated image when "
-            "Editorial required is true. The storyboard is authoritative: verify that the exact expected "
-            "uppercase word is present, legible, and contextually appropriate. For each scene, report "
-            "EDITORIAL_TEXT (exact required word present and not clipped), EDITORIAL_STYLE (one uppercase "
-            "handwritten marker word in bright yellow or white, no box/banner/subtitle styling), "
-            "EDITORIAL_PLACEMENT (word is inside "
-            "the reserved safe zone), EDITORIAL_OBSTRUCTION (word does not overlap a face, head, body, hand, "
-            "primary action, important object, evidence, or focal point), and EDITORIAL_SAFE_SPACE (the zone "
-            "is genuinely uncluttered and large enough for the word). Use PASS/FAIL/REVIEW independently; "
-            "when no editorial is required, all five are PASS only if no unintended text is visible. "
-            "Do not treat a selected zone as proof that the rendered placement is safe: inspect the image. "
-            "Do not mark editorial text as an error merely because it is embedded in the image. If editorial "
-            "is not required, unintended editorial text is a mismatch. Return exactly one result per scene in the same order "
-            "and preserve each scene_id exactly. Use FAIL only for a clear mismatch, REVIEW when uncertain, "
-            "and PASS when the visual evidence supports the scene. Every FAIL must include a concrete "
-            "actionable correction_prompt, except an editorial relocation which should use "
-            "suggested_editorial_scene_id. If the image has another clearly safe empty area and "
-            "the word still suits this scene, return a different suggested_editorial_position; "
-            "otherwise request a new composition. A REVIEW should include a correction only when a safe, specific "
-            "visual change is clear; otherwise correction_prompt must be null. Classify clear failures "
+            "historical mismatch as FAIL, not merely as stylistic preference. Do not assess or request "
+            "text, callouts, labels, captions, overlays, or text placement; video artwork must remain "
+            "unlettered. Return exactly one result per scene in the same order and preserve each "
+            "scene_id exactly. Use FAIL only for a clear mismatch, REVIEW when uncertain, and PASS "
+            "when the visual evidence supports the scene. Every FAIL must include a concrete "
+            "actionable correction_prompt. A REVIEW should include a correction only when a safe, "
+            "specific visual change is clear; otherwise correction_prompt must be null. Classify clear failures "
             "using failure_category: ANACHRONISM, AMBIGUITY, WRONG_ACTION, WRONG_ENVIRONMENT, "
-            "MISSING_REQUIRED_OBJECT, FORBIDDEN_OBJECT, CHARACTER_CONTINUITY, EDITORIAL_MISMATCH, "
-            "EDITORIAL_OVER_FACE, EDITORIAL_OVER_CHARACTER, EDITORIAL_OVER_OBJECT, "
-            "EDITORIAL_OVER_ACTION, EDITORIAL_NO_SAFE_SPACE, EDITORIAL_CLIPPED, "
-            "EDITORIAL_TOO_CLOSE_TO_SUBJECT, EDITORIAL_POOR_CONTRAST, NARRATION_MISMATCH, "
+            "MISSING_REQUIRED_OBJECT, FORBIDDEN_OBJECT, CHARACTER_CONTINUITY, NARRATION_MISMATCH, "
             "VISUAL_DUPLICATE, or OTHER. For an editorial obstruction or missing safe space, "
-            "ask for a new composition that reserves the assigned zone and moves the subject/action "
-            "away while preserving narrative meaning; never solve it by laying text over the subject. "
+            "do not apply any text-related correction; video artwork contains no editorial overlay. "
             "Keep corrections specific to the image and preserve the established character and illustration style."
         )
         if self.visual_world is not None:
@@ -471,16 +529,22 @@ class OpenAIImageEditorialReviewer:
                 "\n\nProject visual-world bible:\n"
                 + self.visual_world.model_dump_json(indent=2)
             )
+        request_input: ResponseInputParam = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_text", "text": prompt},
+                    *content,
+                ],
+            }
+        ]
         response = self.client.responses.create(
             model=self.model,
-            input=[{"role": "user", "content": [
-                {"type": "input_text", "text": prompt},
-                *content,
-            ]}],
+            input=request_input,
             text=(
-                _SCENE_REVIEW_RESPONSE_FORMAT
+                _SEMANTIC_SCENE_REVIEW_RESPONSE_FORMAT
                 if len(items) == 1
-                else _SCENE_BATCH_REVIEW_RESPONSE_FORMAT
+                else _SEMANTIC_SCENE_BATCH_REVIEW_RESPONSE_FORMAT
             ),
         )
         output_text = response.output_text
@@ -514,12 +578,6 @@ class OpenAIImageEditorialReviewer:
                     for key in (
                         "narration_image",
                         "narration_description",
-                        "editorial_context",
-                        "editorial_text",
-                        "editorial_style",
-                        "editorial_placement",
-                        "editorial_obstruction",
-                        "editorial_safe_space",
                     )
                 ]
                 if any(status not in {"PASS", "REVIEW", "FAIL"} for status in statuses):
@@ -534,20 +592,8 @@ class OpenAIImageEditorialReviewer:
                     status=overall,
                     narration_image=item["narration_image"],
                     narration_description=item["narration_description"],
-                    editorial_context=item["editorial_context"],
-                    editorial_text=item["editorial_text"],
-                    editorial_style=item["editorial_style"],
-                    editorial_placement=item["editorial_placement"],
-                    editorial_obstruction=item["editorial_obstruction"],
-                    editorial_safe_space=item["editorial_safe_space"],
                     rationale=str(item.get("rationale", "")),
                     correction_prompt=item.get("correction_prompt"),
-                    suggested_editorial_scene_id=item.get(
-                        "suggested_editorial_scene_id"
-                    ),
-                    suggested_editorial_position=item.get(
-                        "suggested_editorial_position"
-                    ),
                     failure_category=item.get("failure_category"),
                 ))
         except (ValueError, KeyError, TypeError) as exc:
@@ -588,7 +634,8 @@ class OpenAIImageEditorialReviewer:
                                      rationale=str(value.get("rationale", "")))
 
 
-OpenAISemanticReviewer = OpenAIImageEditorialReviewer
+OpenAIImageEditorialReviewer = OpenAIImageSemanticReviewer
+OpenAISemanticReviewer = OpenAIImageSemanticReviewer
 
 
 class PilotVideoQA:
@@ -640,7 +687,6 @@ class PilotVideoQA:
                             status="FAIL",
                             narration_image="FAIL",
                             narration_description="FAIL",
-                            editorial_context="FAIL",
                             rationale="Rendered scene has no matching storyboard narration.",
                         )
                     )
@@ -687,7 +733,9 @@ class PilotVideoQA:
     def run_technical(self, storyboard: Storyboard, plan: VideoAssemblyPlan,
                       audio_file: str | Path, video_file: str | Path | None = None,
                       audio_duration: float | None = None,
-                      video_duration: float | None = None) -> TechnicalQAResult:
+                      video_duration: float | None = None,
+                      production_config: ProductionConfig | None = None) -> TechnicalQAResult:
+        config = production_config or ProductionConfig()
         issues: list[str] = []
         checks: dict[str, QAStatus] = {}
         image_ok = True
@@ -707,9 +755,19 @@ class PilotVideoQA:
             except (OSError, ValueError) as exc:
                 image_ok = False
                 issues.append(f"{scene.scene_id}: {exc}")
-            if not math.isfinite(clip.start_seconds) or not math.isfinite(clip.duration_seconds) or clip.duration_seconds <= 0:
+            if (
+                not math.isfinite(clip.start_seconds)
+                or not math.isfinite(clip.duration_seconds)
+                or not config.scene_minimum_duration_seconds
+                <= clip.duration_seconds
+                <= config.scene_maximum_duration_seconds
+            ):
                 durations_ok = False
-                issues.append(f"{scene.scene_id}: invalid scene timestamps or duration.")
+                issues.append(
+                    f"{scene.scene_id}: scene duration must be within "
+                    f"{config.scene_minimum_duration_seconds:.3f}–"
+                    f"{config.scene_maximum_duration_seconds:.3f}s."
+                )
             if i:
                 previous = plan.clips[i - 1]
                 delta = clip.start_seconds - (previous.start_seconds + previous.duration_seconds)
@@ -788,9 +846,6 @@ class PilotVideoQA:
                     "Integrated loudness and true peak could not be measured; "
                     f"automatic audio correction cannot use a measurement. {exc}"
                 )
-        editorial_qa = review_editorial_callouts(storyboard.scenes)
-        if editorial_qa.status == "REVIEW":
-            issues.extend(editorial_qa.findings)
         checks.update(
             images="PASS" if image_ok else "FAIL",
             audio="PASS" if audio_ok else "FAIL",
@@ -811,7 +866,6 @@ class PilotVideoQA:
             ),
             timeline_drift="PASS" if drift <= 0.5 else "REVIEW",
             audio_loudness=loudness_check,
-            editorial_callouts=editorial_qa.status,
         )
         if not audio_ok:
             issues.append("Audio file missing, empty, or duration unavailable.")
@@ -829,8 +883,7 @@ class PilotVideoQA:
                                  integrated_lufs=integrated_lufs,
                                  true_peak_dbtp=true_peak_dbtp,
                                  target_lufs=target_lufs,
-                                 true_peak_ceiling_dbtp=true_peak_ceiling_dbtp,
-                                 editorial_callouts=editorial_qa)
+                                 true_peak_ceiling_dbtp=true_peak_ceiling_dbtp)
 
     def run_semantic(self, storyboard: Storyboard, plan: VideoAssemblyPlan,
                      reviewer: SemanticReviewer) -> list[SceneQAResult]:
@@ -840,7 +893,7 @@ class PilotVideoQA:
             scene = by_id.get(clip.scene_id)
             if scene is None:
                 results.append(SceneQAResult(scene_id=clip.scene_id, status="FAIL", narration_image="FAIL",
-                    narration_description="FAIL", editorial_context="FAIL", rationale="Scene missing from storyboard."))
+                    narration_description="FAIL", rationale="Scene missing from storyboard."))
             else:
                 results.append(reviewer.review(Path(clip.image_path), scene))
         return results

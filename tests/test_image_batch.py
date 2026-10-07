@@ -289,12 +289,11 @@ def test_prompts_use_prompt_builder(
         in prompt
     )
 
-    assert "Render the exact editorial word CURIOSITY inside the illustration." in prompt
-    assert "This word is intentionally part of the generated image" in prompt
-    assert "Do not add any other letters, words, captions, labels, or typography." in prompt
+    assert "NO TEXT. DO NOT DRAW EDITORIAL CALLOUT TEXT." in prompt
+    assert "CURIOSITY" not in prompt
 
 
-def test_prompt_without_editorial_text_does_not_request_text(
+def test_legacy_editorial_text_is_ignored_in_text_free_prompts(
     tmp_path: Path,
 ) -> None:
     provider = MockImageProvider()
@@ -302,10 +301,6 @@ def test_prompt_without_editorial_text_does_not_request_text(
     batch_engine = ImageBatchEngine(image_engine)
 
     storyboard = create_test_storyboard()
-
-    # Remove editorial text from scene 2 so
-    # this test exercises the no-text path.
-    storyboard.scenes[1].text_overlay = ""
 
     requests = batch_engine.create_requests(
         storyboard=storyboard,
@@ -371,7 +366,7 @@ def test_prompts_keep_static_camera_regardless_of_legacy_motion_metadata(
     )
 
 
-def test_editorial_words_are_included_in_image_generation_prompt(
+def test_legacy_editorial_words_are_excluded_from_image_generation_prompt(
     tmp_path: Path,
 ) -> None:
     provider = MockImageProvider()
@@ -385,9 +380,15 @@ def test_editorial_words_are_included_in_image_generation_prompt(
         output_directory=tmp_path,
     )
 
-    assert "exact editorial word CURIOSITY" in requests[0].prompt
-    assert "exact editorial word SURPRISE" in requests[1].prompt
-    assert "exact editorial word INJURY" in requests[2].prompt
+    assert all("NO TEXT." in request.prompt for request in requests)
+    assert all(
+        word not in request.prompt
+        for request, word in zip(
+            requests,
+            ("CURIOSITY", "SURPRISE", "INJURY"),
+            strict=True,
+        )
+    )
 
 
 def test_prompts_are_generated_from_scene_data(
@@ -471,8 +472,8 @@ def test_generate_all_images(
 
     assert len(assets) == 3
     assert len(provider.calls) == 3
-    assert "CURIOSITY" in provider.calls[0].prompt
-    assert "DO NOT DRAW EDITORIAL CALLOUT TEXT." not in provider.calls[0].prompt
+    assert "NO TEXT." in provider.calls[0].prompt
+    assert "CURIOSITY" not in provider.calls[0].prompt
 
     for asset in assets:
         assert asset.status == "completed"

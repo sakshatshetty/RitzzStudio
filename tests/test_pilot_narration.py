@@ -49,7 +49,7 @@ def test_generates_dedicated_pilot_audio_and_alignment(tmp_path):
     assert result.file_path is not None
     assert provider.request.text == "First beat.\n\nSecond beat."
     assert provider.request.voice_settings.stability == 0.72
-    assert provider.request.voice_settings.speed == 0.95
+    assert provider.request.voice_settings.speed == 0.9
     assert provider.request.output_filename == "narration_3min.mp3"
     assert result.file_path.endswith("narration_3min.mp3")
     assert result.actual_duration_seconds == 2.4

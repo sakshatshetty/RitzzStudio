@@ -33,14 +33,14 @@ def make_inputs(tmp_path):
     image.write_bytes(make_png())
     storyboard = Storyboard(
         topic="Pirates",
-        target_duration_seconds=2,
-        total_scene_duration_seconds=2,
+        target_duration_seconds=4,
+        total_scene_duration_seconds=4,
         scenes=[
             StoryboardScene(
                 scene_id="scene_001",
                 section_id="s1",
                 start_seconds=0,
-                duration_seconds=2,
+                duration_seconds=4,
                 narration="Pirate narration.",
                 visual_description="A pirate with an eye patch.",
                 image_prompt="Pirate illustration.",
@@ -50,8 +50,8 @@ def make_inputs(tmp_path):
         ],
     )
     plan = VideoAssemblyPlan(topic="Pirates", width=16, height=16, fps=30,
-        clips=[VideoClip(scene_id="scene_001", image_path=str(image), start_seconds=0, duration_seconds=2)],
-        total_duration_seconds=2)
+        clips=[VideoClip(scene_id="scene_001", image_path=str(image), start_seconds=0, duration_seconds=4)],
+        total_duration_seconds=4)
     audio = tmp_path / "audio.mp3"
     audio.write_bytes(b"audio")
     return storyboard, plan, audio, image
@@ -59,12 +59,30 @@ def make_inputs(tmp_path):
 
 def test_technical_qa_checks_images_and_duration(tmp_path):
     storyboard, plan, audio, _ = make_inputs(tmp_path)
-    result = PilotVideoQA().run_technical(storyboard, plan, audio, audio_duration=2)
+    result = PilotVideoQA().run_technical(storyboard, plan, audio, audio_duration=4)
     assert result.status == "REVIEW"  # video has not yet been rendered
     assert result.checks["images"] == "PASS"
     assert result.checks["timestamp_coverage"] == "PASS"
     assert result.checks["duration_consistency"] == "PASS"
     assert result.checks["audio_loudness"] == "REVIEW"
+
+
+def test_technical_qa_fails_scene_holds_outside_configured_bounds(tmp_path):
+    storyboard, plan, audio, _ = make_inputs(tmp_path)
+    short_clip = plan.clips[0].model_copy(update={"duration_seconds": 2.0})
+    short_plan = plan.model_copy(
+        update={"clips": [short_clip], "total_duration_seconds": 2.0}
+    )
+
+    result = PilotVideoQA().run_technical(
+        storyboard,
+        short_plan,
+        audio,
+        audio_duration=4,
+    )
+
+    assert result.checks["scene_durations"] == "FAIL"
+    assert any("within 3.000–4.000s" in issue for issue in result.issues)
 
 
 def test_technical_qa_fails_when_rendered_video_duration_drifts_from_audio(tmp_path):
@@ -77,8 +95,8 @@ def test_technical_qa_fails_when_rendered_video_duration_drifts_from_audio(tmp_p
         plan,
         audio,
         video_file=video,
-        audio_duration=2,
-        video_duration=2.5,
+        audio_duration=4,
+        video_duration=4.5,
     )
 
     assert result.status == "FAIL"
@@ -103,8 +121,8 @@ def test_technical_qa_reports_in_range_audio_loudness(tmp_path, monkeypatch):
         plan,
         audio,
         video_file=video,
-        audio_duration=2,
-        video_duration=2,
+        audio_duration=4,
+        video_duration=4,
     )
 
     assert result.checks["audio_loudness"] == "PASS"
@@ -130,8 +148,8 @@ def test_technical_qa_accepts_audio_within_two_lu_of_target(tmp_path, monkeypatc
         plan,
         audio,
         video_file=video,
-        audio_duration=2,
-        video_duration=2,
+        audio_duration=4,
+        video_duration=4,
     )
 
     assert result.checks["audio_loudness"] == "PASS"
@@ -164,8 +182,8 @@ def test_technical_qa_reviews_audio_outside_loudness_limits(
         plan,
         audio,
         video_file=video,
-        audio_duration=2,
-        video_duration=2,
+        audio_duration=4,
+        video_duration=4,
     )
 
     assert result.checks["audio_loudness"] == "REVIEW"
@@ -191,8 +209,8 @@ def test_technical_qa_reviews_unmeasurable_audio(tmp_path, monkeypatch):
         plan,
         audio,
         video_file=video,
-        audio_duration=2,
-        video_duration=2,
+        audio_duration=4,
+        video_duration=4,
     )
 
     assert result.checks["audio_loudness"] == "REVIEW"
@@ -204,7 +222,7 @@ def test_technical_qa_reviews_unmeasurable_audio(tmp_path, monkeypatch):
 def test_technical_qa_flags_corrupt_image(tmp_path):
     storyboard, plan, audio, image = make_inputs(tmp_path)
     image.write_bytes(b"not a png")
-    result = PilotVideoQA().run_technical(storyboard, plan, audio, audio_duration=2)
+    result = PilotVideoQA().run_technical(storyboard, plan, audio, audio_duration=4)
     assert result.status == "FAIL"
     assert result.checks["images"] == "FAIL"
 
@@ -212,7 +230,7 @@ def test_technical_qa_flags_corrupt_image(tmp_path):
 def test_technical_qa_reports_large_storyboard_drift(tmp_path):
     storyboard, plan, audio, _ = make_inputs(tmp_path)
     storyboard.scenes[0].start_seconds = 1.0
-    result = PilotVideoQA().run_technical(storyboard, plan, audio, audio_duration=2)
+    result = PilotVideoQA().run_technical(storyboard, plan, audio, audio_duration=4)
     assert result.checks["timeline_drift"] == "REVIEW"
     assert result.maximum_timeline_drift_seconds == pytest.approx(1.0)
 
@@ -235,16 +253,8 @@ def test_openai_rendered_scene_reviewer_requests_strict_json_schema(tmp_path):
         "scene_id": "scene_001",
         "narration_image": "PASS",
         "narration_description": "PASS",
-        "editorial_context": "REVIEW",
-        "editorial_text": "PASS",
-        "editorial_style": "PASS",
-        "editorial_placement": "REVIEW",
-        "editorial_obstruction": "PASS",
-        "editorial_safe_space": "REVIEW",
-        "rationale": "The word is hard to read.",
+        "rationale": "The illustration matches the narration and scene intent.",
         "correction_prompt": None,
-        "suggested_editorial_scene_id": None,
-        "suggested_editorial_position": None,
         "failure_category": None,
     }
 
@@ -288,22 +298,15 @@ def test_openai_rendered_scene_reviewer_requests_strict_json_schema(tmp_path):
     finally:
         monkeypatch.undo()
 
-    assert result.status == "REVIEW"
+    assert result.status == "PASS"
     assert captured["text"]["format"]["type"] == "json_schema"
     assert captured["text"]["format"]["strict"] is True
     assert captured["text"]["format"]["schema"]["additionalProperties"] is False
     assert "technology_ceiling" in captured["input"][0]["content"][0]["text"]
     assert "failure_category" in captured["text"]["format"]["schema"]["required"]
-    assert {
-        "editorial_text",
-        "editorial_style",
-        "editorial_placement",
-        "editorial_obstruction",
-        "editorial_safe_space",
-    }.issubset(captured["text"]["format"]["schema"]["required"])
-    assert result.editorial_placement == "REVIEW"
-    assert result.editorial_safe_space == "REVIEW"
-    assert "suggested_editorial_position" in captured["text"]["format"]["schema"]["required"]
+    assert "editorial_text" not in captured["text"]["format"]["schema"]["properties"]
+    assert "editorial_context" not in captured["input"][0]["content"][0]["text"]
+    assert result.editorial_context == "PASS"
 
 
 def test_openai_rendered_scene_reviewer_preserves_failure_category(
@@ -315,17 +318,9 @@ def test_openai_rendered_scene_reviewer_preserves_failure_category(
         "scene_id": "scene_001",
         "narration_image": "FAIL",
         "narration_description": "PASS",
-        "editorial_context": "PASS",
-        "editorial_text": "PASS",
-        "editorial_style": "PASS",
-        "editorial_placement": "PASS",
-        "editorial_obstruction": "FAIL",
-        "editorial_safe_space": "PASS",
-        "rationale": "The callout overlaps the face.",
-        "correction_prompt": "Move the word into a clear empty area.",
-        "suggested_editorial_scene_id": None,
-        "suggested_editorial_position": None,
-        "failure_category": "EDITORIAL_OVER_FACE",
+        "rationale": "The scene action is not visible.",
+        "correction_prompt": "Show the described action clearly.",
+        "failure_category": "WRONG_ACTION",
     }
     reviewer = OpenAIImageEditorialReviewer(api_key="test-key", model="test-model")
     monkeypatch.setattr(
@@ -341,8 +336,8 @@ def test_openai_rendered_scene_reviewer_preserves_failure_category(
     result = reviewer.review(image, storyboard.scenes[0])
 
     assert result.status == "FAIL"
-    assert result.failure_category == "EDITORIAL_OVER_FACE"
-    assert result.editorial_obstruction == "FAIL"
+    assert result.failure_category == "WRONG_ACTION"
+    assert result.editorial_context == "PASS"
 
 
 def test_openai_rendered_scene_reviewer_reports_empty_incomplete_output(tmp_path):
@@ -494,7 +489,7 @@ def test_audio_image_match_uses_synchronized_scene_range(tmp_path):
                 start_seconds=start_seconds, end_seconds=end_seconds, rationale="Image matches the narration.")
     results = PilotVideoQA().run_audio_image_match(storyboard, plan, Reviewer())
     assert results[0].start_seconds == 0
-    assert results[0].end_seconds == 2
+    assert results[0].end_seconds == 4
     assert results[0].status == "PASS"
 
 
@@ -540,7 +535,7 @@ def test_rendered_video_semantic_qa_reviews_frames_at_scene_midpoints(tmp_path, 
     assert report.status == "PASS"
     assert report.counts == {"PASS": 1, "REVIEW": 0, "FAIL": 0}
     assert "-ss" in seen[0]
-    assert seen[0][seen[0].index("-ss") + 1] == "1.000"
+    assert seen[0][seen[0].index("-ss") + 1] == "2.000"
 
 
 def test_rendered_video_semantic_qa_receives_each_scene_narration_segment(tmp_path, monkeypatch):
@@ -548,14 +543,14 @@ def test_rendered_video_semantic_qa_receives_each_scene_narration_segment(tmp_pa
     image.write_bytes(make_png())
     storyboard = Storyboard(
         topic="Pirates",
-        target_duration_seconds=4,
-        total_scene_duration_seconds=4,
+        target_duration_seconds=8,
+        total_scene_duration_seconds=8,
         scenes=[
             StoryboardScene(
                 scene_id="scene_001",
                 section_id="s1",
                 start_seconds=0,
-                duration_seconds=2,
+                duration_seconds=4,
                 narration="The pirate enters the dark cabin.",
                 visual_description="A pirate entering a cabin.",
                 image_prompt="Pirate illustration.",
@@ -563,8 +558,8 @@ def test_rendered_video_semantic_qa_receives_each_scene_narration_segment(tmp_pa
             StoryboardScene(
                 scene_id="scene_002",
                 section_id="s1",
-                start_seconds=2,
-                duration_seconds=2,
+                start_seconds=4,
+                duration_seconds=4,
                 narration="One eye stays adapted to darkness.",
                 visual_description="A pirate's adapted eye.",
                 image_prompt="Eye illustration.",
@@ -578,10 +573,10 @@ def test_rendered_video_semantic_qa_receives_each_scene_narration_segment(tmp_pa
         fps=30,
         clips=[
             VideoClip(scene_id=f"scene_{index:03}", image_path=str(image),
-                      start_seconds=(index - 1) * 2, duration_seconds=2)
+                      start_seconds=(index - 1) * 4, duration_seconds=4)
             for index in (1, 2)
         ],
-        total_duration_seconds=4,
+        total_duration_seconds=8,
     )
     video = tmp_path / "rendered.mp4"
     video.write_bytes(b"video")
