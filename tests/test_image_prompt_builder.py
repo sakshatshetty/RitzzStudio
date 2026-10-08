@@ -50,11 +50,11 @@ def test_default_style_is_used() -> None:
     )
 
     assert (
-        "Simple 2D cartoon illustration"
+        "hand-drawn educational explainer illustration"
         in prompt
     )
     assert (
-        "thick black outlines"
+        "thick black marker-and-ink outlines"
         in prompt
     )
     assert (
@@ -62,21 +62,19 @@ def test_default_style_is_used() -> None:
         in prompt
     )
     assert (
-        "very minimal shading"
-        in prompt
-    )
-    assert (
-        "YouTube explainer animation style"
+        "simple shading"
         in prompt
     )
 
-    assert "Hand-drawn educational explainer illustration" in prompt
-    assert "rough marker and pen ink drawing" in prompt
-    assert "annotation-like storyboard frame" in prompt
-    assert "controlled human imperfection" in prompt
-    assert "subtle natural line-weight variation" in prompt
-    assert "organic slightly uneven shapes" in prompt
-    assert "clean and readable rather than messy or unfinished" in prompt
+    assert (
+        "educational-explainer artwork"
+        in prompt
+    )
+
+    assert "bold readable poses" in prompt
+    assert "controlled hand-drawn imperfection" in prompt
+    assert "clear silhouettes" in prompt
+    assert "enough simple, relevant props to explain the scene" in prompt
 
 
 def test_prompt_contains_landscape_composition() -> None:
@@ -139,7 +137,7 @@ def test_prompt_contains_props() -> None:
     )
 
     assert (
-        "Props: eye patch, ship wheel"
+        "Relevant scene props: eye patch, ship wheel"
         in prompt
     )
 
@@ -187,7 +185,7 @@ def test_prompt_without_editorial_text_contains_negative_style() -> None:
     )
 
     assert (
-        "unnecessary text."
+        "all generated text."
         in prompt
     )
 
@@ -258,6 +256,67 @@ def test_legacy_editorial_fields_do_not_override_visual_contract():
 
     assert "SCENE ACTION: raises a lantern" in prompt
     assert "REQUIRED OBJECTS: wooden lantern, ship wheel" in prompt
+
+
+def test_prompt_uses_current_sentence_and_neighbor_context_with_clear_priority():
+    scene = sample_scene().model_copy(
+        update={
+            "sentence": "The pirate hides beneath the cargo deck.",
+            "previous_sentence": "The sailor heard footsteps overhead.",
+            "next_sentence": "The crew searches the upper deck.",
+        }
+    )
+
+    prompt = ImagePromptBuilder().build(
+        scene,
+        project_topic="Why Do Pirates Wear Eye Patches?",
+    )
+
+    assert "FULL PROJECT TOPIC: Why Do Pirates Wear Eye Patches?" in prompt
+    assert (
+        "CURRENT SENTENCE — PRIMARY VISUAL INSTRUCTION: "
+        "The pirate hides beneath the cargo deck."
+    ) in prompt
+    assert (
+        "PREVIOUS SENTENCE — continuity context only: "
+        "The sailor heard footsteps overhead."
+    ) in prompt
+    assert (
+        "NEXT SENTENCE — continuity context only: "
+        "The crew searches the upper deck."
+    ) in prompt
+    assert prompt.index("CURRENT SENTENCE") < prompt.index("PREVIOUS SENTENCE")
+    assert "current sentence determines" in prompt
+    assert "Context must clarify the current sentence" in prompt
+    assert "NO TEXT." in prompt
+
+
+def test_prompt_contains_stable_character_reference_and_environment_context():
+    scene = sample_scene().model_copy(
+        update={
+            "previous_sentence": "The sailor heard footsteps overhead.",
+            "next_sentence": "The crew searches the upper deck.",
+            "visual_contract": SceneVisualContract(
+                scene_id="scene_001",
+                purpose="SHOW_PROCESS",
+                subject="The same sailor from the previous scene",
+                action="hides under cargo",
+                environment="Ship cargo deck with barrels, crates, a ladder, and lantern",
+                historical_context="A period wooden sailing ship",
+                required_objects=["barrels", "crates", "ladder", "lantern"],
+                ambiguity_resolution="Show the sailor hiding below deck.",
+                continuity_requirements=["Preserve the sailor's eye patch and red shirt."],
+            ),
+        }
+    )
+    builder = ImagePromptBuilder(character_profile="Same round head and red shirt")
+
+    prompt = builder.build(scene, project_topic="Pirate history")
+
+    assert "Same round head and red shirt" in prompt
+    assert "Keep this character design consistent" in prompt
+    assert "Preserve the sailor's eye patch and red shirt." in prompt
+    assert "barrels, crates, ladder, lantern" in prompt
     assert "SURVIVAL" not in prompt
     assert "NO TEXT." in prompt
 
@@ -427,37 +486,16 @@ def test_video_image_prompt_never_embeds_legacy_editorial_text() -> None:
     assert "NO TEXT." in prompt
 
 
-def test_prompt_contains_simple_visual_direction() -> None:
+def test_prompt_keeps_the_current_sentence_dominant_and_environment_readable() -> None:
     builder = ImagePromptBuilder()
 
     prompt = builder.build(
         sample_scene()
     )
 
-    assert (
-        "Keep the scene visually simple."
-        in prompt
-    )
-
-    assert (
-        "Use one main visual idea."
-        in prompt
-    )
-
-    assert (
-        "Use one main character whenever possible."
-        in prompt
-    )
-
-    assert (
-        "Use only the necessary props."
-        in prompt
-    )
-
-    assert (
-        "Keep the background simple and secondary."
-        in prompt
-    )
+    assert "Show the current sentence as one complete visual idea." in prompt
+    assert "foreground action dominant and the background supportive" in prompt
+    assert "Use multiple characters or objects when the sentence requires them." in prompt
 
 
 def test_prompt_does_not_turn_scene_into_infographic() -> None:
@@ -559,7 +597,7 @@ def test_empty_character_profile_is_not_added() -> None:
     )
 
 
-def test_first_three_props_are_used() -> None:
+def test_all_contextually_supplied_props_are_available_to_the_image_prompt() -> None:
     builder = ImagePromptBuilder()
 
     scene = sample_scene()
@@ -575,16 +613,6 @@ def test_first_three_props_are_used() -> None:
     prompt = builder.build(scene)
 
     assert (
-        "Props: eye patch, ship wheel, rope"
+        "Relevant scene props: eye patch, ship wheel, rope, barrel, treasure chest"
         in prompt
-    )
-
-    assert (
-        "barrel"
-        not in prompt
-    )
-
-    assert (
-        "treasure chest"
-        not in prompt
     )

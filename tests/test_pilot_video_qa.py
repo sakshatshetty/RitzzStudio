@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from modules.project.config import ProductionConfig
 from modules.storyboard.models import Storyboard, StoryboardScene
 from modules.storyboard.visual_models import VisualWorldBible
 from modules.video.models import VideoAssemblyPlan, VideoClip
@@ -67,22 +68,35 @@ def test_technical_qa_checks_images_and_duration(tmp_path):
     assert result.checks["audio_loudness"] == "REVIEW"
 
 
-def test_technical_qa_fails_scene_holds_outside_configured_bounds(tmp_path):
+@pytest.mark.parametrize("duration", [2.0, 7.0, 10.0])
+def test_technical_qa_does_not_reject_sentence_image_hold_lengths(
+    tmp_path,
+    duration,
+):
     storyboard, plan, audio, _ = make_inputs(tmp_path)
-    short_clip = plan.clips[0].model_copy(update={"duration_seconds": 2.0})
-    short_plan = plan.model_copy(
-        update={"clips": [short_clip], "total_duration_seconds": 2.0}
+    storyboard.scenes[0] = storyboard.scenes[0].model_copy(
+        update={"duration_seconds": duration}
+    )
+    clip = plan.clips[0].model_copy(update={"duration_seconds": duration})
+    sentence_plan = plan.model_copy(
+        update={"clips": [clip], "total_duration_seconds": duration}
     )
 
     result = PilotVideoQA().run_technical(
         storyboard,
-        short_plan,
+        sentence_plan,
         audio,
-        audio_duration=4,
+        audio_duration=duration,
+        production_config=ProductionConfig(
+            target_duration_seconds=480,
+            minimum_duration_seconds=480,
+            scene_minimum_duration_seconds=3,
+            scene_maximum_duration_seconds=4,
+        ),
     )
 
-    assert result.checks["scene_durations"] == "FAIL"
-    assert any("within 3.000–4.000s" in issue for issue in result.issues)
+    assert result.checks["scene_durations"] == "PASS"
+    assert result.checks["timestamp_coverage"] == "PASS"
 
 
 def test_technical_qa_fails_when_rendered_video_duration_drifts_from_audio(tmp_path):
@@ -366,11 +380,23 @@ def test_openai_rendered_scene_reviewer_reports_empty_incomplete_output(tmp_path
 
 def test_openai_rendered_scene_batch_preserves_full_narration_and_order(tmp_path):
     storyboard, _, _, image = make_inputs(tmp_path)
+    storyboard.scenes[0] = storyboard.scenes[0].model_copy(
+        update={
+            "sentence_id": 1,
+            "sentence": "Pirate narration.",
+            "previous_sentence": "The ship leaves port.",
+            "next_sentence": "The sailor looks toward the horizon.",
+        }
+    )
     second_image = tmp_path / "scene_002.png"
     second_image.write_bytes(make_png())
     second_scene = storyboard.scenes[0].model_copy(update={
         "scene_id": "scene_002",
         "narration": "The complete second scene narration.",
+        "sentence_id": 2,
+        "sentence": "The complete second scene narration.",
+        "previous_sentence": "Pirate narration.",
+        "next_sentence": "A new event follows.",
         "start_seconds": 2,
     })
     captured = {}
@@ -420,6 +446,9 @@ def test_openai_rendered_scene_batch_preserves_full_narration_and_order(tmp_path
 
     assert [result.scene_id for result in results] == ["scene_001", "scene_002"]
     assert "Pirate narration." in captured["input"][0]["content"][1]["text"]
+    assert "Current sentence (primary visual target): Pirate narration." in captured["input"][0]["content"][1]["text"]
+    assert "Previous sentence (continuity context only): The ship leaves port." in captured["input"][0]["content"][1]["text"]
+    assert "Next sentence (continuity context only): The sailor looks toward the horizon." in captured["input"][0]["content"][1]["text"]
     assert "The complete second scene narration." in captured["input"][0]["content"][3]["text"]
     schema = captured["text"]["format"]["schema"]
     assert captured["text"]["format"]["strict"] is True
@@ -482,9 +511,14 @@ def test_openai_rendered_scene_batch_rejects_reordered_scene_ids(tmp_path):
 
 def test_audio_image_match_uses_synchronized_scene_range(tmp_path):
     storyboard, plan, _, _ = make_inputs(tmp_path)
+    storyboard.scenes[0].sentence = "Pirate narration."
+    storyboard.scenes[0].previous_sentence = "The ship leaves port."
+    storyboard.scenes[0].next_sentence = "The sailor looks at the horizon."
     class Reviewer:
         def match_audio_image(self, image_path, scene, start_seconds, end_seconds):
             assert scene.narration == "Pirate narration."
+            assert scene.previous_sentence == "The ship leaves port."
+            assert scene.next_sentence == "The sailor looks at the horizon."
             return AudioImageMatchResult(scene_id=scene.scene_id, status="PASS", narration=scene.narration,
                 start_seconds=start_seconds, end_seconds=end_seconds, rationale="Image matches the narration.")
     results = PilotVideoQA().run_audio_image_match(storyboard, plan, Reviewer())

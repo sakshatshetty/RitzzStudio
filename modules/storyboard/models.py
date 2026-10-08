@@ -58,12 +58,15 @@ class StoryboardScene(BaseModel):
     section_id: str
 
     start_seconds: float = Field(ge=0)
-    duration_seconds: float = Field(
-        gt=0,
-        le=30,
-    )
+    duration_seconds: float = Field(gt=0)
 
     narration: str
+    sentence_id: int | None = Field(default=None, ge=1)
+    sentence: str = ""
+    sentence_start_seconds: float | None = Field(default=None, ge=0)
+    sentence_end_seconds: float | None = Field(default=None, gt=0)
+    previous_sentence: str = ""
+    next_sentence: str = ""
 
     visual_style: VisualStyle = "stickman"
 
@@ -79,9 +82,6 @@ class StoryboardScene(BaseModel):
         default_factory=list
     )
     scene_purpose: ScenePurpose = "EXPLAIN"
-    visual_weight: int = Field(default=3, ge=1, le=5)
-    narration_density: float = Field(default=0, ge=0)
-    hold_reason: str = ""
 
     # Editorial words are rendered as part of selected generated images.
     text_overlay: str = Field(
@@ -120,4 +120,4 @@ class Storyboard(BaseModel):
 
     total_scene_duration_seconds: float
 
-    target_scene_duration_seconds: float = 5.0
+    target_scene_duration_seconds: float | None = 5.0

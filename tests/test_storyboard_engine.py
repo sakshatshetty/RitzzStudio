@@ -5,6 +5,7 @@ import pytest
 
 from modules.project.config import ProductionConfig
 from modules.script.models import Script, ScriptSection
+from modules.script.sentences import split_sentences
 from modules.storyboard.engine import StoryboardEngine
 
 PROJECT_DIR = Path(
@@ -58,7 +59,7 @@ def test_create_storyboard():
     assert len(storyboard.scenes) > 0
 
 
-def test_storyboard_uses_configured_scene_limits(tmp_path):
+def test_storyboard_uses_one_scene_per_sentence_without_hold_targets():
     engine = StoryboardEngine(target_scene_duration_seconds=5.0)
     storyboard = engine.create_storyboard(
         SCRIPT_FILE,
@@ -69,10 +70,14 @@ def test_storyboard_uses_configured_scene_limits(tmp_path):
             scene_maximum_duration_seconds=4.0,
         ),
     )
-    assert storyboard.target_scene_duration_seconds == 4.0
+    assert storyboard.target_scene_duration_seconds is None
+    assert all(
+        len(split_sentences(scene.narration)) == 1
+        for scene in storyboard.scenes
+    )
 
 
-def test_storyboard_has_expected_scene_count():
+def test_storyboard_has_exactly_one_scene_per_script_sentence():
     engine = StoryboardEngine(
         target_scene_duration_seconds=5.0
     )
@@ -81,9 +86,15 @@ def test_storyboard_has_expected_scene_count():
         SCRIPT_FILE
     )
 
-    # Four seconds is the configured ceiling for production scenes.
-    assert len(storyboard.scenes) >= 120
-    assert all(scene.duration_seconds <= 4 for scene in storyboard.scenes)
+    expected_sentence_count = sum(
+        len(split_sentences(section.narration.strip()))
+        for section in engine.load_script(SCRIPT_FILE).sections
+    )
+    assert len(storyboard.scenes) == expected_sentence_count
+    assert all(
+        len(split_sentences(scene.narration)) == 1
+        for scene in storyboard.scenes
+    )
 
 
 def test_storyboard_duration():
@@ -139,7 +150,9 @@ def test_storyboard_scales_section_estimates_to_declared_script_duration():
         30, abs=0.01
     )
     assert all(scene.duration_seconds > 0 for scene in storyboard.scenes)
-    assert all(scene.duration_seconds <= 30 for scene in storyboard.scenes)
+    assert len(storyboard.scenes) == 1
+    assert storyboard.scenes[0].narration == "One two three four five six seven eight nine ten."
+    assert storyboard.scenes[0].sentence_id == 1
 
 
 def test_storyboard_contains_all_sections():
@@ -247,6 +260,7 @@ def test_scene_ids_are_sequential():
         assert scene.scene_id == (
             f"scene_{index:03d}"
         )
+        assert scene.sentence_id == index
 
 
 def test_save_and_load_storyboard(
@@ -311,8 +325,15 @@ def test_saved_storyboard_contains_valid_json(
         "Why Do Pirates Wear Eye Patches?"
     )
 
-    assert len(data["scenes"]) >= 120
-    assert all(scene["duration_seconds"] <= 4 for scene in data["scenes"])
+    source_script = engine.load_script(SCRIPT_FILE)
+    assert len(data["scenes"]) == sum(
+        len(split_sentences(section.narration.strip()))
+        for section in source_script.sections
+    )
+    assert all(
+        len(split_sentences(scene["narration"])) == 1
+        for scene in data["scenes"]
+    )
 
 
 def test_topic_mismatch_fails(

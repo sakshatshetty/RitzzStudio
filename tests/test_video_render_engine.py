@@ -447,6 +447,59 @@ def test_filter_script_contains_zoompan() -> None:
     )
 
 
+def test_static_scene_frames_use_cumulative_sentence_cut_timestamps() -> None:
+    renderer = FFmpegVideoRenderer()
+    assembly_plan = VideoAssemblyPlan(
+        topic="Sentence cuts",
+        width=320,
+        height=180,
+        fps=30,
+        clips=[
+            VideoClip(
+                scene_id="scene_001",
+                image_path="one.png",
+                start_seconds=0,
+                duration_seconds=1.01,
+            ),
+            VideoClip(
+                scene_id="scene_002",
+                image_path="two.png",
+                start_seconds=1.01,
+                duration_seconds=0.21,
+            ),
+        ],
+        total_duration_seconds=1.22,
+    )
+    motion_plan = VideoMotionPlan(
+        topic="Sentence cuts",
+        width=320,
+        height=180,
+        fps=30,
+        instructions=[
+            MotionInstruction(
+                scene_id=clip.scene_id,
+                start_seconds=clip.start_seconds,
+                duration_seconds=clip.duration_seconds,
+                motion="static",
+                zoom_start=1,
+                zoom_end=1,
+                position_x_start=0.5,
+                position_x_end=0.5,
+                position_y_start=0.5,
+                position_y_end=0.5,
+            )
+            for clip in assembly_plan.clips
+        ],
+        total_duration_seconds=1.22,
+    )
+
+    filter_script = renderer.build_filter_script(assembly_plan, motion_plan)
+
+    assert "trim=end_frame=30" in filter_script
+    assert "trim=end_frame=7" in filter_script
+    assert "concat=n=2:v=1:a=0" in filter_script
+
+
 def test_plan_mismatch_fails() -> None:
     renderer = FFmpegVideoRenderer()
 

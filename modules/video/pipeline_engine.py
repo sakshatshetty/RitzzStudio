@@ -665,7 +665,7 @@ class VideoProductionPipeline:
         def cache_key(index: int) -> str:
             image_path = image_directory / f"{scenes[index].scene_id}.png"
             payload = {
-                "semantic_qa_policy_version": 3,
+                "semantic_qa_policy_version": 4,
                 "reviewer": (
                     f"{type(reviewer).__module__}.{type(reviewer).__qualname__}:"
                     f"{getattr(reviewer, 'model', 'default')}"
@@ -673,6 +673,12 @@ class VideoProductionPipeline:
                 "scene": scenes[index].model_dump(
                     include={
                         "scene_id",
+                        "sentence_id",
+                        "sentence",
+                        "sentence_start_seconds",
+                        "sentence_end_seconds",
+                        "previous_sentence",
+                        "next_sentence",
                         "narration",
                         "visual_description",
                         "image_prompt",

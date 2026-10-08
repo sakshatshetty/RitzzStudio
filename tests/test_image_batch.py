@@ -241,26 +241,18 @@ def test_prompts_use_prompt_builder(
     prompt = requests[0].prompt
 
     # Ritzz global visual style.
+    assert "hand-drawn educational explainer illustration" in prompt
+    assert "Simple stickman and doodle characters" in prompt
     assert (
-        "Simple 2D cartoon illustration"
-        in prompt
-    )
-    assert (
-        "thick black outlines"
+        "thick black marker-and-ink outlines"
         in prompt
     )
     assert (
         "flat colors"
         in prompt
     )
-    assert (
-        "very minimal shading"
-        in prompt
-    )
-    assert (
-        "YouTube explainer animation style"
-        in prompt
-    )
+    assert "contextually appropriate environment" in prompt
+    assert "enough simple, relevant props to explain the scene" in prompt
 
     # Landscape output.
     assert (
@@ -285,11 +277,12 @@ def test_prompts_use_prompt_builder(
     )
 
     assert (
-        "Props: eye patch, ship wheel"
+        "Relevant scene props: eye patch, ship wheel"
         in prompt
     )
 
-    assert "NO TEXT. DO NOT DRAW EDITORIAL CALLOUT TEXT." in prompt
+    assert "NO TEXT. The only exception is readable wording" in prompt
+    assert "DO NOT DRAW EDITORIAL CALLOUT TEXT." in prompt
     assert "CURIOSITY" not in prompt
 
 
@@ -324,10 +317,7 @@ def test_legacy_editorial_text_is_ignored_in_text_free_prompts(
         in prompt
     )
 
-    assert (
-        "unnecessary text."
-        in prompt
-    )
+    assert "unnecessary props, and all generated text." in prompt
 
     assert "NO TEXT." in prompt
     assert "NO TITLES." in prompt

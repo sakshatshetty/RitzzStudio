@@ -11,8 +11,8 @@ on:
           - NEW
           - RESUME
         default: NEW
-      creative_package_url:
-        description: Path URL on the configured private HTTPS asset host (NEW only)
+      creative_package_release_tag:
+        description: Published GitHub release tag with creative-package.zip (NEW only)
         required: false
         type: string
       project_id:
@@ -42,8 +42,6 @@ jobs:
       RITZZ_VOICE_ID: ${{ secrets.RITZZ_VOICE_ID }}
       GOOGLE_CLIENT_SECRETS_B64: ${{ secrets.GOOGLE_CLIENT_SECRETS_B64 }}
       GOOGLE_TOKEN_B64: ${{ secrets.GOOGLE_TOKEN_B64 }}
-      RITZZ_CREATIVE_PACKAGE_HOST: ${{ vars.RITZZ_CREATIVE_PACKAGE_HOST }}
-      RITZZ_CREATIVE_PACKAGE_DOWNLOAD_TOKEN: ${{ secrets.RITZZ_CREATIVE_PACKAGE_DOWNLOAD_TOKEN }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -91,8 +89,6 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
       RITZZ_VOICE_ID: ${{ secrets.RITZZ_VOICE_ID }}
-      RITZZ_CREATIVE_PACKAGE_HOST: ${{ vars.RITZZ_CREATIVE_PACKAGE_HOST }}
-      RITZZ_CREATIVE_PACKAGE_DOWNLOAD_TOKEN: ${{ secrets.RITZZ_CREATIVE_PACKAGE_DOWNLOAD_TOKEN }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -112,14 +108,16 @@ jobs:
       - name: Download the user-supplied ZIP
         if: ${{ inputs.mode == 'NEW' }}
         env:
-          RITZZ_CREATIVE_PACKAGE_URL: ${{ inputs.creative_package_url }}
+          GH_TOKEN: ${{ github.token }}
+          CREATIVE_PACKAGE_RELEASE_TAG: ${{ inputs.creative_package_release_tag }}
         run: |
           set -euo pipefail
-          if [[ -z "$RITZZ_CREATIVE_PACKAGE_URL" ]]; then
-            echo "creative_package_url is required for a NEW production." >&2
+          if [[ -z "$CREATIVE_PACKAGE_RELEASE_TAG" ]]; then
+            echo "creative_package_release_tag is required for a NEW production." >&2
             exit 1
           fi
-          python scripts/download_creative_package.py
+          python scripts/download_creative_package.py \
+            --release-tag "$CREATIVE_PACKAGE_RELEASE_TAG"
 
       - name: Validate and import the creative ZIP
         if: ${{ inputs.mode == 'NEW' }}

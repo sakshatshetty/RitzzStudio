@@ -1,10 +1,11 @@
 import json
-from math import ceil
 from pathlib import Path
 from typing import ClassVar
 
+from modules.image.prompt_builder import ImagePromptBuilder
 from modules.project.config import ProductionConfig
 from modules.script.models import Script
+from modules.script.sentences import split_sentences
 from modules.storyboard.models import (
     CameraMotion,
     Storyboard,
@@ -53,12 +54,8 @@ class StoryboardEngine:
         """Create a storyboard from an existing script."""
 
         script = self.load_script(script_file)
-
-        config = production_config or ProductionConfig(
-            target_duration_seconds=script.target_duration_seconds,
-            minimum_duration_seconds=script.target_duration_seconds,
-        )
-        storyboard = self._build_storyboard(script, config)
+        del production_config
+        storyboard = self._build_storyboard(script)
 
         self._validate_storyboard(
             storyboard,
@@ -114,14 +111,7 @@ class StoryboardEngine:
         Legacy text fields remain readable for existing storyboards.
         """
 
-        config = production_config or ProductionConfig(
-            target_duration_seconds=script.target_duration_seconds,
-            minimum_duration_seconds=script.target_duration_seconds,
-        )
-        target_scene_duration = max(
-            config.scene_minimum_duration_seconds,
-            min(self.target_scene_duration_seconds, config.scene_maximum_duration_seconds),
-        )
+        del production_config
         expected_duration = float(script.total_estimated_seconds)
         section_duration_total = sum(
             float(section.estimated_seconds) for section in script.sections
@@ -145,44 +135,20 @@ class StoryboardEngine:
                     "has no narration."
                 )
 
-            word_count = len(
-                narration.split()
-            )
-
-            if word_count == 0:
+            sentences = split_sentences(narration)
+            if not sentences:
                 raise ValueError(
                     f"Section {section.section_id} "
                     "contains no words."
                 )
 
             section_duration = float(section.estimated_seconds) * section_duration_scale
+            sentence_word_counts = [max(1, len(sentence.split())) for sentence in sentences]
+            section_word_count = sum(sentence_word_counts)
 
-            section_scene_count = max(
-                1,
-                ceil(
-                    section_duration
-                    / target_scene_duration
-                ),
-            )
-
-            word_groups = self._split_words(
-                narration.split(),
-                section_scene_count,
-            )
-
-            actual_scene_count = len(
-                word_groups
-            )
-
-            base_duration = (
-                section_duration
-                / actual_scene_count
-            )
-
-            for words in word_groups:
-                scene_duration = base_duration
-
-                scene_narration = " ".join(words)
+            for sentence_text, word_count in zip(sentences, sentence_word_counts):
+                scene_duration = section_duration * word_count / section_word_count
+                scene_narration = sentence_text
 
                 scene_id = (
                     f"scene_{scene_number:03d}"
@@ -190,13 +156,6 @@ class StoryboardEngine:
 
                 visual_description = (
                     self._build_visual_description(
-                        section.title,
-                        scene_narration,
-                    )
-                )
-
-                image_prompt = (
-                    self._build_image_prompt(
                         section.title,
                         scene_narration,
                     )
@@ -229,6 +188,8 @@ class StoryboardEngine:
                     start_seconds=current_time,
                     duration_seconds=scene_duration,
                     narration=scene_narration,
+                    sentence_id=scene_number,
+                    sentence=scene_narration,
                     visual_style="stickman",
                     visual_description=visual_description,
                     character_action=(
@@ -251,13 +212,41 @@ class StoryboardEngine:
                     research_sources=list(
                         section.research_sources
                     ),
-                    image_prompt=image_prompt,
+                    image_prompt="Pending sentence-context image prompt.",
                 )
 
                 scenes.append(scene)
 
                 current_time = scene.start_seconds + scene.duration_seconds
                 scene_number += 1
+
+        scenes = [
+            scene.model_copy(
+                update={
+                    "previous_sentence": (
+                        scenes[index - 1].narration if index else ""
+                    ),
+                    "next_sentence": (
+                        scenes[index + 1].narration
+                        if index + 1 < len(scenes)
+                        else ""
+                    ),
+                }
+            )
+            for index, scene in enumerate(scenes)
+        ]
+        prompt_builder = ImagePromptBuilder()
+        scenes = [
+            scene.model_copy(
+                update={
+                    "image_prompt": prompt_builder.build(
+                        scene,
+                        project_topic=script.topic,
+                    )
+                }
+            )
+            for scene in scenes
+        ]
 
         total_duration = sum(
             scene.duration_seconds
@@ -282,64 +271,8 @@ class StoryboardEngine:
                 total_duration,
                 2,
             ),
-            target_scene_duration_seconds=(
-                target_scene_duration
-            ),
+            target_scene_duration_seconds=None,
         )
-
-    # ---------------------------------------------------------
-    # Word splitting
-    # ---------------------------------------------------------
-
-    @staticmethod
-    def _split_words(
-        words: list[str],
-        number_of_groups: int,
-    ) -> list[list[str]]:
-        """Split words into approximately equal groups."""
-
-        if not words:
-            return [[]]
-
-        number_of_groups = max(
-            1,
-            min(
-                number_of_groups,
-                len(words),
-            ),
-        )
-
-        result: list[list[str]] = []
-
-        base_size = (
-            len(words)
-            // number_of_groups
-        )
-
-        remainder = (
-            len(words)
-            % number_of_groups
-        )
-
-        start = 0
-
-        for index in range(
-            number_of_groups
-        ):
-            size = base_size
-
-            if index < remainder:
-                size += 1
-
-            end = start + size
-
-            result.append(
-                words[start:end]
-            )
-
-            start = end
-
-        return result
 
     # ---------------------------------------------------------
     # Visual generation helpers
@@ -357,25 +290,6 @@ class StoryboardEngine:
             f"scene illustrating the idea in "
             f"'{title}'. The character should visually "
             f"represent this narration: {narration}"
-        )
-
-    @staticmethod
-    def _build_image_prompt(
-        title: str,
-        narration: str,
-    ) -> str:
-        """Create a basic image-generation prompt."""
-
-        return (
-            "Ritzz visual style: simple hand-drawn "
-            "2D stick-man explainer illustration, "
-            "clean composition, strong black outlines, "
-            "minimal background, readable visual "
-            "storytelling, consistent character design. "
-            f"Scene topic: {title}. "
-            f"Visual idea: {narration}. "
-            "No photorealism, no 3D rendering, "
-            "no unnecessary visual clutter."
         )
 
     @staticmethod
@@ -407,6 +321,29 @@ class StoryboardEngine:
             raise ValueError(
                 "Storyboard contains no scenes."
             )
+
+        expected_sentences = [
+            (section.section_id, sentence)
+            for section in script.sections
+            for sentence in split_sentences(section.narration.strip())
+        ]
+        if len(storyboard.scenes) != len(expected_sentences):
+            raise ValueError(
+                "Storyboard scene count does not match the number of script sentences."
+            )
+        for index, (scene, (section_id, sentence)) in enumerate(
+            zip(storyboard.scenes, expected_sentences, strict=True),
+            start=1,
+        ):
+            if (
+                scene.sentence_id != index
+                or scene.sentence != sentence
+                or scene.narration != sentence
+                or scene.section_id != section_id
+            ):
+                raise ValueError(
+                    f"{scene.scene_id} does not represent script sentence {index}."
+                )
 
         expected_duration = float(
             script.total_estimated_seconds

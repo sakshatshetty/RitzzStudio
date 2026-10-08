@@ -10,7 +10,6 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from modules.image.character_profile import load_character_profile
 from modules.image.prompt_builder import ImagePromptBuilder
-from modules.project.config import ProductionConfig
 from modules.project.manager import ProjectManager
 from modules.research.models import Research
 from modules.storyboard.engine import StoryboardEngine
@@ -26,13 +25,11 @@ def main() -> int:
     project = project_manager.load_project(project_id)
     project_directory = project_manager.get_project_path(project)
     script_file = project_directory / "script" / "script.json"
-    config_file = project_directory / "production_config.json"
     narration_result_file = project_directory / "voice" / "narration_result.json"
     storyboard_directory = project_directory / "storyboard"
     narrative_file = storyboard_directory / "storyboard.json"
     timed_file = storyboard_directory / "storyboard_audio_timed.json"
 
-    config = ProductionConfig.model_validate_json(config_file.read_text(encoding="utf-8"))
     if os.environ.get("RITZZ_RESUME") == "true" and timed_file.is_file():
         timed = Storyboard.model_validate_json(
             timed_file.read_text(encoding="utf-8")
@@ -55,31 +52,23 @@ def main() -> int:
                 "Saved audio-timed storyboard is incomplete or violates static hard-cut requirements."
             )
         VideoSynchronizationEngine._validate_alignment(alignment)
-        VideoSynchronizationEngine()._match_scene_narration(timed, alignment)
-        AudioTimedStoryboardEngine._validate_timeline(
-            timed,
-            alignment.audio_duration_seconds,
-            config.scene_minimum_duration_seconds,
-            config.scene_maximum_duration_seconds,
-        )
+        AudioTimedStoryboardEngine.validate_alignment(timed, alignment)
+        if AudioTimedStoryboardEngine._evaluate_storyboard(timed).status != "PASS":
+            raise ValueError(
+                "Saved audio-timed storyboard fails sentence alignment QA."
+            )
         print(
             f"Reusing saved context-driven storyboard: {timed_file} "
             f"({len(timed.scenes)} scenes)."
         )
         return 0
 
-    narrative = StoryboardEngine(
-        target_scene_duration_seconds=(
-            config.scene_minimum_duration_seconds
-            + config.scene_maximum_duration_seconds
-        ) / 2,
-    ).create_storyboard(
+    narrative = StoryboardEngine().create_storyboard(
         script_file=script_file,
         output_file=narrative_file,
-        production_config=config,
     )
     alignment = VideoSynchronizationEngine.load_narration_alignment(narration_result_file)
-    timed = AudioTimedStoryboardEngine(production_config=config).build(narrative, alignment)
+    timed = AudioTimedStoryboardEngine().build(narrative, alignment)
     research = Research.model_validate_json(
         (project_directory / "research" / "research.json").read_text(
             encoding="utf-8"
@@ -97,12 +86,17 @@ def main() -> int:
     timed = timed.model_copy(update={
         "scenes": [
             scene.model_copy(
-                update={"image_prompt": prompt_builder.build(scene)}
+                update={
+                    "image_prompt": prompt_builder.build(
+                        scene,
+                        project_topic=timed.topic,
+                    )
+                }
             )
             for scene in timed.scenes
         ]
     })
-    AudioTimedStoryboardEngine.save_storyboard(timed, timed_file, config)
+    AudioTimedStoryboardEngine.save_storyboard(timed, timed_file)
     Storyboard.model_validate_json(timed_file.read_text(encoding="utf-8"))
     print(f"Narrative storyboard: {narrative_file} ({len(narrative.scenes)} scenes)")
     print(f"Audio-timed storyboard: {timed_file} ({len(timed.scenes)} scenes)")

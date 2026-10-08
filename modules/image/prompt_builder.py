@@ -19,48 +19,32 @@ class ImagePromptBuilder:
     """
 
     RITZZ_HAND_DRAWN_STYLE = (
-        "Hand-drawn educational explainer illustration, "
-        "rough marker and pen ink drawing, "
-        "annotation-like storyboard frame, "
-        "controlled human imperfection, "
-        "organic slightly uneven shapes, "
-        "subtle natural line-weight variation, "
-        "slightly wobbly hand-drawn contours, "
-        "Simple 2D cartoon illustration, "
-        "simple stickman-style characters, "
-        "thick black outlines, confident marker line quality, "
-        "flat colors, "
-        "very minimal shading, "
-        "large clear shapes, "
-        "simple expressive faces, "
-        "clean uncluttered composition, "
-        "generous negative space, "
-        "minimal visual detail, "
-        "simple illustrated backgrounds with occasional uneven drawn details, "
-        "clean and readable rather than messy or unfinished, "
-        "easy to understand at a glance, "
-        "simple YouTube explainer animation style."
+        "A hand-drawn educational explainer illustration in the established "
+        "RITZZ cartoon style. Simple stickman and doodle characters with "
+        "expressive faces, bold readable poses, thick black marker-and-ink "
+        "outlines, controlled hand-drawn imperfection, clean shapes, flat "
+        "colors, and simple shading. Use clear silhouettes and an immediately "
+        "understandable foreground action. Draw a contextually appropriate "
+        "environment with enough simple, relevant props to explain the scene; "
+        "keep details secondary and uncluttered. Playful, informative, "
+        "approachable 2D educational-explainer artwork."
     )
 
     RITZZ_VISUAL_STYLE = RITZZ_HAND_DRAWN_STYLE
 
     RITZZ_NEGATIVE_STYLE = (
-        "Avoid photorealism, "
-        "realistic humans, "
-        "3D rendering, "
-        "detailed textures, "
-        "intricate details, "
-        "complex scenery, "
-        "busy backgrounds, "
-        "visual clutter, "
-        "excessive shading, "
-        "crowds, "
-        "unnecessary objects, "
-        "unnecessary text."
+        "Avoid photorealism, cinematic realism, realistic human anatomy, "
+        "3D rendering, Pixar-like styling, anime, glossy surfaces, polished "
+        "corporate vector art, hyper-detailed digital painting, photographic "
+        "textures, excessive shading, crowded compositions, visual clutter, "
+        "unnecessary props, and all generated text."
     )
 
     RITZZ_STRICT_NO_TEXT = (
-        "NO TEXT. DO NOT DRAW EDITORIAL CALLOUT TEXT. NO TITLES. NO HEADLINES. "
+        "NO TEXT. The only exception is readable wording on a specific physical "
+        "object explicitly required by the current sentence and required-object "
+        "list; show only those required physical-object words. DO NOT DRAW "
+        "EDITORIAL CALLOUT TEXT. NO TITLES. NO HEADLINES. "
         "NO LABELS. NO ARROWS. NO CAPTIONS. NO SUBTITLES. NO SPEECH BUBBLES. "
         "NO INFOGRAPHICS. NO DIAGRAMS. NO TIMELINES. NO ANNOTATIONS. "
         "NO EXPLANATORY WRITING. Do not add editorial words, captions, labels, "
@@ -144,12 +128,35 @@ class ImagePromptBuilder:
     def build(
         self,
         scene: StoryboardScene,
+        *,
+        project_topic: str | None = None,
     ) -> str:
         """Build a production-ready image prompt."""
         parts: list[str] = [
             self.base_style,
             "Landscape 16:9 composition.",
         ]
+        if project_topic:
+            parts.append(f"FULL PROJECT TOPIC: {project_topic}")
+        parts.append(
+            "CURRENT SENTENCE — PRIMARY VISUAL INSTRUCTION: "
+            f"{scene.sentence or scene.narration}"
+        )
+        if scene.previous_sentence:
+            parts.append(
+                "PREVIOUS SENTENCE — continuity context only: "
+                f"{scene.previous_sentence}"
+            )
+        if scene.next_sentence:
+            parts.append(
+                "NEXT SENTENCE — continuity context only: "
+                f"{scene.next_sentence}"
+            )
+        parts.append(
+            "The current sentence determines the image's subject, visible "
+            "action, and dominant information. Context must clarify the current "
+            "sentence, never replace it or illustrate a neighboring sentence."
+        )
 
         if self.character_profile:
             parts.append(
@@ -160,11 +167,20 @@ class ImagePromptBuilder:
                 "Keep this character design consistent "
                 "throughout this video."
             )
+            parts.append(
+                "Change only the character's pose, expression, or action when "
+                "the current sentence requires it; preserve the same recognizable "
+                "design, proportions, clothing, colors, and accessories."
+            )
 
         if self.visual_world:
             parts.append(
                 "PROJECT VISUAL WORLD: "
                 f"{self.visual_world.model_dump_json(exclude={'topic', 'version'})}"
+            )
+            parts.append(
+                "The project bible controls setting, period, and continuity; it "
+                "does not override the established RITZZ hand-drawn cartoon style."
             )
             if self.visual_world.historical:
                 parts.append(
@@ -221,14 +237,15 @@ class ImagePromptBuilder:
         if scene.background:
             parts.append(f"Background: {scene.background}")
         if scene.props:
-            parts.append(f"Props: {', '.join(scene.props[:3])}")
+            parts.append(f"Relevant scene props: {', '.join(scene.props)}")
 
         parts.append(
-            "Keep the scene visually simple. "
-            "Use one main visual idea. "
-            "Use one main character whenever possible. "
-            "Use only the necessary props. "
-            "Keep the background simple and secondary. "
+            "Show the current sentence as one complete visual idea. "
+            "Include enough period- and setting-appropriate environmental "
+            "information to explain the situation; keep the foreground action "
+            "dominant and the background supportive. Use multiple characters "
+            "or objects when the sentence requires them. Maintain the same "
+            "RITZZ illustration style and visual world as every other scene. "
             "Do not turn the scene into an infographic."
         )
 

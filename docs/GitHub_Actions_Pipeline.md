@@ -42,22 +42,28 @@ may vary from 1 to 6 seconds, with hold reason, visual weight, narration
 density, and cut-boundary context recorded for QA. Camera movement and
 transitions remain disabled.
 
-For secure ZIP delivery, configure the repository variable
-`RITZZ_CREATIVE_PACKAGE_HOST` to the exact HTTPS hostname used for package
-downloads and the repository secret `RITZZ_CREATIVE_PACKAGE_DOWNLOAD_TOKEN` to
-its bearer token. The workflow input is a path URL on that host, without
-credentials, query parameters, or fragments. The token is sent only to that
-allowlisted host, and redirects are rejected. Configure the existing
-`ritzz-packaging-approval` environment with trusted reviewers. The final
-review job runs only after protected approval; it uploads the exact supplied
-title, description, tags, and thumbnail with the technically validated video.
-YouTube visibility remains private.
+To provide the ZIP without a separate hosting service, upload it as a GitHub
+release asset:
 
-Start a new run with `mode=NEW` and the package URL. To resume, choose
-`mode=RESUME` and provide the project ID plus the Actions run ID that contains
-its checkpoint. A resume requires an unexpired checkpoint artifact. Completed
-voice/storyboard assets are validated and reused, and completed images are
-resumed from their manifest.
+1. Open the repository's **Releases** page and choose **Draft a new release**.
+2. Enter a new release tag (for example, `creative-20261007-01`).
+3. Attach the ZIP and name the asset exactly `creative-package.zip`.
+4. Publish the release. The repository can remain private; the workflow uses
+   its read-only GitHub token to download the asset.
+5. In **Actions → RITZZ Creative Package Production → Run workflow**, choose
+   `mode=NEW` and enter the release tag in `creative_package_release_tag`.
+
+The ZIP must be no larger than 250 MiB. No package-host variable or download
+token secret is required. Configure the existing `ritzz-packaging-approval`
+environment with trusted reviewers. The final review job runs only after
+protected approval; it uploads the exact supplied title, description, tags, and
+thumbnail with the technically validated video. YouTube visibility remains
+private.
+
+To resume, choose `mode=RESUME` and provide the project ID plus the Actions run
+ID that contains its checkpoint. A resume requires an unexpired checkpoint
+artifact. Completed voice/storyboard assets are validated and reused, and
+completed images are resumed from their manifest.
 
 ## Legacy generated-creative workflow
 
