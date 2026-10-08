@@ -138,10 +138,11 @@ def _copy_supplied_thumbnail(
     if (
         inspection.width < 1280
         or inspection.height < 720
-        or inspection.width * 9 != inspection.height * 16
+        or abs(inspection.width * 9 - inspection.height * 16) > 16
     ):
         raise RuntimeError(
-            "Supplied thumbnail must be 16:9 and at least 1280x720."
+            "Supplied thumbnail must be 16:9 (allowing one-pixel rounding) "
+            "and at least 1280x720."
         )
     destination = Path(output_directory) / "thumbnail.png"
     destination.parent.mkdir(parents=True, exist_ok=True)
