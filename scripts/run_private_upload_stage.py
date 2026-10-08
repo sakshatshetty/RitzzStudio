@@ -96,25 +96,36 @@ def main() -> int:
             saved_publish_result.read_text(encoding="utf-8")
         )
         if saved_result.get("publish_status") == "PRIVATE" and saved_result.get("video_id"):
-            _persist_production_upload(saved_result)
-            _write_upload_summary(
-                saved_result,
-                os.environ.get("GITHUB_STEP_SUMMARY"),
+            saved_hash = (saved_result.get("upload_details") or {}).get("sha256")
+            current_hash = (
+                _file_sha256(video_file)
+                if video_file.is_file()
+                else None
             )
+            if saved_hash is None or current_hash is None or saved_hash == current_hash:
+                _persist_production_upload(saved_result)
+                _write_upload_summary(
+                    saved_result,
+                    os.environ.get("GITHUB_STEP_SUMMARY"),
+                )
+                print(
+                    "LOCAL MASTER: "
+                    f"{(saved_result.get('upload_details') or {}).get('local_master', {})}"
+                )
+                print(
+                    "YOUTUBE: "
+                    f"{saved_result.get('upload_status', 'UPLOAD_COMPLETE')}; "
+                    f"processing={saved_result.get('youtube_processing_status', 'YOUTUBE_PROCESSING_UNVERIFIED')}"
+                )
+                print(
+                    "Private video upload already completed for "
+                    f"{saved_result['video_id']}; skipping video upload."
+                )
+                return 0
             print(
-                "LOCAL MASTER: "
-                f"{(saved_result.get('upload_details') or {}).get('local_master', {})}"
+                "The rendered video differs from the saved private upload; "
+                "the changed master will be uploaded after approval."
             )
-            print(
-                "YOUTUBE: "
-                f"{saved_result.get('upload_status', 'UPLOAD_COMPLETE')}; "
-                f"processing={saved_result.get('youtube_processing_status', 'YOUTUBE_PROCESSING_UNVERIFIED')}"
-            )
-            print(
-                "Private video upload already completed for "
-                f"{saved_result['video_id']}; skipping video upload."
-            )
-            return 0
     if not video_file.is_file() or not packaging_file.is_file():
         raise FileNotFoundError("Rendered test video or packaging artifact is missing.")
 

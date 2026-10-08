@@ -2,7 +2,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-
 ImageStatus = Literal[
     "pending",
     "generating",
@@ -14,6 +13,16 @@ ImageProvider = Literal[
     "openai",
     "replicate",
 ]
+
+ImageModel = Literal[
+    "FLUX_SCHNELL",
+    "GPT_IMAGE_2",
+]
+
+IMAGE_MODEL_OPTIONS: tuple[ImageModel, ...] = (
+    "FLUX_SCHNELL",
+    "GPT_IMAGE_2",
+)
 
 
 class ImageAsset(BaseModel):

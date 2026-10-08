@@ -68,3 +68,46 @@ def test_checkpoint_uploads_include_hidden_artifact_directory_files():
 
     assert workflow.count("uses: actions/upload-artifact@v4") == 3
     assert workflow.count("include-hidden-files: true") == 3
+
+
+def test_resume_workflow_exposes_stage_rerun_choices_and_reuse_controls():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+
+    for stage in (
+        "CONTINUE",
+        "NARRATION",
+        "RESEARCH",
+        "STORYBOARD",
+        "IMAGES",
+        "RENDER",
+        "FINAL_PACKAGE",
+    ):
+        assert f"          - {stage}" in workflow
+
+    assert "RITZZ_FORCE_RESEARCH:" in workflow
+    assert "RITZZ_FORCE_REGENERATE_IMAGES:" in workflow
+    assert "RITZZ_RERUN_FROM_STAGE:" in workflow
+    assert (
+        "RITZZ_RESUME: ${{ inputs.mode == 'RESUME' && "
+        "inputs.rerun_from_stage != 'NARRATION'"
+    ) in workflow
+    assert (
+        "inputs.rerun_from_stage == 'CONTINUE' || "
+        "inputs.rerun_from_stage == 'IMAGES' || "
+        "inputs.rerun_from_stage == 'RENDER'"
+    ) in workflow
+    assert "inputs.rerun_from_stage == 'RESEARCH'" in workflow
+    assert "inputs.rerun_from_stage == 'IMAGES'" in workflow
+    assert workflow.count("inputs.rerun_from_stage != 'FINAL_PACKAGE'") == 5
+
+
+def test_workflow_selects_flux_or_gpt_image_backend_without_prompt_changes():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+
+    assert "      image_model:" in workflow
+    assert "          - FLUX_SCHNELL" in workflow
+    assert "          - GPT_IMAGE_2" in workflow
+    assert "        default: FLUX_SCHNELL" in workflow
+    assert "REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}" in workflow
+    assert "python scripts/validate_pipeline_prerequisites.py" in workflow
+    assert '--image-model "$RITZZ_IMAGE_MODEL"' in workflow

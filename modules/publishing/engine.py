@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 from dataclasses import dataclass
@@ -157,15 +158,68 @@ class PublishingEngine:
         publish_dir.mkdir(parents=True, exist_ok=True)
         result_path = publish_dir / "publish.json"
         attempt_path = publish_dir / "publish_attempt.json"
+        changed_master = False
         if result_path.exists():
-            raise ValueError(
-                "This project already has a publish result; refusing to upload it again."
+            previous_result = json.loads(
+                result_path.read_text(encoding="utf-8")
             )
+            previous_hash = (
+                (previous_result.get("upload_details") or {}).get("sha256")
+                if isinstance(previous_result, dict)
+                else None
+            )
+            current_hash = (
+                upload_details.get("sha256")
+                if upload_details is not None
+                else None
+            )
+            if (
+                not previous_hash
+                or not current_hash
+                or previous_hash == current_hash
+            ):
+                raise ValueError(
+                    "This project already has a publish result; refusing to upload it again."
+                )
+            changed_master = True
+
         if attempt_path.exists():
-            raise RuntimeError(
-                "A prior upload attempt has no saved result. Reconcile its status "
-                "before retrying to avoid a duplicate upload."
+            previous_attempt = json.loads(
+                attempt_path.read_text(encoding="utf-8")
             )
+            if (
+                not changed_master
+                or previous_attempt.get("status") != "completed"
+            ):
+                raise RuntimeError(
+                    "A prior upload attempt has no saved result. Reconcile its status "
+                    "before retrying to avoid a duplicate upload."
+                )
+
+        if changed_master:
+            history_directory = publish_dir / "history"
+            history_directory.mkdir(parents=True, exist_ok=True)
+            previous_records = [(result_path, "publish")]
+            if attempt_path.exists():
+                previous_records.append((attempt_path, "publish_attempt"))
+            archive_paths = [
+                (
+                    source,
+                    history_directory
+                    / (
+                        f"{prefix}-"
+                        f"{hashlib.sha256(source.read_bytes()).hexdigest()}.json"
+                    ),
+                )
+                for source, prefix in previous_records
+            ]
+            if any(archive.exists() for _, archive in archive_paths):
+                raise RuntimeError(
+                    "The previous publish record is already archived; refusing "
+                    "to overwrite upload history."
+                )
+            for source, archive in archive_paths:
+                source.replace(archive)
 
         attempt = {
             "status": "uploading",

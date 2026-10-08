@@ -2,6 +2,9 @@
 
 import json
 import os
+import struct
+import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -11,7 +14,6 @@ from urllib.request import Request, urlopen
 from dotenv import load_dotenv
 
 from modules.image.models import ImageGenerationRequest, ImageGenerationResult
-
 
 load_dotenv()
 
@@ -76,6 +78,67 @@ class ReplicateFluxSchnellProvider:
         except (HTTPError, URLError) as exc:
             raise RuntimeError(f"Could not download generated FLUX image: {exc}") from exc
 
+    @classmethod
+    def _normalize_image(
+        cls,
+        image_data: bytes,
+        width: int,
+        height: int,
+    ) -> bytes:
+        if (
+            image_data.startswith(cls.PNG_SIGNATURE)
+            and len(image_data) >= 24
+            and struct.unpack(">II", image_data[16:24]) == (width, height)
+        ):
+            return image_data
+
+        with tempfile.TemporaryDirectory(prefix="ritzz-flux-") as temp_directory:
+            source = Path(temp_directory) / "source.png"
+            output = Path(temp_directory) / "normalized.png"
+            source.write_bytes(image_data)
+            filter_value = (
+                f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+                f"crop={width}:{height}"
+            )
+            try:
+                subprocess.run(
+                    [
+                        "ffmpeg",
+                        "-y",
+                        "-v",
+                        "error",
+                        "-i",
+                        str(source),
+                        "-vf",
+                        filter_value,
+                        "-frames:v",
+                        "1",
+                        str(output),
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+            except subprocess.CalledProcessError as exc:
+                detail = exc.stderr.strip() or "no FFmpeg error output"
+                raise RuntimeError(
+                    f"Could not normalize FLUX image dimensions: {detail}"
+                ) from exc
+
+            if not output.is_file():
+                raise RuntimeError("FFmpeg did not produce a normalized FLUX image.")
+            normalized = output.read_bytes()
+
+        if (
+            not normalized.startswith(cls.PNG_SIGNATURE)
+            or len(normalized) < 24
+            or struct.unpack(">II", normalized[16:24]) != (width, height)
+        ):
+            raise ValueError(
+                f"Normalized FLUX image does not have the required {width}x{height} dimensions."
+            )
+        return normalized
+
     def _wait_for_completion(self, prediction: dict[str, Any]) -> dict[str, Any]:
         status = prediction.get("status")
         if status in {"succeeded", "failed", "canceled"}:
@@ -123,6 +186,11 @@ class ReplicateFluxSchnellProvider:
             image_data = self._image_bytes(image_url)
             if not image_data.startswith(self.PNG_SIGNATURE):
                 raise ValueError("FLUX Schnell output is not a valid PNG image.")
+            image_data = self._normalize_image(
+                image_data,
+                request.width,
+                request.height,
+            )
 
             output_directory = Path(request.output_directory)
             output_directory.mkdir(parents=True, exist_ok=True)

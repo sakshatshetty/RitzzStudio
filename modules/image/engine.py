@@ -25,8 +25,10 @@ class ImageEngine:
     def __init__(
         self,
         provider: ImageProviderProtocol,
+        provider_name: ImageProvider = "openai",
     ) -> None:
         self.provider = provider
+        self.provider_name = provider_name
 
     def create_request(
         self,
@@ -34,7 +36,7 @@ class ImageEngine:
         scene_id: str,
         prompt: str,
         output_directory: str | Path,
-        provider: ImageProvider = "openai",
+        provider: ImageProvider | None = None,
     ) -> ImageGenerationRequest:
         """Create an image-generation request."""
 
@@ -42,7 +44,7 @@ class ImageEngine:
             image_id=image_id,
             scene_id=scene_id,
             prompt=prompt,
-            provider=provider,
+            provider=provider or self.provider_name,
             output_directory=str(output_directory),
         )
 

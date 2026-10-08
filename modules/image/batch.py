@@ -72,8 +72,9 @@ class ImageBatchEngine:
         storyboard: Storyboard,
         output_directory: str | Path,
         manifest_file: str | Path | None = None,
+        force_regenerate: bool = False,
     ) -> list[ImageAsset]:
-        """Generate images, reusing valid matching assets from an optional manifest."""
+        """Generate images, optionally reusing valid matching manifest assets."""
 
         if not storyboard.scenes:
             raise ValueError(
@@ -96,10 +97,14 @@ class ImageBatchEngine:
         for request in requests:
             expected_path = Path(request.output_directory) / f"{request.image_id}.png"
             previous_asset = existing_assets.get(request.scene_id)
-            if previous_asset is not None and self._can_reuse_asset(
-                previous_asset,
-                request,
-                expected_path,
+            if (
+                not force_regenerate
+                and previous_asset is not None
+                and self._can_reuse_asset(
+                    previous_asset,
+                    request,
+                    expected_path,
+                )
             ):
                 asset = previous_asset.model_copy(
                     update={"file_path": str(expected_path)}

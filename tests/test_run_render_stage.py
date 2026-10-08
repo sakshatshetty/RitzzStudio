@@ -8,6 +8,7 @@ from modules.project.manager import ProjectManager
 from scripts import run_render_stage
 from scripts.run_render_stage import (
     _copy_supplied_thumbnail,
+    _pipeline_retry_stage,
     _reject_semantic_qa_fail,
     _reuse_or_create_thumbnail,
     _validate_production_render_format,
@@ -24,6 +25,30 @@ def test_production_render_format_requires_exact_resolution_fps_and_aspect_ratio
             "video_bit_rate_bps": 10_000_000,
         }
     )
+
+
+@pytest.mark.parametrize(
+    ("selected_stage", "expected_retry_stage"),
+    [
+        ("CONTINUE", None),
+        ("NARRATION", "assembly"),
+        ("RESEARCH", "assembly"),
+        ("STORYBOARD", "assembly"),
+        ("IMAGES", "assembly"),
+        ("RENDER", "render"),
+        ("FINAL_PACKAGE", None),
+    ],
+)
+def test_selected_rerun_stage_resets_only_affected_render_stages(
+    selected_stage: str,
+    expected_retry_stage: str | None,
+) -> None:
+    assert _pipeline_retry_stage(selected_stage) == expected_retry_stage
+
+
+def test_unknown_rerun_stage_is_rejected() -> None:
+    with pytest.raises(ValueError, match="Unsupported rerun stage"):
+        _pipeline_retry_stage("UNKNOWN")
 
 
 @pytest.mark.parametrize(

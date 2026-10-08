@@ -1,10 +1,10 @@
 """Generate an isolated two-minute calm narration audio test."""
 
+import argparse
 import json
 import os
-import sys
-import argparse
 import re
+import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -51,14 +51,14 @@ def main() -> int:
     parser.add_argument(
         "--speed",
         type=float,
-        default=0.95,
-        help="Narration speed from 0.7 to 1.2 (default: 0.95)",
+        default=1.0,
+        help="Narration speed from 0.7 to 1.2 (default: 1.0)",
     )
     parser.add_argument(
         "--stability",
         type=float,
-        default=0.72,
-        help="Voice stability from 0 to 1 (default: 0.72)",
+        default=0.9,
+        help="Voice stability from 0 to 1 (default: 0.9)",
     )
     args = parser.parse_args()
     if not args.take_name.replace("_", "").replace("-", "").isalnum():

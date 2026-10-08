@@ -281,6 +281,31 @@ def test_resume_with_saved_video_id_skips_upload_even_when_processing_pending(
     assert run_private_upload_stage.main() == 0
 
 
+def test_changed_rendered_master_is_uploaded_again_after_approval(
+    tmp_path,
+    monkeypatch,
+):
+    _project, project_directory, video_file, provider, _state_store, _summary = (
+        _prepare_upload(tmp_path, monkeypatch)
+    )
+    assert run_private_upload_stage.main() == 0
+    assert len(provider.upload_calls) == 1
+
+    video_file.write_bytes(b"updated final master")
+    assert run_private_upload_stage.main() == 0
+
+    assert len(provider.upload_calls) == 2
+    saved_result = json.loads(
+        (project_directory / "publishing" / "publish.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert saved_result["video_id"] == "video-123"
+    assert saved_result["upload_details"]["sha256"] == hashlib.sha256(
+        b"updated final master"
+    ).hexdigest()
+
+
 def test_render_and_upload_jobs_share_configured_master_bitrate():
     workflow = Path(".github/workflows/ritzz-pipeline.yml").read_text(
         encoding="utf-8"

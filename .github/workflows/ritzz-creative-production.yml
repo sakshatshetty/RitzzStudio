@@ -23,6 +23,27 @@ on:
         description: Actions run ID containing the saved project checkpoint (RESUME only)
         required: false
         type: string
+      image_model:
+        description: Image model backend; prompts and storyboard settings stay unchanged
+        required: true
+        type: choice
+        options:
+          - FLUX_SCHNELL
+          - GPT_IMAGE_2
+        default: FLUX_SCHNELL
+      rerun_from_stage:
+        description: Earliest stage to rerun when resuming; CONTINUE reuses completed work
+        required: true
+        type: choice
+        options:
+          - CONTINUE
+          - NARRATION
+          - RESEARCH
+          - STORYBOARD
+          - IMAGES
+          - RENDER
+          - FINAL_PACKAGE
+        default: CONTINUE
 
 permissions:
   actions: read
@@ -42,6 +63,8 @@ jobs:
       RITZZ_VOICE_ID: ${{ secrets.RITZZ_VOICE_ID }}
       GOOGLE_CLIENT_SECRETS_B64: ${{ secrets.GOOGLE_CLIENT_SECRETS_B64 }}
       GOOGLE_TOKEN_B64: ${{ secrets.GOOGLE_TOKEN_B64 }}
+      REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}
+      RITZZ_IMAGE_MODEL: ${{ inputs.image_model }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -61,7 +84,10 @@ jobs:
           sudo apt-get install --yes --no-install-recommends ffmpeg fonts-comic-neue fonts-dejavu-core
 
       - name: Validate creative production secrets
-        run: python scripts/validate_pipeline_prerequisites.py --creative-package
+        run: >-
+          python scripts/validate_pipeline_prerequisites.py
+          --creative-package
+          --image-model "$RITZZ_IMAGE_MODEL"
 
       - name: Run creative production regression tests
         run: >-
@@ -169,34 +195,45 @@ jobs:
           echo "project_id=$PROJECT_ID" >> "$GITHUB_OUTPUT"
 
       - name: Generate or reuse supplied-script narration
+        if: ${{ inputs.mode == 'NEW' || inputs.rerun_from_stage != 'FINAL_PACKAGE' }}
         env:
           RITZZ_PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
-          RITZZ_RESUME: ${{ inputs.mode == 'RESUME' && 'true' || 'false' }}
+          RITZZ_RESUME: ${{ inputs.mode == 'RESUME' && inputs.rerun_from_stage != 'NARRATION' && 'true' || 'false' }}
+          RITZZ_RERUN_FROM_STAGE: ${{ inputs.mode == 'RESUME' && inputs.rerun_from_stage || 'CONTINUE' }}
         run: python scripts/run_voice_stage.py
 
       - name: Research factual visual context
+        if: ${{ inputs.mode == 'NEW' || inputs.rerun_from_stage != 'FINAL_PACKAGE' }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           RITZZ_PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
+          RITZZ_FORCE_RESEARCH: ${{ inputs.mode == 'RESUME' && inputs.rerun_from_stage == 'RESEARCH' && 'true' || 'false' }}
         run: python scripts/run_creative_research.py
 
       - name: Build context-driven audio-timed storyboard
+        if: ${{ inputs.mode == 'NEW' || inputs.rerun_from_stage != 'FINAL_PACKAGE' }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           RITZZ_PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
-          RITZZ_RESUME: ${{ inputs.mode == 'RESUME' && 'true' || 'false' }}
+          RITZZ_RESUME: ${{ inputs.mode == 'RESUME' && (inputs.rerun_from_stage == 'CONTINUE' || inputs.rerun_from_stage == 'IMAGES' || inputs.rerun_from_stage == 'RENDER') && 'true' || 'false' }}
         run: python scripts/run_storyboard_stage.py
 
       - name: Generate or resume scene images
+        if: ${{ inputs.mode == 'NEW' || inputs.rerun_from_stage != 'FINAL_PACKAGE' }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}
           RITZZ_PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
+          RITZZ_IMAGE_MODEL: ${{ inputs.image_model }}
+          RITZZ_FORCE_REGENERATE_IMAGES: ${{ inputs.mode == 'RESUME' && inputs.rerun_from_stage == 'IMAGES' && 'true' || 'false' }}
         run: python scripts/run_image_stage.py
 
       - name: Render and run technical plus targeted semantic QA
+        if: ${{ inputs.mode == 'NEW' || inputs.rerun_from_stage != 'FINAL_PACKAGE' }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           RITZZ_PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
+          RITZZ_RERUN_FROM_STAGE: ${{ inputs.mode == 'RESUME' && inputs.rerun_from_stage || 'CONTINUE' }}
         run: python scripts/run_render_stage.py
 
       - name: Create exact-input final review package
