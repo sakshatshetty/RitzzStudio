@@ -42,7 +42,11 @@ class ResearchEngine:
         # -------------------------------------------------
 
         if research_file.exists() and not force_refresh:
-            return self._load_research(research_file)
+            research = self._load_research(research_file)
+            if research.topic != topic:
+                research.topic = topic
+                self._save_research(research_file, research)
+            return research
 
         # -------------------------------------------------
         # AI Research
@@ -85,6 +89,8 @@ class ResearchEngine:
             raise RuntimeError(
                 "OpenAI returned no structured research."
             )
+
+        research.topic = topic
 
         # -------------------------------------------------
         # Normalize source IDs

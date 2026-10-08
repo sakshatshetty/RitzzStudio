@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 
 from modules.project.config import ProductionConfig
 from modules.research.engine import ResearchEngine
@@ -211,3 +212,50 @@ def test_research_prompt_uses_production_duration_and_constraints():
     )
     prompt = ResearchEngine._system_prompt(config)
     assert "approximately 5-minute" in prompt
+
+
+def test_research_uses_requested_topic_as_canonical_model_topic(tmp_path):
+    research = Research(
+        topic="A model-generated alternate title",
+        category="History",
+        core_question="Why?",
+        short_answer="Because.",
+    )
+    engine = ResearchEngine.__new__(ResearchEngine)
+    engine.client = SimpleNamespace(
+        responses=SimpleNamespace(
+            parse=lambda **_kwargs: SimpleNamespace(output_parsed=research)
+        )
+    )
+
+    result = engine.research(
+        "Why Do Pirates Wear Eye Patches?",
+        tmp_path,
+    )
+
+    assert result.topic == "Why Do Pirates Wear Eye Patches?"
+    saved = json.loads((tmp_path / "research.json").read_text(encoding="utf-8"))
+    assert saved["topic"] == "Why Do Pirates Wear Eye Patches?"
+
+
+def test_cached_research_topic_is_normalized_to_requested_topic(tmp_path):
+    engine = ResearchEngine.__new__(ResearchEngine)
+    research_file = tmp_path / "research.json"
+    engine._save_research(
+        research_file,
+        Research(
+            topic="A model-generated alternate title",
+            category="History",
+            core_question="Why?",
+            short_answer="Because.",
+        ),
+    )
+
+    result = engine.research(
+        "Why Do Pirates Wear Eye Patches?",
+        tmp_path,
+    )
+
+    assert result.topic == "Why Do Pirates Wear Eye Patches?"
+    saved = json.loads(research_file.read_text(encoding="utf-8"))
+    assert saved["topic"] == "Why Do Pirates Wear Eye Patches?"
