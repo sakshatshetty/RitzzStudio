@@ -228,7 +228,7 @@ jobs:
           PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
         run: |
           set -euo pipefail
-          project_name=$(find projects -mindepth 1 -maxdepth 1 -type d -name "$PROJECT_ID_*" -printf "%f\n" | head -n 1)
+          project_name=$(find projects -mindepth 1 -maxdepth 1 -type d -name "${PROJECT_ID}_*" -printf "%f\n" | head -n 1)
           if [[ -z "$project_name" ]]; then
             echo "Could not find the project directory for $PROJECT_ID." >&2
             exit 1
@@ -312,7 +312,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .pipeline-artifacts
-          project_name=$(find projects -mindepth 1 -maxdepth 1 -type d -name "$RITZZ_PROJECT_ID_*" -printf "%f\n" | head -n 1)
+          project_name=$(find projects -mindepth 1 -maxdepth 1 -type d -name "${RITZZ_PROJECT_ID}_*" -printf "%f\n" | head -n 1)
           if [[ -z "$project_name" ]]; then
             echo "Could not find the project directory for $RITZZ_PROJECT_ID." >&2
             exit 1
