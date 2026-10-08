@@ -103,7 +103,21 @@ def test_invalid_existing_thumbnail_is_not_silently_replaced(tmp_path, monkeypat
         )
 
 
-def test_supplied_thumbnail_is_copied_exactly_without_generation(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    ("width", "height", "accepted"),
+    [
+        (1280, 720, True),
+        (1672, 941, True),
+        (1672, 945, False),
+    ],
+)
+def test_supplied_thumbnail_is_copied_exactly_without_generation(
+    tmp_path,
+    monkeypatch,
+    width,
+    height,
+    accepted,
+):
     project_directory = tmp_path / "project"
     source_directory = project_directory / "creative_input"
     source_directory.mkdir(parents=True)
@@ -125,14 +139,15 @@ def test_supplied_thumbnail_is_copied_exactly_without_generation(tmp_path, monke
     )
     monkeypatch.setattr(
         "scripts.run_render_stage.inspect_image_asset",
-        lambda _path: SimpleNamespace(width=1280, height=720),
+        lambda _path: SimpleNamespace(width=width, height=height),
     )
 
-    result = _copy_supplied_thumbnail(
-        project_directory,
-        tmp_path / "video",
-    )
+    if not accepted:
+        with pytest.raises(RuntimeError, match="one-pixel rounding"):
+            _copy_supplied_thumbnail(project_directory, tmp_path / "video")
+        return
 
+    result = _copy_supplied_thumbnail(project_directory, tmp_path / "video")
     assert result == tmp_path / "video" / "thumbnail.png"
     assert result.read_bytes() == source.read_bytes()
 
