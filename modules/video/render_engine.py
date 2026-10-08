@@ -587,15 +587,12 @@ class FFmpegVideoRenderer:
                 output_label
             )
 
-            frames = max(
-                1,
-                int(
-                    round(
-                        clip.duration_seconds
-                        * assembly_plan.fps
-                    )
-                ),
+            start_frame = round(clip.start_seconds * assembly_plan.fps)
+            end_frame = round(
+                (clip.start_seconds + clip.duration_seconds)
+                * assembly_plan.fps
             )
+            frames = max(1, end_frame - start_frame)
 
             denominator = max(
                 frames - 1,
@@ -633,10 +630,6 @@ class FFmpegVideoRenderer:
                 f")"
             )
 
-            duration = (
-                f"{clip.duration_seconds:.6f}"
-            )
-
             if instruction.motion == "static":
                 filter_expression = (
                     f"{input_label}"
@@ -652,7 +645,7 @@ class FFmpegVideoRenderer:
                     f"(oh-ih)/2,"
                     f"setsar=1,"
                     f"fps={assembly_plan.fps},"
-                    f"trim=duration={duration},"
+                    f"trim=end_frame={frames},"
                     f"setpts=PTS-STARTPTS"
                     f"{output_label}"
                 )
@@ -680,8 +673,7 @@ class FFmpegVideoRenderer:
                 f"{assembly_plan.width}x"
                 f"{assembly_plan.height}:"
                 f"fps={assembly_plan.fps},"
-                f"trim="
-                f"duration={duration},"
+                f"trim=end_frame={frames},"
                 f"setpts=PTS-STARTPTS"
                 f"{output_label}"
             )

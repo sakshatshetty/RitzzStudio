@@ -491,12 +491,22 @@ class OpenAIImageSemanticReviewer:
                 "type": "input_text",
                 "text": (
                     f"Scene ID: {scene.scene_id}\n"
+                    f"Sentence ID: {getattr(scene, 'sentence_id', None)}\n"
+                    f"Current sentence (primary visual target): "
+                    f"{getattr(scene, 'sentence', '') or narration}\n"
+                    f"Previous sentence (continuity context only): "
+                    f"{getattr(scene, 'previous_sentence', '') or '(none)'}\n"
+                    f"Next sentence (continuity context only): "
+                    f"{getattr(scene, 'next_sentence', '') or '(none)'}\n"
                     f"Full narration (do not truncate or infer missing text): {narration}\n"
                     f"Visual description / intent: {scene.visual_description}\n"
                     f"Image prompt: {scene.image_prompt}\n"
                     f"Scene visual contract: "
                     f"{json.dumps(scene.visual_contract.model_dump(mode='json'), ensure_ascii=False) if scene.visual_contract else '(not supplied)'}\n"
-                    "Assess only whether the image supports the complete narration, "
+                    "The current sentence is authoritative; assess whether this image "
+                    "depicts that sentence. Neighboring sentences provide continuity "
+                    "context and must not replace the current sentence. Assess whether "
+                    "the image supports the complete narration, "
                     "visual intent, visual contract, project world, historical context, "
                     "required objects, forbidden objects, and continuity."
                 ),
@@ -610,7 +620,14 @@ class OpenAIImageSemanticReviewer:
         prompt = (
             "Judge only whether the visible content of this image is relevant to the narration heard "
             f"from {start_seconds:.3f}s to {end_seconds:.3f}s in the rendered video.\n"
+            f"Current sentence (primary visual target): "
+            f"{getattr(scene, 'sentence', '') or scene.narration}\n"
+            f"Previous sentence (continuity context only): "
+            f"{getattr(scene, 'previous_sentence', '') or '(none)'}\n"
+            f"Next sentence (continuity context only): "
+            f"{getattr(scene, 'next_sentence', '') or '(none)'}\n"
             f"Narration: {scene.narration}\n"
+            "Use context to understand continuity, but judge the image against the current sentence.\n"
             "Return only JSON: {\"status\":\"PASS|REVIEW|FAIL\",\"rationale\":\"brief reason\"}. "
             "PASS means the image clearly supports the narration; REVIEW means plausible or uncertain; "
             "FAIL means an obvious mismatch. Do not judge image quality, text, style, timing, or any other criterion."
@@ -735,14 +752,14 @@ class PilotVideoQA:
                       audio_duration: float | None = None,
                       video_duration: float | None = None,
                       production_config: ProductionConfig | None = None) -> TechnicalQAResult:
-        config = production_config or ProductionConfig()
+        del production_config
         issues: list[str] = []
         checks: dict[str, QAStatus] = {}
         image_ok = True
         order_ok = len(storyboard.scenes) == len(plan.clips)
         no_gap = True
         monotonic = True
-        durations_ok = True
+        scene_timing_ok = True
         drift = 0.0
         if not order_ok:
             issues.append("Storyboard and render plan scene counts differ.")
@@ -756,17 +773,25 @@ class PilotVideoQA:
                 image_ok = False
                 issues.append(f"{scene.scene_id}: {exc}")
             if (
-                not math.isfinite(clip.start_seconds)
+                not math.isfinite(scene.start_seconds)
+                or not math.isfinite(scene.duration_seconds)
+                or not math.isfinite(clip.start_seconds)
                 or not math.isfinite(clip.duration_seconds)
-                or not config.scene_minimum_duration_seconds
-                <= clip.duration_seconds
-                <= config.scene_maximum_duration_seconds
+                or clip.start_seconds < 0
+                or clip.duration_seconds <= 0
             ):
-                durations_ok = False
+                scene_timing_ok = False
                 issues.append(
-                    f"{scene.scene_id}: scene duration must be within "
-                    f"{config.scene_minimum_duration_seconds:.3f}–"
-                    f"{config.scene_maximum_duration_seconds:.3f}s."
+                    f"{scene.scene_id}: scene timing must be finite and positive."
+                )
+            if (
+                abs(scene.start_seconds - clip.start_seconds) > 0.01
+                or abs(scene.duration_seconds - clip.duration_seconds) > 0.01
+            ):
+                scene_timing_ok = False
+                issues.append(
+                    f"{scene.scene_id}: clip timing does not match the "
+                    "audio-timed storyboard."
                 )
             if i:
                 previous = plan.clips[i - 1]
@@ -775,7 +800,14 @@ class PilotVideoQA:
                     no_gap = False
                     issues.append(f"{scene.scene_id}: timeline gap/overlap {delta:+.3f}s.")
             monotonic &= i == 0 or clip.start_seconds >= plan.clips[i - 1].start_seconds
-            drift = max(drift, abs(scene.start_seconds - clip.start_seconds))
+            drift = max(
+                drift,
+                abs(scene.start_seconds - clip.start_seconds),
+                abs(scene.duration_seconds - clip.duration_seconds),
+            )
+        if plan.clips and abs(plan.clips[0].start_seconds) > 0.01:
+            no_gap = False
+            issues.append("The video timeline does not start at audio time zero.")
         audio_path = Path(audio_file)
         audio_ok = audio_path.is_file() and audio_path.stat().st_size > 0
         if audio_duration is None and audio_ok:
@@ -789,6 +821,15 @@ class PilotVideoQA:
                     audio_duration = None
         audio_ok &= audio_duration is not None and audio_duration > 0
         duration_ok = bool(audio_ok and audio_duration is not None and abs(plan.total_duration_seconds - audio_duration) <= 0.25)
+        if plan.clips and audio_duration is not None:
+            final_end = (
+                plan.clips[-1].start_seconds + plan.clips[-1].duration_seconds
+            )
+            if abs(final_end - audio_duration) > 0.01:
+                no_gap = False
+                issues.append(
+                    "The final sentence image does not cover the end of the narration."
+                )
         video_ok = False
         if video_file is not None:
             video_path = Path(video_file)
@@ -852,7 +893,7 @@ class PilotVideoQA:
             scene_order="PASS" if order_ok else "FAIL",
             timestamps_monotonic="PASS" if monotonic else "FAIL",
             no_gaps_or_overlaps="PASS" if no_gap else "FAIL",
-            scene_durations="PASS" if durations_ok else "FAIL",
+            scene_durations="PASS" if scene_timing_ok else "FAIL",
             duration_consistency="PASS" if duration_ok else "FAIL",
             video=(
                 "PASS"
@@ -862,7 +903,9 @@ class PilotVideoQA:
                 else "FAIL"
             ),
             timestamp_coverage=(
-                "PASS" if order_ok and durations_ok and no_gap else "FAIL"
+                "PASS"
+                if order_ok and scene_timing_ok and no_gap and duration_ok
+                else "FAIL"
             ),
             timeline_drift="PASS" if drift <= 0.5 else "REVIEW",
             audio_loudness=loudness_check,

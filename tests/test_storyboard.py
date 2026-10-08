@@ -36,13 +36,14 @@ def test_storyboard_scene_model():
     assert scene.visual_style == "stickman"
 
 
-def test_storyboard_scene_duration_validation():
+@pytest.mark.parametrize("duration", [0, -1])
+def test_storyboard_scene_rejects_non_positive_duration(duration):
     with pytest.raises(ValidationError):
         StoryboardScene(
             scene_id="scene_001",
             section_id="s1",
             start_seconds=0,
-            duration_seconds=31,
+            duration_seconds=duration,
             narration="Test narration.",
             visual_description=(
                 "A simple illustrated scene."
@@ -51,6 +52,20 @@ def test_storyboard_scene_duration_validation():
                 "A simple illustrated stick-man scene."
             ),
         )
+
+
+def test_storyboard_scene_allows_duration_above_old_hold_limit():
+    scene = StoryboardScene(
+        scene_id="scene_001",
+        section_id="s1",
+        start_seconds=0,
+        duration_seconds=31,
+        narration="Test narration.",
+        visual_description="A simple illustrated scene.",
+        image_prompt="A simple illustrated stick-man scene.",
+    )
+
+    assert scene.duration_seconds == 31
 
 
 def test_storyboard_model():

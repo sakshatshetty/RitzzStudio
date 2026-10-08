@@ -78,6 +78,12 @@ class VisualContextEngine:
                     "content": (
                         "You are a visual-context planner. Derive a concise, "
                         "evidence-grounded visual world from approved research. "
+                        "Keep the RITZZ art direction fixed: hand-drawn educational "
+                        "cartoon, stickman/doodle characters, expressive poses, thick "
+                        "black marker-like outlines, controlled imperfection, clean "
+                        "shapes, flat colors, and simple but contextually informative "
+                        "backgrounds. Never recommend a photographic, cinematic, "
+                        "3D, anime, glossy, or corporate-vector style. "
                         "Do not invent a date, place, society, technology, or "
                         "historical constraint that the research does not support. "
                         "Use 'Not established by the approved research.' where "
@@ -123,6 +129,9 @@ class VisualContextEngine:
                     "scene_id": scene.scene_id,
                     "section_id": scene.section_id,
                     "narration": scene.narration,
+                    "sentence_id": scene.sentence_id,
+                    "previous_sentence": scene.previous_sentence,
+                    "next_sentence": scene.next_sentence,
                     "visual_description": scene.visual_description,
                     "character_action": scene.character_action,
                     "background": scene.background,
@@ -148,11 +157,14 @@ class VisualContextEngine:
                             "Create scene-level visual contracts using the project "
                             "world bible, approved research, storyboard intent, and "
                             "neighboring scenes. The visual description/action and "
-                            "research are authoritative; narration provides meaning "
-                            "but is not itself an image prompt. Explicitly resolve "
-                            "ambiguous terms in plain visual language. Carry forward "
-                            "world and character/object continuity unless a scene "
-                            "explicitly changes context. Never add an unsupported "
+                            "research are authoritative. The current narration sentence "
+                            "is the primary visual instruction: determine its subject "
+                            "and visible action from that sentence. Use previous/next "
+                            "sentences only as continuity context; never substitute a "
+                            "neighboring sentence's action. Explicitly resolve ambiguous "
+                            "terms in plain visual language. Carry forward the same "
+                            "character, object, clothing, color, and environment identities "
+                            "unless a scene explicitly changes context. Never add an unsupported "
                             "historical detail. Add only context-relevant forbidden "
                             "objects and required objects. Set semantic_review_reasons "
                             "when a generated image needs special semantic scrutiny, "
@@ -164,7 +176,9 @@ class VisualContextEngine:
                         "role": "user",
                         "content": (
                             "Return exactly one contract for every requested scene, "
-                            "in the same order, preserving scene IDs.\n\n"
+                            "in the same order, preserving scene IDs. Each requested "
+                            "scene represents exactly one complete sentence and must "
+                            "produce exactly one image.\n\n"
                             f"Project visual-world bible:\n{world.model_dump_json(indent=2)}\n\n"
                             f"Approved research:\n{research.model_dump_json(indent=2)}\n\n"
                             "Requested scenes:\n"
