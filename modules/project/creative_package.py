@@ -550,8 +550,9 @@ def _validate_thumbnail(data: bytes, filename: str) -> None:
     if (
         inspection.width < 1280
         or inspection.height < 720
-        or inspection.width * 9 != inspection.height * 16
+        or abs(inspection.width * 9 - inspection.height * 16) > 16
     ):
         raise CreativePackageError(
-            "INPUT_VALIDATION_FAILED: thumbnail must be 16:9 and at least 1280x720."
+            "INPUT_VALIDATION_FAILED: thumbnail must be 16:9 (allowing one-pixel "
+            "rounding) and at least 1280x720."
         )
