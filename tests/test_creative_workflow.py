@@ -61,3 +61,10 @@ def test_project_archive_steps_brace_ids_before_appending_wildcards():
     assert '-name "${RITZZ_PROJECT_ID}_*"' in workflow
     assert '-name "$PROJECT_ID_*"' not in workflow
     assert '-name "$RITZZ_PROJECT_ID_*"' not in workflow
+
+
+def test_checkpoint_uploads_include_hidden_artifact_directory_files():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+
+    assert workflow.count("uses: actions/upload-artifact@v4") == 3
+    assert workflow.count("include-hidden-files: true") == 3
