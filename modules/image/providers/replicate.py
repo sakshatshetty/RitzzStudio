@@ -24,6 +24,8 @@ class ReplicateFluxSchnellProvider:
     MODEL_ENDPOINT = "https://api.replicate.com/v1/models/black-forest-labs/flux-schnell/predictions"
     POLL_INTERVAL_SECONDS = 2
     MAX_POLL_SECONDS = 300
+    MAX_RATE_LIMIT_RETRIES = 5
+    MAX_RATE_LIMIT_WAIT_SECONDS = 60
     PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
     def __init__(self, api_token: str | None = None) -> None:
@@ -49,17 +51,58 @@ class ReplicateFluxSchnellProvider:
             headers=headers,
             method=method,
         )
-        try:
-            with urlopen(request, timeout=180) as response:
-                result = json.loads(response.read().decode("utf-8"))
-        except HTTPError as exc:
-            details = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"Replicate API returned HTTP {exc.code}: {details}") from exc
-        except URLError as exc:
-            raise RuntimeError(f"Replicate API request failed: {exc.reason}") from exc
+        for attempt in range(self.MAX_RATE_LIMIT_RETRIES + 1):
+            try:
+                with urlopen(request, timeout=180) as response:
+                    result = json.loads(response.read().decode("utf-8"))
+                break
+            except HTTPError as exc:
+                details = exc.read().decode("utf-8", errors="replace")
+                if exc.code == 429 and attempt < self.MAX_RATE_LIMIT_RETRIES:
+                    time.sleep(
+                        self._rate_limit_wait_seconds(exc, details, attempt)
+                    )
+                    continue
+                raise RuntimeError(
+                    f"Replicate API returned HTTP {exc.code}: {details}"
+                ) from exc
+            except URLError as exc:
+                raise RuntimeError(
+                    f"Replicate API request failed: {exc.reason}"
+                ) from exc
         if not isinstance(result, dict):
             raise ValueError("Replicate returned an invalid prediction response.")
         return result
+
+    @classmethod
+    def _rate_limit_wait_seconds(
+        cls,
+        error: HTTPError,
+        details: str,
+        attempt: int,
+    ) -> float:
+        retry_after: float | None = None
+        header_value = error.headers.get("Retry-After") if error.headers else None
+        try:
+            if header_value is not None:
+                retry_after = float(header_value)
+        except ValueError:
+            pass
+
+        try:
+            body = json.loads(details)
+        except json.JSONDecodeError:
+            body = {}
+        body_retry_after = body.get("retry_after") if isinstance(body, dict) else None
+        try:
+            if body_retry_after is not None:
+                retry_after = max(retry_after or 0, float(body_retry_after))
+        except (TypeError, ValueError):
+            pass
+
+        if retry_after is None or retry_after <= 0:
+            retry_after = min(2**attempt, cls.MAX_RATE_LIMIT_WAIT_SECONDS)
+        return min(retry_after + 0.25, cls.MAX_RATE_LIMIT_WAIT_SECONDS)
 
     @staticmethod
     def _image_bytes(url: str) -> bytes:
