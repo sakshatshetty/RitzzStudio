@@ -1,9 +1,10 @@
+import json
 from pathlib import Path
 
 import pytest
 
 from modules.project.manager import ProjectManager
-from modules.publishing.engine import PublishingEngine, FakeYouTubeProvider
+from modules.publishing.engine import FakeYouTubeProvider, PublishingEngine
 
 
 def test_publish_requires_approval_before_upload(tmp_path: Path):
@@ -163,6 +164,50 @@ def test_publish_retry_does_not_upload_twice(tmp_path: Path):
         )
 
     assert len(provider.calls) == 1
+
+
+def test_changed_master_can_be_published_and_previous_result_is_archived(
+    tmp_path: Path,
+):
+    projects_dir = tmp_path / "projects"
+    manager = ProjectManager(projects_dir)
+    project = manager.create_project("Updated private upload")
+    project_folder = projects_dir / f"{project.project_id}_{project.slug}"
+    video_file = project_folder / "video" / "test.mp4"
+    video_file.parent.mkdir(parents=True, exist_ok=True)
+    video_file.write_bytes(b"updated video")
+    provider = FakeYouTubeProvider()
+    engine = PublishingEngine(projects_dir, provider=provider)
+    engine.create_approval(project, approved=True, approved_by="human")
+
+    engine.publish_video(
+        project=project,
+        video_file=video_file,
+        title="Updated private upload",
+        description="First private master.",
+        metadata={"privacy_status": "private"},
+        upload_details={"sha256": "previous-master"},
+    )
+    result = engine.publish_video(
+        project=project,
+        video_file=video_file,
+        title="Updated private upload",
+        description="Updated private master.",
+        metadata={"privacy_status": "private"},
+        upload_details={"sha256": "new-master"},
+    )
+
+    assert result.publish_status == "PRIVATE"
+    assert len(provider.calls) == 2
+    publish_directory = project_folder / "publishing"
+    current_result = json.loads(
+        (publish_directory / "publish.json").read_text(encoding="utf-8")
+    )
+    assert current_result["upload_details"]["sha256"] == "new-master"
+    history_files = list((publish_directory / "history").glob("publish-*.json"))
+    assert len(history_files) == 1
+    archived_result = json.loads(history_files[0].read_text(encoding="utf-8"))
+    assert archived_result["upload_details"]["sha256"] == "previous-master"
 
 
 def test_uncertain_publish_attempt_is_not_retried(tmp_path: Path):

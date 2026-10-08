@@ -19,6 +19,7 @@ from modules.project.packaging import PackagingArtifact
 from modules.storyboard.engine import StoryboardEngine
 from modules.video.image_asset_qa import inspect_image_asset
 from modules.video.pipeline_engine import VideoProductionPipeline
+from modules.video.pipeline_models import PipelineStageName
 
 
 def _validate_production_render_format(probe: dict[str, object]) -> None:
@@ -164,6 +165,11 @@ def main() -> int:
     output_directory = project_directory / "video"
     output_video_file = output_directory / "ritzz_test.mp4"
 
+    rerun_from_stage = os.environ.get(
+        "RITZZ_RERUN_FROM_STAGE",
+        "CONTINUE",
+    )
+    retry_from_stage = _pipeline_retry_stage(rerun_from_stage)
     pipeline = VideoProductionPipeline()
     request = pipeline.create_request(
         storyboard_file=storyboard_file,
@@ -173,6 +179,7 @@ def main() -> int:
         output_directory=output_directory,
         output_video_file=output_video_file,
         resume=True,
+        retry_from_stage=retry_from_stage,
         enable_image_ai_qa=True,
     )
     result = pipeline.run(request)
@@ -204,6 +211,25 @@ def main() -> int:
             f"Thumbnail generation did not produce a valid file: {thumbnail_file}"
         )
     return 0
+
+
+def _pipeline_retry_stage(
+    rerun_from_stage: str,
+) -> PipelineStageName | None:
+    if rerun_from_stage in {
+        "NARRATION",
+        "RESEARCH",
+        "STORYBOARD",
+        "IMAGES",
+    }:
+        return "assembly"
+    if rerun_from_stage == "RENDER":
+        return "render"
+    if rerun_from_stage in {"CONTINUE", "FINAL_PACKAGE"}:
+        return None
+    raise ValueError(
+        f"Unsupported rerun stage for rendering: {rerun_from_stage}"
+    )
 
 
 if __name__ == "__main__":

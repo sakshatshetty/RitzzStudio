@@ -17,6 +17,17 @@ and targeted semantic QA, renders with static images and hard cuts, and creates
 a final review ZIP. Uncertain semantic checks remain visible for human review;
 clear failures and technical QA failures block progression.
 
+Narration uses the configured RITZZ ElevenLabs voice with `eleven_multilingual_v2`:
+speed `1.0`, stability `0.90`, similarity boost `0.75`, style exaggeration `0`,
+and speaker boost enabled.
+
+Choose `image_model` when dispatching the workflow. `FLUX_SCHNELL` is the
+default; `GPT_IMAGE_2` remains available as an alternative. Both use the same
+existing image prompts and prompt builder. Configure the `REPLICATE_API_TOKEN`
+GitHub Actions secret for FLUX. When switching models on a resumed project,
+select `rerun_from_stage=IMAGES` so the images and dependent render are rebuilt.
+FLUX output is normalized to the existing 1536×864 image contract.
+
 The ZIP root must contain `project.json` and exactly the five files referenced
 by it. Example manifest:
 
@@ -63,7 +74,26 @@ private.
 To resume, choose `mode=RESUME` and provide the project ID plus the Actions run
 ID that contains its checkpoint. A resume requires an unexpired checkpoint
 artifact. Completed voice/storyboard assets are validated and reused, and
-completed images are resumed from their manifest.
+completed images are resumed from their manifest. Choose `rerun_from_stage` to
+rerun from a specific point:
+
+- `CONTINUE` resumes completed work and retries any incomplete stage.
+- `NARRATION` generates narration again, rebuilds the audio-timed storyboard,
+  and rerenders the video. Matching scene images are reused from the manifest.
+- `RESEARCH` refreshes visual-context research, then rebuilds the storyboard
+  and downstream outputs.
+- `STORYBOARD` rebuilds scene timing and visual contracts from the saved
+  narration and research.
+- `IMAGES` regenerates every scene image.
+- `RENDER` reuses narration, storyboard, and images, and reruns video rendering.
+- `FINAL_PACKAGE` reuses the saved render and recreates the final review ZIP.
+
+For reruns before `IMAGES`, valid images are reused only when their scene IDs,
+provider, prompts, and dimensions still match; changed or invalid assets are
+regenerated. Later production stages run after the selected stage. The
+human-review/private-upload job remains protected by its existing approval
+environment. It skips a previously uploaded identical video, but a changed
+rendered master is uploaded as a new private video after approval.
 
 ## Legacy generated-creative workflow
 

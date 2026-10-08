@@ -11,11 +11,34 @@ if str(PROJECT_ROOT) not in sys.path:
 from modules.image.batch import ImageBatchEngine
 from modules.image.character_profile import load_character_profile
 from modules.image.engine import ImageEngine
+from modules.image.models import IMAGE_MODEL_OPTIONS
 from modules.image.prompt_builder import ImagePromptBuilder
 from modules.image.providers.openai import OpenAIImageProvider
+from modules.image.providers.replicate import ReplicateFluxSchnellProvider
 from modules.project.manager import ProjectManager
 from modules.storyboard.models import Storyboard
 from modules.storyboard.visual_context import load_visual_world_bible
+
+
+def _create_image_engine(model: str | None = None) -> ImageEngine:
+    selected_model = model or os.environ.get(
+        "RITZZ_IMAGE_MODEL",
+        "FLUX_SCHNELL",
+    )
+    if selected_model == "FLUX_SCHNELL":
+        return ImageEngine(
+            ReplicateFluxSchnellProvider(),
+            provider_name="replicate",
+        )
+    if selected_model == "GPT_IMAGE_2":
+        return ImageEngine(
+            OpenAIImageProvider(),
+            provider_name="openai",
+        )
+    supported = ", ".join(IMAGE_MODEL_OPTIONS)
+    raise ValueError(
+        f"Unsupported RITZZ_IMAGE_MODEL {selected_model!r}; choose one of: {supported}."
+    )
 
 
 def main() -> int:
@@ -33,7 +56,7 @@ def main() -> int:
         raise ValueError("Audio-timed storyboard has no scenes.")
 
     engine = ImageBatchEngine(
-        ImageEngine(OpenAIImageProvider()),
+        _create_image_engine(),
         prompt_builder=ImagePromptBuilder(
             character_profile=load_character_profile(project_directory),
             visual_world=load_visual_world_bible(project_directory),
@@ -43,6 +66,7 @@ def main() -> int:
         storyboard,
         image_directory,
         manifest_file=manifest_file,
+        force_regenerate=os.environ.get("RITZZ_FORCE_REGENERATE_IMAGES") == "true",
     )
     failed = [asset for asset in assets if asset.status != "completed"]
     print(f"Ready images (new or resumed): {len(assets) - len(failed)}/{len(assets)}")

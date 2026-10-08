@@ -20,11 +20,11 @@ def test_voice_generation_request():
     assert request.voice_id == "test_voice"
     assert request.model_id == "eleven_multilingual_v2"
     assert request.output_format == "mp3_44100_128"
-    assert request.voice_settings.stability == 0.72
+    assert request.voice_settings.stability == 0.9
     assert request.voice_settings.similarity_boost == 0.75
     assert request.voice_settings.style == 0.0
     assert request.voice_settings.use_speaker_boost is True
-    assert request.voice_settings.speed == 0.9
+    assert request.voice_settings.speed == 1.0
 
 
 def test_voice_generation_request_custom_model():

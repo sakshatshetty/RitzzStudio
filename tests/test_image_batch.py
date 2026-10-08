@@ -504,6 +504,67 @@ def test_generate_reuses_valid_matching_manifest_assets(
     assert len(retry_provider.calls) == 0
 
 
+def test_switching_providers_regenerates_assets_without_changing_prompts(
+    tmp_path: Path,
+) -> None:
+    storyboard = create_test_storyboard()
+    output_directory = tmp_path / "images"
+    manifest_file = output_directory / "image_manifest.json"
+    first_provider = ValidPngMockProvider()
+    first_engine = ImageBatchEngine(ImageEngine(first_provider))
+    first_assets = first_engine.generate(
+        storyboard,
+        output_directory,
+        manifest_file=manifest_file,
+    )
+
+    flux_provider = ValidPngMockProvider()
+    flux_engine = ImageBatchEngine(
+        ImageEngine(flux_provider, provider_name="replicate")
+    )
+    flux_assets = flux_engine.generate(
+        storyboard,
+        output_directory,
+        manifest_file=manifest_file,
+    )
+
+    assert len(flux_provider.calls) == 3
+    assert [asset.prompt for asset in flux_assets] == [
+        asset.prompt for asset in first_assets
+    ]
+    assert {asset.provider for asset in flux_assets} == {"replicate"}
+
+
+def test_generate_can_force_regeneration_of_matching_manifest_assets(
+    tmp_path: Path,
+) -> None:
+    storyboard = create_test_storyboard()
+    output_directory = tmp_path / "images"
+    manifest_file = output_directory / "image_manifest.json"
+    first_engine = ImageBatchEngine(ImageEngine(ValidPngMockProvider()))
+    first_engine.generate(
+        storyboard,
+        output_directory,
+        manifest_file=manifest_file,
+    )
+
+    retry_provider = ValidPngMockProvider()
+    retry_engine = ImageBatchEngine(ImageEngine(retry_provider))
+    retry_assets = retry_engine.generate(
+        storyboard,
+        output_directory,
+        manifest_file=manifest_file,
+        force_regenerate=True,
+    )
+
+    assert len(retry_assets) == 3
+    assert [request.scene_id for request in retry_provider.calls] == [
+        "scene_001",
+        "scene_002",
+        "scene_003",
+    ]
+
+
 def test_generate_persists_progress_and_resumes_after_provider_exception(
     tmp_path: Path,
 ) -> None:

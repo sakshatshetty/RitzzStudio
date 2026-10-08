@@ -27,6 +27,19 @@ def test_create_request(tmp_path: Path) -> None:
     assert request.provider == "openai"
 
 
+def test_create_request_uses_selected_provider_name(tmp_path: Path) -> None:
+    engine = ImageEngine(MockImageProvider(), provider_name="replicate")
+
+    request = engine.create_request(
+        image_id="image_002",
+        scene_id="scene_002",
+        prompt="A pirate standing on a wooden ship.",
+        output_directory=tmp_path,
+    )
+
+    assert request.provider == "replicate"
+
+
 def test_generate_with_mock_provider(
     tmp_path: Path,
 ) -> None:

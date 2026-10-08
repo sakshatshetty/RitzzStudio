@@ -152,11 +152,11 @@ def test_generate_with_mocked_request(
             == "eleven_multilingual_v2"
         )
         assert json["voice_settings"] == {
-            "stability": 0.72,
+            "stability": 0.9,
             "similarity_boost": 0.75,
             "style": 0.0,
             "use_speaker_boost": True,
-            "speed": 0.9,
+            "speed": 1.0,
         }
 
         return MockResponse(
@@ -234,7 +234,7 @@ def test_generate_sends_overridden_voice_settings(monkeypatch, tmp_path):
             "similarity_boost": 0.75,
             "style": 0.0,
             "use_speaker_boost": True,
-            "speed": 0.9,
+            "speed": 1.0,
         }
         return MockResponse(response_data)
 

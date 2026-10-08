@@ -27,6 +27,7 @@ def main() -> int:
         project.title,
         project_directory / "research",
         production_config=config,
+        force_refresh=os.environ.get("RITZZ_FORCE_RESEARCH") == "true",
     )
     if research.topic != project.title:
         raise ValueError(

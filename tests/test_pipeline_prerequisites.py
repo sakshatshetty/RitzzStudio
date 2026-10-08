@@ -47,6 +47,46 @@ def test_creative_package_preflight_does_not_require_vidiq(monkeypatch):
     assert result["api_calls_made"] == "none"
 
 
+def test_flux_image_model_requires_replicate_token(monkeypatch):
+    _set_valid_environment(monkeypatch)
+    monkeypatch.delenv("REPLICATE_API_TOKEN", raising=False)
+
+    with pytest.raises(ValueError, match="REPLICATE_API_TOKEN"):
+        validate_prerequisites(
+            creative_package=True,
+            image_model="FLUX_SCHNELL",
+        )
+
+    monkeypatch.setenv("REPLICATE_API_TOKEN", "configured")
+    result = validate_prerequisites(
+        creative_package=True,
+        image_model="FLUX_SCHNELL",
+    )
+    assert result["required_secrets"] == "6"
+
+
+def test_gpt_image_model_does_not_require_replicate_token(monkeypatch):
+    _set_valid_environment(monkeypatch)
+    monkeypatch.delenv("REPLICATE_API_TOKEN", raising=False)
+
+    result = validate_prerequisites(
+        creative_package=True,
+        image_model="GPT_IMAGE_2",
+    )
+
+    assert result["required_secrets"] == "5"
+
+
+def test_validate_prerequisites_rejects_unknown_image_model(monkeypatch):
+    _set_valid_environment(monkeypatch)
+
+    with pytest.raises(ValueError, match="Unsupported image model"):
+        validate_prerequisites(
+            creative_package=True,
+            image_model="UNKNOWN",
+        )
+
+
 def test_storyboard_generation_job_receives_openai_secret():
     workflow = Path(".github/workflows/ritzz-pipeline.yml").read_text(
         encoding="utf-8"

@@ -1,6 +1,8 @@
 import io
 import json
+import struct
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -8,8 +10,15 @@ import pytest
 from modules.image.models import ImageGenerationRequest
 from modules.image.providers.replicate import ReplicateFluxSchnellProvider
 
-
 PNG_DATA = b"\x89PNG\r\n\x1a\nmock image data"
+
+
+def _png_header(width: int, height: int) -> bytes:
+    return ReplicateFluxSchnellProvider.PNG_SIGNATURE + b"\x00" * 8 + struct.pack(
+        ">II",
+        width,
+        height,
+    )
 
 
 def create_request(tmp_path: Path) -> ImageGenerationRequest:
@@ -28,8 +37,16 @@ def test_requires_replicate_api_token(monkeypatch: pytest.MonkeyPatch) -> None:
         ReplicateFluxSchnellProvider()
 
 
-def test_generates_and_saves_png(tmp_path: Path) -> None:
+def test_generates_and_saves_png(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     provider = ReplicateFluxSchnellProvider(api_token="test-token")
+    monkeypatch.setattr(
+        provider,
+        "_normalize_image",
+        lambda image_data, _width, _height: image_data,
+    )
     prediction = {"status": "succeeded", "output": ["https://files.example/image.png"]}
 
     def fake_urlopen(request, timeout):
@@ -48,8 +65,18 @@ def test_generates_and_saves_png(tmp_path: Path) -> None:
     assert output.read_bytes() == PNG_DATA
 
 
-def test_request_uses_trial_model_settings(tmp_path: Path) -> None:
+def test_request_uses_trial_model_settings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     provider = ReplicateFluxSchnellProvider(api_token="test-token")
+    normalized_dimensions = []
+
+    def identity_normalizer(image_data, width, height):
+        normalized_dimensions.append((width, height))
+        return image_data
+
+    monkeypatch.setattr(provider, "_normalize_image", identity_normalizer)
     prediction = {"status": "succeeded", "output": ["https://files.example/image.png"]}
     captured = {}
 
@@ -71,6 +98,35 @@ def test_request_uses_trial_model_settings(tmp_path: Path) -> None:
     assert payload["input"]["output_format"] == "png"
     assert payload["input"]["num_outputs"] == 1
     assert payload["input"]["num_inference_steps"] == 4
+    assert normalized_dimensions == [(1536, 864)]
+
+
+def test_normalizes_flux_output_to_requested_dimensions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = ReplicateFluxSchnellProvider(api_token="test-token")
+    output_bytes = _png_header(1536, 864)
+
+    def fake_run(command, **_kwargs):
+        assert command[command.index("-vf") + 1] == (
+            "scale=1536:864:force_original_aspect_ratio=increase,"
+            "crop=1536:864"
+        )
+        Path(command[-1]).write_bytes(output_bytes)
+        return SimpleNamespace(returncode=0, stderr="")
+
+    monkeypatch.setattr(
+        "modules.image.providers.replicate.subprocess.run",
+        fake_run,
+    )
+
+    normalized = provider._normalize_image(
+        _png_header(1344, 768),
+        1536,
+        864,
+    )
+
+    assert normalized == output_bytes
 
 
 def test_rejects_non_png_output(tmp_path: Path) -> None:
