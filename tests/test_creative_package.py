@@ -44,6 +44,7 @@ def _write_package(
     script: str | None = None,
     overrides: dict | None = None,
     extra_files: dict[str, bytes] | None = None,
+    thumbnail_size: tuple[int, int] = (1280, 720),
 ) -> dict[str, bytes]:
     supplied_script = script or " ".join(["This is a supplied narration sentence."] * 24)
     manifest = {
@@ -63,7 +64,7 @@ def _write_package(
         manifest["title_file"]: b"Supplied title exactly",
         manifest["description_file"]: b"Supplied description exactly.\nLine two.",
         manifest["tags_file"]: b"tag one\ntag two\n",
-        manifest["thumbnail_file"]: _png(),
+        manifest["thumbnail_file"]: _png(*thumbnail_size),
     }
     files.update(extra_files or {})
     with ZipFile(path, "w") as archive:
@@ -97,6 +98,29 @@ def test_rejects_missing_required_member_before_ingestion(tmp_path):
 
     with pytest.raises(CreativePackageError, match="missing: thumbnail.png"):
         load_creative_package(archive)
+
+
+@pytest.mark.parametrize(
+    ("thumbnail_size", "accepted"),
+    [
+        ((1672, 941), True),
+        ((1672, 945), False),
+    ],
+)
+def test_thumbnail_allows_one_pixel_rounding_but_rejects_other_ratios(
+    tmp_path,
+    thumbnail_size,
+    accepted,
+):
+    archive = tmp_path / "thumbnail-ratio.zip"
+    _write_package(archive, thumbnail_size=thumbnail_size)
+
+    if accepted:
+        package = load_creative_package(archive)
+        assert package.manifest.thumbnail_file == "thumbnail.png"
+    else:
+        with pytest.raises(CreativePackageError, match="one-pixel rounding"):
+            load_creative_package(archive)
 
 
 @pytest.mark.parametrize(

@@ -35,12 +35,12 @@ by it. Example manifest:
 
 The script is UTF-8 text; title and description are UTF-8 text; `tags.txt` has
 one non-empty, trimmed tag per line; and the thumbnail is a readable RGB/RGBA
-PNG at 16:9 and at least 1280×720. The script is checked against the target
-runtime before paid production calls. The ZIP importer preserves the source
-files and refuses project-ID reuse with different content. Audio-timed holds
-may vary from 1 to 6 seconds, with hold reason, visual weight, narration
-density, and cut-boundary context recorded for QA. Camera movement and
-transitions remain disabled.
+PNG at approximately 16:9 (allowing up to one pixel of aspect-ratio rounding)
+and at least 1280×720. The script is checked against the target runtime before
+paid production calls. The ZIP importer preserves the source files and refuses
+project-ID reuse with different content. Audio-timed holds may vary from 1 to
+6 seconds, with hold reason, visual weight, narration density, and cut-boundary
+context recorded for QA. Camera movement and transitions remain disabled.
 
 To provide the ZIP without a separate hosting service, upload it as a GitHub
 release asset:
