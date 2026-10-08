@@ -52,3 +52,12 @@ def test_new_production_downloads_zip_from_a_github_release_asset():
     assert "creative_package_url" not in workflow
     assert "RITZZ_CREATIVE_PACKAGE_HOST" not in workflow
     assert "RITZZ_CREATIVE_PACKAGE_DOWNLOAD_TOKEN" not in workflow
+
+
+def test_project_archive_steps_brace_ids_before_appending_wildcards():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+
+    assert '-name "${PROJECT_ID}_*"' in workflow
+    assert '-name "${RITZZ_PROJECT_ID}_*"' in workflow
+    assert '-name "$PROJECT_ID_*"' not in workflow
+    assert '-name "$RITZZ_PROJECT_ID_*"' not in workflow
