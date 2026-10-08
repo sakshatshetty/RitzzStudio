@@ -4,6 +4,7 @@ import struct
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 import pytest
 
@@ -63,6 +64,82 @@ def test_generates_and_saves_png(
     output = Path(result.file_path)
     assert output.name == "scene_004.png"
     assert output.read_bytes() == PNG_DATA
+
+
+def test_retries_rate_limited_prediction_after_retry_after(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = ReplicateFluxSchnellProvider(api_token="test-token")
+    monkeypatch.setattr(
+        provider,
+        "_normalize_image",
+        lambda image_data, _width, _height: image_data,
+    )
+    prediction = {"status": "succeeded", "output": ["https://files.example/image.png"]}
+    prediction_attempts = 0
+    waits = []
+
+    def fake_urlopen(request, timeout):
+        nonlocal prediction_attempts
+        if request.full_url == provider.MODEL_ENDPOINT:
+            prediction_attempts += 1
+            if prediction_attempts == 1:
+                raise HTTPError(
+                    request.full_url,
+                    429,
+                    "Too Many Requests",
+                    {"Retry-After": "2"},
+                    io.BytesIO(
+                        b'{"detail":"throttled","retry_after":4,"status":429}'
+                    ),
+                )
+            return io.BytesIO(json.dumps(prediction).encode())
+        return io.BytesIO(PNG_DATA)
+
+    monkeypatch.setattr(
+        "modules.image.providers.replicate.time.sleep",
+        waits.append,
+    )
+    with patch("modules.image.providers.replicate.urlopen", side_effect=fake_urlopen):
+        result = provider.generate(create_request(tmp_path))
+
+    assert result.status == "completed"
+    assert prediction_attempts == 2
+    assert waits == [4.25]
+
+
+def test_stops_after_bounded_rate_limit_retries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = ReplicateFluxSchnellProvider(api_token="test-token")
+    prediction_attempts = 0
+    waits = []
+
+    def fake_urlopen(request, timeout):
+        nonlocal prediction_attempts
+        prediction_attempts += 1
+        raise HTTPError(
+            request.full_url,
+            429,
+            "Too Many Requests",
+            {},
+            io.BytesIO(b'{"detail":"still throttled"}'),
+        )
+
+    monkeypatch.setattr(
+        "modules.image.providers.replicate.time.sleep",
+        waits.append,
+    )
+    with patch("modules.image.providers.replicate.urlopen", side_effect=fake_urlopen):
+        result = provider.generate(create_request(tmp_path))
+
+    assert result.status == "failed"
+    assert result.error_message is not None
+    assert "HTTP 429" in result.error_message
+    assert prediction_attempts == provider.MAX_RATE_LIMIT_RETRIES + 1
+    assert len(waits) == provider.MAX_RATE_LIMIT_RETRIES
 
 
 def test_request_uses_trial_model_settings(

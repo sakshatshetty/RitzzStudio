@@ -26,7 +26,10 @@ default; `GPT_IMAGE_2` remains available as an alternative. Both use the same
 existing image prompts and prompt builder. Configure the `REPLICATE_API_TOKEN`
 GitHub Actions secret for FLUX. When switching models on a resumed project,
 select `rerun_from_stage=IMAGES` so the images and dependent render are rebuilt.
-FLUX output is normalized to the existing 1536×864 image contract.
+FLUX output is normalized to the existing 1536×864 image contract. The FLUX
+provider retries HTTP 429 responses up to five times, honoring Replicate's
+`Retry-After` value when available; persistent throttling remains a visible
+image-stage failure.
 
 The ZIP root must contain `project.json` and exactly the five files referenced
 by it. Example manifest:
