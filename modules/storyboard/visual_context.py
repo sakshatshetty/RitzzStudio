@@ -178,7 +178,9 @@ class VisualContextEngine:
                             "Return exactly one contract for every requested scene, "
                             "in the same order, preserving scene IDs. Each requested "
                             "scene represents exactly one complete sentence and must "
-                            "produce exactly one image.\n\n"
+                            "produce exactly one image. Adjacent scene context is "
+                            "reference only and must not be returned as a contract "
+                            "unless it is also listed among requested scenes.\n\n"
                             f"Project visual-world bible:\n{world.model_dump_json(indent=2)}\n\n"
                             f"Approved research:\n{research.model_dump_json(indent=2)}\n\n"
                             "Requested scenes:\n"
@@ -198,12 +200,34 @@ class VisualContextEngine:
                 )
             expected_ids = [scene.scene_id for scene in batch]
             actual_ids = [contract.scene_id for contract in parsed.scenes]
-            if actual_ids != expected_ids:
+            allowed_neighbor_ids = {
+                scene["scene_id"] for scene in neighbors
+            } - set(expected_ids)
+            unexpected_ids = [
+                scene_id
+                for scene_id in actual_ids
+                if scene_id not in expected_ids
+                and scene_id not in allowed_neighbor_ids
+            ]
+            if unexpected_ids:
+                raise ValueError(
+                    "Scene visual-contract planning returned IDs outside the "
+                    f"requested and adjacent scenes: {unexpected_ids!r}."
+                )
+            requested_contracts = [
+                contract
+                for contract in parsed.scenes
+                if contract.scene_id in expected_ids
+            ]
+            requested_ids = [
+                contract.scene_id for contract in requested_contracts
+            ]
+            if requested_ids != expected_ids:
                 raise ValueError(
                     f"Scene visual-contract IDs did not match the requested order: "
-                    f"{actual_ids!r} != {expected_ids!r}."
+                    f"{requested_ids!r} != {expected_ids!r}."
                 )
-            result.extend(parsed.scenes)
+            result.extend(requested_contracts)
         if len(result) != len(scenes):
             raise RuntimeError("Visual planner did not create a contract for every scene.")
         return result
