@@ -244,6 +244,7 @@ jobs:
             .pipeline-artifacts/project.tar.gz
             .pipeline-artifacts/final-package-*.zip
           if-no-files-found: warn
+          include-hidden-files: true
           retention-days: 30
 
   human-review-and-private-upload:
@@ -328,6 +329,7 @@ jobs:
             .pipeline-artifacts/project.tar.gz
             .pipeline-artifacts/final-package-*.zip
           if-no-files-found: warn
+          include-hidden-files: true
           retention-days: 30
           overwrite: true
 
@@ -340,4 +342,5 @@ jobs:
             .pipeline-artifacts/project.tar.gz
             .pipeline-artifacts/final-package-*.zip
           if-no-files-found: error
+          include-hidden-files: true
           retention-days: 90
