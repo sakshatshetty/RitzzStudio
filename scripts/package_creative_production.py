@@ -72,12 +72,15 @@ def build_final_package(
     packaging = PackagingArtifact.from_dict(
         json.loads((project_path / "packaging.json").read_text(encoding="utf-8"))
     )
+    supplied_title = supplied["title.txt"][1].read_bytes().decode("utf-8")
+    supplied_description = (
+        supplied["description.txt"][1].read_bytes().decode("utf-8")
+    )
+    supplied_tags = supplied["tags.txt"][1].read_bytes().decode("utf-8").splitlines()
     if (
-        packaging.selected_title != supplied["title.txt"][1].read_text(encoding="utf-8")
-        or packaging.metadata.description
-        != supplied["description.txt"][1].read_text(encoding="utf-8")
-        or packaging.metadata.tags
-        != supplied["tags.txt"][1].read_text(encoding="utf-8").splitlines()
+        packaging.selected_title != supplied_title
+        or packaging.metadata.description != supplied_description
+        or packaging.metadata.tags != supplied_tags
     ):
         raise ValueError("Packaged metadata differs from user-supplied creative files.")
 

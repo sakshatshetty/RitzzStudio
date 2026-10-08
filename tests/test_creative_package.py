@@ -283,7 +283,16 @@ def test_rejects_project_id_reuse_for_a_different_topic(tmp_path):
 
 def test_final_package_keeps_user_metadata_and_thumbnail_exact(tmp_path):
     archive = tmp_path / "creative.zip"
-    source_files = _write_package(archive)
+    source_files = _write_package(
+        archive,
+        extra_files={
+            "title.txt": b"Supplied title exactly\r\n",
+            "description.txt": (
+                b"Supplied description exactly.\r\nLine two.\r\n"
+            ),
+            "tags.txt": b"tag one\r\ntag two\r\n",
+        },
+    )
     package = load_creative_package(archive)
     _, project_directory = materialize_creative_package(
         package,
