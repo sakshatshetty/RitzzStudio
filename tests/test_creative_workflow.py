@@ -12,7 +12,7 @@ def test_primary_workflow_uses_supplied_creative_and_gates_private_upload():
         "Research factual visual context",
         "Build context-driven audio-timed storyboard",
         "Generate or resume scene images",
-        "Render and run technical plus targeted semantic QA",
+        "Enforce text-free images, render, and run technical QA",
         "Create exact-input final review package",
         "Human review and private YouTube upload",
     ]

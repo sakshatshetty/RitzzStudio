@@ -1,7 +1,21 @@
+from types import SimpleNamespace
 import struct
 import zlib
 
+import pytest
+
+from modules.video import image_asset_qa
 from modules.video.image_asset_qa import image_similarity, inspect_image_asset
+
+
+TSV_HEADER = (
+    "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\t"
+    "width\theight\tconf\ttext\n"
+)
+
+
+def _word_row(confidence: int, text: str) -> str:
+    return f"5\t1\t1\t1\t1\t1\t0\t0\t20\t10\t{confidence}\t{text}\n"
 
 
 def write_solid_png(path, color: tuple[int, int, int]) -> None:
@@ -56,3 +70,64 @@ def test_perceptual_hash_matches_identical_and_similar_images(tmp_path) -> None:
         original_hash,
         inspect_image_asset(similar).difference_hash,
     ) >= 0.97
+
+
+def test_detect_visible_text_keeps_confident_words_and_filters_noise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(image_asset_qa.shutil, "which", lambda _name: "tesseract")
+    command = []
+
+    def fake_run(args, **kwargs):
+        command.extend(args)
+        assert kwargs["timeout"] == 30
+        return SimpleNamespace(
+            returncode=0,
+            stderr="",
+            stdout=(
+                TSV_HEADER
+                + _word_row(88, "Ritzz.Hk")
+                + _word_row(20, "uncertain")
+                + _word_row(92, "RITZZ.HK")
+                + _word_row(90, "A")
+            ),
+        )
+
+    monkeypatch.setattr(image_asset_qa.subprocess, "run", fake_run)
+
+    assert image_asset_qa.detect_visible_text("scene.png") == ("Ritzz.Hk",)
+    assert command == [
+        "tesseract",
+        "scene.png",
+        "stdout",
+        "--psm",
+        "11",
+        "tsv",
+    ]
+
+
+def test_detect_visible_text_fails_explicitly_when_tesseract_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(image_asset_qa.shutil, "which", lambda _name: None)
+
+    with pytest.raises(FileNotFoundError, match="Tesseract OCR is required"):
+        image_asset_qa.detect_visible_text("scene.png")
+
+
+def test_detect_visible_text_surfaces_tesseract_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(image_asset_qa.shutil, "which", lambda _name: "tesseract")
+    monkeypatch.setattr(
+        image_asset_qa.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=1,
+            stderr="image decode failed",
+            stdout="",
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="image decode failed"):
+        image_asset_qa.detect_visible_text("scene.png")

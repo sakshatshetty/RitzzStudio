@@ -281,7 +281,7 @@ def test_prompts_use_prompt_builder(
         in prompt
     )
 
-    assert "NO TEXT. The only exception is readable wording" in prompt
+    assert "NO TEXT. NO TEXT OF ANY KIND, including on physical objects." in prompt
     assert "DO NOT DRAW EDITORIAL CALLOUT TEXT." in prompt
     assert "CURIOSITY" not in prompt
 
@@ -317,7 +317,10 @@ def test_legacy_editorial_text_is_ignored_in_text_free_prompts(
         in prompt
     )
 
-    assert "unnecessary props, and all generated text." in prompt
+    assert (
+        "unnecessary props, logos, watermarks, signatures, and all generated text."
+        in prompt
+    )
 
     assert "NO TEXT." in prompt
     assert "NO TITLES." in prompt

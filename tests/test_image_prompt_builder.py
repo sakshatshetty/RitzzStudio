@@ -171,6 +171,37 @@ def test_prompt_without_editorial_text_does_not_request_text() -> None:
     assert "NO EXPLANATORY WRITING." in prompt
 
 
+def test_prompt_forbids_text_on_objects_and_generated_marks() -> None:
+    prompt = ImagePromptBuilder().build(sample_scene())
+
+    assert "NO TEXT OF ANY KIND, including on physical objects." in prompt
+    assert "watermarks" in prompt.lower()
+    assert "If the narration mentions writing, show the object without reproducing" in prompt
+
+
+def test_default_character_profile_and_scene_era_lock_are_included() -> None:
+    scene = sample_scene().model_copy(
+        update={
+            "visual_contract": SceneVisualContract(
+                scene_id="scene_001",
+                purpose="EXPLAIN",
+                subject="An ancient human",
+                action="sleeps on a woven mat",
+                environment="A prehistoric shelter",
+                historical_context="Deep prehistory; before powered technology.",
+                ambiguity_resolution="Show a period-appropriate sleeping place.",
+            )
+        }
+    )
+
+    prompt = ImagePromptBuilder().build(scene)
+
+    assert "When the recurring RITZZ host appears" in prompt
+    assert "ERA LOCK: Depict the period and setting stated in this scene's" in prompt
+    assert "Do not mix eras" in prompt
+    assert "Use one unified moment and location" in prompt
+
+
 def test_prompt_without_editorial_text_contains_negative_style() -> None:
     builder = ImagePromptBuilder()
 

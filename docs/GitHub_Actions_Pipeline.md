@@ -29,7 +29,13 @@ select `rerun_from_stage=IMAGES` so the images and dependent render are rebuilt.
 FLUX output is normalized to the existing 1536×864 image contract. The FLUX
 provider retries HTTP 429 responses up to five times, honoring Replicate's
 `Retry-After` value when available; persistent throttling remains a visible
-image-stage failure.
+image-stage failure. Before rendering, every image receives semantic image
+review and a separate text-free check. The text check uses local Tesseract OCR
+to catch visible lettering; the workflow installs `tesseract-ocr` for this
+mandatory check. OCR findings trigger a bounded repair using the provider
+recorded in the image manifest. Rendering is blocked unless every image passes;
+uncertain findings remain `REVIEW` and also block rendering for human
+inspection.
 
 The ZIP root must contain `project.json` and exactly the five files referenced
 by it. Example manifest:

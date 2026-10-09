@@ -691,6 +691,240 @@ def test_semantic_qa_only_reviews_scenes_with_contract_risk_reasons(
     assert metrics["ai_reviewed_scenes"] == 1
 
 
+def test_no_editorial_policy_reviews_every_image_and_repairs_clear_text(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("RITZZ_QA_IMAGE_WIDTH", "320")
+    monkeypatch.setenv("RITZZ_QA_IMAGE_HEIGHT", "180")
+    monkeypatch.setattr(
+        "modules.video.image_asset_qa.detect_visible_text",
+        lambda _path: (),
+    )
+    image_directory = create_images(tmp_path)
+    audio_file = create_audio(tmp_path)
+    storyboard_file = create_storyboard(tmp_path, audio_file)
+    alignment_file = create_alignment(tmp_path)
+    review_attempts: dict[str, int] = {}
+
+    class Reviewer:
+        def review(self, image_path, scene):
+            review_attempts[scene.scene_id] = (
+                review_attempts.get(scene.scene_id, 0) + 1
+            )
+            if (
+                scene.scene_id == "scene_001"
+                and review_attempts[scene.scene_id] == 1
+            ):
+                return SceneQAResult(
+                    scene_id=scene.scene_id,
+                    status="FAIL",
+                    narration_image="PASS",
+                    narration_description="PASS",
+                    unwanted_text="FAIL",
+                    rationale="The image contains an editorial word.",
+                    correction_prompt="Remove the editorial word from the image.",
+                    failure_category="UNWANTED_TEXT",
+                )
+            return SceneQAResult(
+                scene_id=scene.scene_id,
+                status="PASS",
+                narration_image="PASS",
+                narration_description="PASS",
+                unwanted_text="PASS",
+                rationale="No editorial lettering is visible.",
+            )
+
+    class ImageProvider:
+        def __init__(self):
+            self.generated_scenes: list[str] = []
+            self.prompts: list[str] = []
+
+        def generate(self, request):
+            assert request.provider == "replicate"
+            output = Path(request.output_directory) / f"{request.image_id}.png"
+            shutil.copyfile(image_directory / f"{request.scene_id}.png", output)
+            self.generated_scenes.append(request.scene_id)
+            self.prompts.append(request.prompt)
+            return ImageGenerationResult(
+                image_id=request.image_id,
+                scene_id=request.scene_id,
+                provider="replicate",
+                status="completed",
+                file_path=str(output),
+            )
+
+    provider = ImageProvider()
+    pipeline = VideoProductionPipeline(
+        image_reviewer=Reviewer(),
+        image_provider=provider,
+        image_provider_name="replicate",
+    )
+    request = pipeline.create_request(
+        storyboard_file=storyboard_file,
+        image_directory=image_directory,
+        narration_result_file=alignment_file,
+        audio_file=audio_file,
+        output_directory=tmp_path / "output",
+        enable_image_ai_qa=True,
+        require_no_editorial_text=True,
+    )
+
+    assert pipeline._review_and_repair_images(request, tmp_path) == "PASS"
+    assert review_attempts == {
+        "scene_001": 2,
+        "scene_002": 1,
+        "scene_003": 1,
+    }
+    assert provider.generated_scenes == ["scene_001"]
+    assert "No words, letters, captions, labels, callouts, or typography" in (
+        provider.prompts[0]
+    )
+    checks = load_project_qa(tmp_path).stages["image_semantic_qa"][-1].checks
+    assert checks["scene_001.unwanted_text"] == "PASS"
+    assert checks["scene_002.unwanted_text"] == "PASS"
+    assert checks["scene_003.unwanted_text"] == "PASS"
+
+
+@pytest.mark.parametrize(
+    ("persists_after_repair", "expected_status"),
+    [(False, "PASS"), (True, "FAIL")],
+)
+def test_local_ocr_text_finding_overrides_vision_pass_and_repairs_image(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    persists_after_repair: bool,
+    expected_status: QAStatus,
+) -> None:
+    monkeypatch.setenv("RITZZ_QA_IMAGE_WIDTH", "320")
+    monkeypatch.setenv("RITZZ_QA_IMAGE_HEIGHT", "180")
+    image_directory = create_images(tmp_path)
+    audio_file = create_audio(tmp_path)
+    storyboard_file = create_storyboard(tmp_path, audio_file)
+    alignment_file = create_alignment(tmp_path)
+    scene_one_path = image_directory / "scene_001.png"
+    scene_one_scans = 0
+
+    def fake_ocr(image_path: str | Path) -> tuple[str, ...]:
+        nonlocal scene_one_scans
+        if Path(image_path) == scene_one_path:
+            scene_one_scans += 1
+            return (
+                ("Ritzz.Hk",)
+                if scene_one_scans == 1 or persists_after_repair
+                else ()
+            )
+        return ()
+
+    monkeypatch.setattr(
+        "modules.video.image_asset_qa.detect_visible_text",
+        fake_ocr,
+    )
+
+    class Reviewer:
+        def review(self, image_path, scene):
+            return SceneQAResult(
+                scene_id=scene.scene_id,
+                status="PASS",
+                narration_image="PASS",
+                narration_description="PASS",
+                unwanted_text="PASS",
+                rationale="The image appears to match its scene.",
+            )
+
+    class ImageProvider:
+        def __init__(self) -> None:
+            self.generated_scenes: list[str] = []
+
+        def generate(self, request):
+            output = Path(request.output_directory) / f"{request.image_id}.png"
+            shutil.copyfile(scene_one_path, output)
+            self.generated_scenes.append(request.scene_id)
+            return ImageGenerationResult(
+                image_id=request.image_id,
+                scene_id=request.scene_id,
+                provider="replicate",
+                status="completed",
+                file_path=str(output),
+            )
+
+    provider = ImageProvider()
+    pipeline = VideoProductionPipeline(
+        image_reviewer=Reviewer(),
+        image_provider=provider,
+        image_provider_name="replicate",
+    )
+    request = pipeline.create_request(
+        storyboard_file=storyboard_file,
+        image_directory=image_directory,
+        narration_result_file=alignment_file,
+        audio_file=audio_file,
+        output_directory=tmp_path / "output",
+        enable_image_ai_qa=True,
+        require_no_editorial_text=True,
+    )
+
+    assert pipeline._review_and_repair_images(request, tmp_path) == expected_status
+    expected_attempts = (
+        pipeline.MAX_QA_REPAIR_ATTEMPTS if persists_after_repair else 1
+    )
+    assert provider.generated_scenes == ["scene_001"] * expected_attempts
+    assert scene_one_scans == expected_attempts * 2
+    checks = load_project_qa(tmp_path).stages["image_semantic_qa"][-1].checks
+    assert checks["scene_001.unwanted_text"] == expected_status
+
+
+def test_uncertain_text_is_preserved_for_review_without_regeneration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("RITZZ_QA_IMAGE_WIDTH", "320")
+    monkeypatch.setenv("RITZZ_QA_IMAGE_HEIGHT", "180")
+    monkeypatch.setattr(
+        "modules.video.image_asset_qa.detect_visible_text",
+        lambda _path: (),
+    )
+    image_directory = create_images(tmp_path)
+    audio_file = create_audio(tmp_path)
+    storyboard_file = create_storyboard(tmp_path, audio_file)
+    alignment_file = create_alignment(tmp_path)
+
+    class Reviewer:
+        def review(self, image_path, scene):
+            return SceneQAResult(
+                scene_id=scene.scene_id,
+                status="REVIEW",
+                narration_image="PASS",
+                narration_description="PASS",
+                unwanted_text="REVIEW",
+                rationale="A mark may be text, but it is unclear.",
+                correction_prompt="The mark may need review.",
+            )
+
+    class ImageProvider:
+        def generate(self, request):
+            pytest.fail("Uncertain text should be preserved for human review.")
+
+    pipeline = VideoProductionPipeline(
+        image_reviewer=Reviewer(),
+        image_provider=ImageProvider(),
+        image_provider_name="replicate",
+    )
+    request = pipeline.create_request(
+        storyboard_file=storyboard_file,
+        image_directory=image_directory,
+        narration_result_file=alignment_file,
+        audio_file=audio_file,
+        output_directory=tmp_path / "output",
+        enable_image_ai_qa=True,
+        require_no_editorial_text=True,
+    )
+
+    assert pipeline._review_and_repair_images(request, tmp_path) == "REVIEW"
+    checks = load_project_qa(tmp_path).stages["image_semantic_qa"][-1].checks
+    assert checks["scene_001.unwanted_text"] == "REVIEW"
+
+
 def test_image_ai_qa_preserves_uncertain_images_for_human_review(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -886,6 +1120,40 @@ def test_semantic_review_status_keeps_video_available_for_human_approval(
     assert result.image_ai_qa_status == "REVIEW"
     assert result.output_video_file is not None
     assert Path(result.output_video_file).is_file()
+
+
+def test_mandatory_no_editorial_text_review_blocks_video_render(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    image_directory = create_images(tmp_path)
+    audio_file = create_audio(tmp_path)
+    storyboard_file = create_storyboard(tmp_path, audio_file)
+    alignment_file = create_alignment(tmp_path)
+    pipeline = VideoProductionPipeline()
+    request = pipeline.create_request(
+        storyboard_file=storyboard_file,
+        image_directory=image_directory,
+        narration_result_file=alignment_file,
+        audio_file=audio_file,
+        output_directory=tmp_path / "output",
+        enable_image_ai_qa=True,
+        require_no_editorial_text=True,
+    )
+    monkeypatch.setattr(
+        pipeline,
+        "_review_and_repair_images",
+        lambda *_args: "REVIEW",
+    )
+
+    result = pipeline.run(request)
+
+    assert result.status == "failed"
+    assert result.output_video_file is None
+    assert result.error_message is not None
+    assert "Mandatory no-editorial-text image QA did not PASS" in (
+        result.error_message
+    )
 
 
 def test_semantic_failure_blocks_video_render_pipeline(

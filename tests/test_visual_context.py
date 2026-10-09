@@ -120,6 +120,11 @@ def test_visual_context_plans_every_scene_in_order_and_persists_artifacts(tmp_pa
         scene.scene_id for scene in scenes
     ]
     assert all(scene.visual_contract is not None for scene in updated.scenes)
+    assert updated.scenes[0].visual_description == (
+        "A person. points at the object. A simple room"
+    )
+    assert updated.scenes[0].character_action == "points at the object"
+    assert updated.scenes[0].background == "A simple room"
     assert responses.formats == [
         VisualWorldBible,
         SceneVisualContractBatch,
