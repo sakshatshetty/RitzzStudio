@@ -138,6 +138,33 @@ def test_upload_validates_and_uploads_only_exact_master_then_persists_details(
     assert "YOUTUBE_PROCESSING_PENDING" in summary_text
 
 
+def test_private_upload_summary_reports_tags_omitted_for_youtube_limit(
+    tmp_path,
+    monkeypatch,
+):
+    _, project_directory, _, provider, _, summary = _prepare_upload(
+        tmp_path,
+        monkeypatch,
+    )
+    omitted_tags = ["lower-priority phrase"]
+    provider.upload_video = lambda **_kwargs: {
+        "video_id": "video-123",
+        "url": "https://youtu.be/video-123",
+        "youtube_tags_submitted": ["primary phrase"],
+        "youtube_tags_omitted": omitted_tags,
+    }
+
+    assert run_private_upload_stage.main() == 0
+
+    result = json.loads(
+        (project_directory / "publishing" / "publish.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert result["upload_details"]["youtube_tags_omitted"] == omitted_tags
+    assert "`lower-priority phrase`" in summary.read_text(encoding="utf-8")
+
+
 def test_private_upload_preserves_user_supplied_metadata_exactly(
     tmp_path,
     monkeypatch,

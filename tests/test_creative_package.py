@@ -188,6 +188,22 @@ def test_rejects_duplicate_manifest_keys_and_platform_metadata_overflow(tmp_path
         load_creative_package(title_archive)
 
 
+def test_rejects_tags_over_encoded_youtube_limit_even_when_raw_text_fits(tmp_path):
+    archive = tmp_path / "encoded-tag-limit.zip"
+    tags = [("x" * 20) + " " + "y" for _ in range(20)] + ["z"]
+    assert sum(map(len, tags)) < 500
+    _write_package(
+        archive,
+        extra_files={"tags.txt": "\n".join(tags).encode()},
+    )
+
+    with pytest.raises(
+        CreativePackageError,
+        match="commas and quotes around multi-word tags",
+    ):
+        load_creative_package(archive)
+
+
 def test_materializes_immutable_creative_assets_for_existing_engines(tmp_path):
     archive = tmp_path / "creative.zip"
     files = _write_package(archive)

@@ -1,16 +1,23 @@
+import json
 from pathlib import Path
 from typing import Any
 
 import pytest
+from googleapiclient.errors import HttpError
+from httplib2 import Response
 
+from modules.project.packaging import fit_youtube_tags, youtube_tag_character_count
 from modules.publishing.youtube_provider import YouTubeProvider
 
 
 class FakeRequest:
-    def __init__(self, response: dict[str, str]):
+    def __init__(self, response: dict[str, str], error: Exception | None = None):
         self.response = response
+        self.error = error
 
     def execute(self) -> dict[str, str]:
+        if self.error:
+            raise self.error
         return self.response
 
 
@@ -19,11 +26,12 @@ class FakeVideos:
         self.insert_args: dict[str, Any] | None = None
         self.list_args: dict[str, Any] | None = None
         self.list_response = list_response or {"items": []}
+        self.insert_error: Exception | None = None
         self.list_calls = 0
 
     def insert(self, **kwargs: Any):
         self.insert_args = kwargs
-        return FakeRequest({"id": "abc123"})
+        return FakeRequest({"id": "abc123"}, self.insert_error)
 
     def list(self, **kwargs: Any):
         self.list_args = kwargs
@@ -97,6 +105,69 @@ def test_youtube_provider_maps_metadata_and_schedule_without_network(tmp_path: P
     }
     assert request["media_body"] is media_file
     assert request["notifySubscribers"] is False
+
+
+def test_youtube_provider_fits_encoded_tags_to_the_api_limit(tmp_path: Path):
+    tags = [
+        *[("x" * 22) + " " + "y" for _ in range(18)],
+        ("a" * 12) + " " + "b",
+        ("c" * 12) + " " + "d",
+        "singlewordtags",
+    ]
+    assert youtube_tag_character_count(tags) == 534
+    submitted, omitted = fit_youtube_tags(tags)
+    assert len(submitted) == 18
+    assert omitted == tags[18:]
+    assert youtube_tag_character_count(submitted) <= 500
+
+    video_file = tmp_path / "final.mp4"
+    video_file.write_bytes(b"video")
+    service = FakeService()
+    provider = YouTubeProvider(
+        tmp_path / "client-secret.json",
+        tmp_path / "token.json",
+        service=service,
+        media_upload_builder=lambda _path: object(),
+    )
+
+    result = provider.upload_video(
+        video_file=video_file,
+        title="A title",
+        description="A description",
+        metadata={"tags": tags},
+    )
+
+    assert service.video_resource.insert_args["body"]["snippet"]["tags"] == tags[:18]
+    assert result["youtube_tags_submitted"] == tags[:18]
+    assert result["youtube_tags_omitted"] == tags[18:]
+
+
+def test_youtube_provider_identifies_definitive_invalid_tags_rejection(
+    tmp_path: Path,
+):
+    video_file = tmp_path / "final.mp4"
+    video_file.write_bytes(b"video")
+    service = FakeService()
+    service.video_resource.insert_error = HttpError(
+        Response({"status": "400"}),
+        json.dumps(
+            {"error": {"errors": [{"reason": "invalidTags"}]}}
+        ).encode(),
+    )
+    provider = YouTubeProvider(
+        tmp_path / "client-secret.json",
+        tmp_path / "token.json",
+        service=service,
+        media_upload_builder=lambda _path: object(),
+    )
+
+    with pytest.raises(RuntimeError, match="invalidTags"):
+        provider.upload_video(
+            video_file=video_file,
+            title="A title",
+            description="A description",
+            metadata={"tags": ["a valid tag"]},
+        )
 
 
 def test_youtube_provider_sets_thumbnail_without_network(tmp_path: Path):

@@ -16,7 +16,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from modules.project.config import ProductionConfig
 from modules.project.manager import ProjectManager
 from modules.project.models import Project
-from modules.project.packaging import PackagingArtifact, PackagingMetadata
+from modules.project.packaging import (
+    PackagingArtifact,
+    PackagingMetadata,
+    YOUTUBE_TAG_CHARACTER_LIMIT,
+    youtube_tag_character_count,
+)
 from modules.script.models import Script, ScriptSection
 from modules.video.image_asset_qa import inspect_image_asset
 
@@ -391,9 +396,10 @@ def load_creative_package(archive_path: str | Path) -> CreativePackage:
                 raise CreativePackageError(
                     "INPUT_VALIDATION_FAILED: description must be at most 5000 characters."
                 )
-            if sum(map(len, tags)) > 500:
+            if youtube_tag_character_count(tags) > YOUTUBE_TAG_CHARACTER_LIMIT:
                 raise CreativePackageError(
-                    "INPUT_VALIDATION_FAILED: combined tag text must be at most 500 characters."
+                    "INPUT_VALIDATION_FAILED: tags exceed YouTube's 500-character "
+                    "limit after accounting for commas and quotes around multi-word tags."
                 )
             thumbnail = _read_member(
                 archive,

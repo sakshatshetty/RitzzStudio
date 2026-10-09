@@ -5,6 +5,7 @@ import pytest
 
 from modules.project.manager import ProjectManager
 from modules.publishing.engine import FakeYouTubeProvider, PublishingEngine
+from modules.publishing.youtube_provider import YouTubeUploadRejected
 
 
 def test_publish_requires_approval_before_upload(tmp_path: Path):
@@ -244,6 +245,122 @@ def test_uncertain_publish_attempt_is_not_retried(tmp_path: Path):
         engine.publish_video(**upload_arguments)
 
     assert provider.calls == 1
+
+
+def test_invalid_tags_rejection_is_archived_and_can_be_retried(tmp_path: Path):
+    projects_dir = tmp_path / "projects"
+    manager = ProjectManager(projects_dir)
+    project = manager.create_project("Rejected tags can be retried")
+    project_folder = projects_dir / f"{project.project_id}_{project.slug}"
+    video_file = project_folder / "video" / "test.mp4"
+    video_file.parent.mkdir(parents=True, exist_ok=True)
+    video_file.write_bytes(b"video")
+
+    class RejectOnceProvider:
+        def __init__(self):
+            self.calls = 0
+
+        def upload_video(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise YouTubeUploadRejected(
+                    "YouTube rejected metadata with invalidTags."
+                )
+            return {
+                "video_id": "abc123",
+                "url": "https://youtu.be/abc123",
+            }
+
+    provider = RejectOnceProvider()
+    engine = PublishingEngine(projects_dir, provider=provider)
+    engine.create_approval(project, approved=True, approved_by="human")
+    upload_arguments = {
+        "project": project,
+        "video_file": video_file,
+        "title": "Rejected tags can be retried",
+        "description": "A private test upload.",
+        "metadata": {"privacy_status": "private"},
+    }
+
+    with pytest.raises(YouTubeUploadRejected):
+        engine.publish_video(**upload_arguments)
+
+    attempt_path = project_folder / "publishing" / "publish_attempt.json"
+    rejected_attempt = json.loads(attempt_path.read_text(encoding="utf-8"))
+    assert rejected_attempt["status"] == "rejected"
+    assert rejected_attempt["reason"] == "invalidTags"
+    assert rejected_attempt["error"] == (
+        "YouTube rejected metadata with invalidTags."
+    )
+
+    result = engine.publish_video(**upload_arguments)
+
+    assert result.video_id == "abc123"
+    assert provider.calls == 2
+    assert json.loads(attempt_path.read_text(encoding="utf-8"))["status"] == (
+        "completed"
+    )
+    archived_attempts = list(
+        (project_folder / "publishing" / "history").glob(
+            "publish_attempt-*.json"
+        )
+    )
+    assert len(archived_attempts) == 1
+    assert json.loads(archived_attempts[0].read_text(encoding="utf-8"))[
+        "status"
+    ] == "rejected"
+
+
+def test_legacy_invalid_tags_unknown_outcome_is_retried_safely(tmp_path: Path):
+    projects_dir = tmp_path / "projects"
+    manager = ProjectManager(projects_dir)
+    project = manager.create_project("Legacy invalid tags failure")
+    project_folder = projects_dir / f"{project.project_id}_{project.slug}"
+    video_file = project_folder / "video" / "test.mp4"
+    video_file.parent.mkdir(parents=True, exist_ok=True)
+    video_file.write_bytes(b"video")
+    provider = FakeYouTubeProvider()
+    engine = PublishingEngine(projects_dir, provider=provider)
+    engine.create_approval(project, approved=True, approved_by="human")
+    publish_directory = project_folder / "publishing"
+    publish_directory.mkdir(parents=True, exist_ok=True)
+    attempt_path = publish_directory / "publish_attempt.json"
+    attempt_path.write_text(
+        json.dumps(
+            {
+                "status": "outcome_unknown",
+                "title": "Legacy invalid tags failure",
+                "error": (
+                    '<HttpError 400 when requesting None returned '
+                    '"The request metadata specifies invalid video keywords." '
+                    'Details: "[{"reason": "invalidTags"}]">'
+                ),
+            }
+        ),
+        encoding="utf-8",
+    )
+    upload_arguments = {
+        "project": project,
+        "video_file": video_file,
+        "title": "Legacy invalid tags failure",
+        "description": "A private test upload.",
+        "metadata": {"privacy_status": "private"},
+    }
+
+    result = engine.publish_video(**upload_arguments)
+
+    assert result.publish_status == "PRIVATE"
+    assert len(provider.calls) == 1
+    assert json.loads(attempt_path.read_text(encoding="utf-8"))["status"] == (
+        "completed"
+    )
+    archived_attempts = list(
+        (publish_directory / "history").glob("publish_attempt-*.json")
+    )
+    assert len(archived_attempts) == 1
+    assert json.loads(archived_attempts[0].read_text(encoding="utf-8"))[
+        "status"
+    ] == "outcome_unknown"
 
 
 def test_publish_workflow_runs_as_single_orchestrated_action(tmp_path: Path):

@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, ClassVar
+
+from modules.project.packaging import fit_youtube_tags
+
+
+class YouTubeUploadRejected(RuntimeError):
+    """The YouTube API definitively rejected request metadata before upload."""
+
+    reason = "invalidTags"
 
 
 class YouTubeProvider:
@@ -56,8 +65,12 @@ class YouTubeProvider:
             "description": description,
             "categoryId": str(metadata.get("category_id", "27")),
         }
-        if metadata.get("tags"):
-            snippet["tags"] = list(metadata["tags"])
+        raw_tags = metadata.get("tags", [])
+        if not isinstance(raw_tags, list):
+            raise ValueError("YouTube tags must be supplied as a list of strings.")
+        submitted_tags, omitted_tags = fit_youtube_tags(raw_tags)
+        if submitted_tags:
+            snippet["tags"] = submitted_tags
 
         status = {
             "privacyStatus": "private" if scheduled_for else metadata.get("privacy_status", "private"),
@@ -72,12 +85,60 @@ class YouTubeProvider:
             media_body=self._media_upload_builder(str(video_path)),
             notifySubscribers=bool(metadata.get("notify_subscribers", True)),
         )
-        response = request.execute()
+        try:
+            from googleapiclient.errors import HttpError
+        except ImportError as exc:
+            raise RuntimeError(
+                "YouTube uploads require google-api-python-client."
+            ) from exc
+        try:
+            response = request.execute()
+        except HttpError as exc:
+            if (
+                getattr(exc.resp, "status", None) == 400
+                and self._is_invalid_tags_error(exc)
+            ):
+                raise YouTubeUploadRejected(
+                    "YouTube rejected the upload metadata with invalidTags; "
+                    "the video was not created."
+                ) from exc
+            raise
         video_id = response["id"]
-        return {
+        result: dict[str, Any] = {
             "video_id": video_id,
             "url": f"https://youtu.be/{video_id}",
         }
+        if omitted_tags:
+            result["youtube_tags_submitted"] = submitted_tags
+            result["youtube_tags_omitted"] = omitted_tags
+        return result
+
+    @staticmethod
+    def _is_invalid_tags_error(error: Any) -> bool:
+        content = getattr(error, "content", None)
+        if isinstance(content, bytes):
+            try:
+                content = content.decode("utf-8")
+            except UnicodeDecodeError:
+                return False
+        if not isinstance(content, str):
+            return False
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError:
+            return False
+        if not isinstance(payload, dict):
+            return False
+        error_payload = payload.get("error")
+        if not isinstance(error_payload, dict):
+            return False
+        details = error_payload.get("errors", [])
+        if not isinstance(details, list):
+            return False
+        return any(
+            isinstance(item, dict) and item.get("reason") == "invalidTags"
+            for item in details
+        )
 
     def set_thumbnail(
         self,

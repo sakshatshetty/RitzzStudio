@@ -57,6 +57,18 @@ def _write_upload_summary(
         f"Video ID: `{upload.get('video_id', 'unknown')}`",
         f"Processing: {processing_status}",
     ]
+    omitted_tags = master.get("youtube_tags_omitted") or []
+    if omitted_tags:
+        lines.extend(
+            [
+                "",
+                "**METADATA ADJUSTMENT**",
+                (
+                    "Tags omitted to fit YouTube's 500-character encoded limit: "
+                    + ", ".join(f"`{tag}`" for tag in omitted_tags)
+                ),
+            ]
+        )
     processing_error = upload.get("youtube_processing_error")
     if processing_error:
         lines.append(f"Processing detail: {processing_error}")

@@ -9,6 +9,35 @@ from typing import Any
 from modules.project.manager import ProjectManager
 from modules.project.models import Project
 
+YOUTUBE_TAG_CHARACTER_LIMIT = 500
+
+
+def youtube_tag_character_count(tags: list[str]) -> int:
+    """Count tags as YouTube does, including commas and quotes around phrases."""
+    return (
+        sum(len(tag) + (2 if " " in tag else 0) for tag in tags)
+        + max(0, len(tags) - 1)
+    )
+
+
+def fit_youtube_tags(tags: list[str]) -> tuple[list[str], list[str]]:
+    """Keep the longest leading set of tags that fits YouTube's encoded limit."""
+    cleaned: list[str] = []
+    for tag in tags:
+        if not isinstance(tag, str):
+            raise ValueError("YouTube tags must be strings.")
+        stripped = tag.strip()
+        if stripped:
+            cleaned.append(stripped)
+
+    accepted: list[str] = []
+    for index, tag in enumerate(cleaned):
+        candidate = [*accepted, tag]
+        if youtube_tag_character_count(candidate) > YOUTUBE_TAG_CHARACTER_LIMIT:
+            return accepted, cleaned[index:]
+        accepted.append(tag)
+    return accepted, []
+
 
 @dataclass
 class TitleOption:
