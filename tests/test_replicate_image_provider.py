@@ -109,6 +109,119 @@ def test_retries_rate_limited_prediction_after_retry_after(
     assert waits == [4.25]
 
 
+def test_retries_e9828_failed_prediction_with_a_new_prediction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = ReplicateFluxSchnellProvider(api_token="test-token")
+    monkeypatch.setattr(
+        provider,
+        "_normalize_image",
+        lambda image_data, _width, _height: image_data,
+    )
+    predictions = [
+        {
+            "status": "failed",
+            "error": "Director: unexpected error handling prediction (E9828)",
+        },
+        {
+            "status": "succeeded",
+            "output": ["https://files.example/image.png"],
+        },
+    ]
+    prediction_attempts = 0
+    waits = []
+
+    def fake_urlopen(request, timeout):
+        nonlocal prediction_attempts
+        if request.full_url == provider.MODEL_ENDPOINT:
+            prediction = predictions[prediction_attempts]
+            prediction_attempts += 1
+            return io.BytesIO(json.dumps(prediction).encode())
+        return io.BytesIO(PNG_DATA)
+
+    monkeypatch.setattr(
+        "modules.image.providers.replicate.time.sleep",
+        waits.append,
+    )
+    with patch("modules.image.providers.replicate.urlopen", side_effect=fake_urlopen):
+        result = provider.generate(create_request(tmp_path))
+
+    assert result.status == "completed"
+    assert prediction_attempts == 2
+    assert waits == [provider.E9828_RETRY_DELAY_SECONDS]
+
+
+def test_e9828_prediction_retries_are_bounded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = ReplicateFluxSchnellProvider(api_token="test-token")
+    prediction_attempts = 0
+    waits = []
+
+    def fake_urlopen(request, timeout):
+        nonlocal prediction_attempts
+        prediction_attempts += 1
+        return io.BytesIO(
+            json.dumps(
+                {
+                    "status": "failed",
+                    "error": (
+                        "Director: unexpected error handling prediction (E9828)"
+                    ),
+                }
+            ).encode()
+        )
+
+    monkeypatch.setattr(
+        "modules.image.providers.replicate.time.sleep",
+        waits.append,
+    )
+    with patch("modules.image.providers.replicate.urlopen", side_effect=fake_urlopen):
+        result = provider.generate(create_request(tmp_path))
+
+    assert result.status == "failed"
+    assert result.error_message is not None
+    assert "E9828" in result.error_message
+    assert prediction_attempts == provider.MAX_E9828_RETRIES + 1
+    assert waits == [
+        provider.E9828_RETRY_DELAY_SECONDS,
+        provider.E9828_RETRY_DELAY_SECONDS * 2,
+    ]
+
+
+def test_does_not_retry_other_failed_predictions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = ReplicateFluxSchnellProvider(api_token="test-token")
+    prediction_attempts = 0
+    waits = []
+
+    def fake_urlopen(request, timeout):
+        nonlocal prediction_attempts
+        prediction_attempts += 1
+        return io.BytesIO(
+            json.dumps(
+                {"status": "failed", "error": "Invalid input"}
+            ).encode()
+        )
+
+    monkeypatch.setattr(
+        "modules.image.providers.replicate.time.sleep",
+        waits.append,
+    )
+    with patch("modules.image.providers.replicate.urlopen", side_effect=fake_urlopen):
+        result = provider.generate(create_request(tmp_path))
+
+    assert result.status == "failed"
+    assert result.error_message is not None
+    assert "Invalid input" in result.error_message
+    assert prediction_attempts == 1
+    assert waits == []
+
+
 def test_stops_after_bounded_rate_limit_retries(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

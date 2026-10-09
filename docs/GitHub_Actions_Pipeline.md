@@ -28,9 +28,11 @@ GitHub Actions secret for FLUX. When switching models on a resumed project,
 select `rerun_from_stage=IMAGES` so the images and dependent render are rebuilt.
 FLUX output is normalized to the existing 1536×864 image contract. The FLUX
 provider retries HTTP 429 responses up to five times, honoring Replicate's
-`Retry-After` value when available; persistent throttling remains a visible
-image-stage failure. Before rendering, every image receives semantic image
-review and a separate text-free check. The text check uses local Tesseract OCR
+`Retry-After` value when available, and retries the specific Replicate E9828
+internal prediction failure up to two times with backoff; other failed
+predictions and persistent errors remain visible image-stage failures. Before
+rendering, every image receives semantic image review and a separate text-free
+check. The text check uses local Tesseract OCR
 to catch visible lettering; the workflow installs `tesseract-ocr` for this
 mandatory check. OCR findings trigger a bounded repair using the provider
 recorded in the image manifest. Rendering is blocked unless every image passes;

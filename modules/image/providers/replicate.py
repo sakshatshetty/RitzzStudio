@@ -1,6 +1,7 @@
 """Replicate-hosted FLUX Schnell image provider."""
 
 import json
+import logging
 import os
 import struct
 import subprocess
@@ -17,6 +18,8 @@ from modules.image.models import ImageGenerationRequest, ImageGenerationResult
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 
 class ReplicateFluxSchnellProvider:
     """Generate images with Black Forest Labs FLUX Schnell on Replicate."""
@@ -26,6 +29,8 @@ class ReplicateFluxSchnellProvider:
     MAX_POLL_SECONDS = 300
     MAX_RATE_LIMIT_RETRIES = 5
     MAX_RATE_LIMIT_WAIT_SECONDS = 60
+    MAX_E9828_RETRIES = 2
+    E9828_RETRY_DELAY_SECONDS = 2
     PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
     def __init__(self, api_token: str | None = None) -> None:
@@ -199,53 +204,81 @@ class ReplicateFluxSchnellProvider:
                 return prediction
         raise TimeoutError("FLUX Schnell prediction did not finish within five minutes.")
 
+    @staticmethod
+    def _is_retryable_prediction_error(error: Any) -> bool:
+        if not isinstance(error, str):
+            return False
+        normalized_error = error.casefold()
+        return (
+            "e9828" in normalized_error
+            and "unexpected error handling prediction" in normalized_error
+        )
+
     def generate(self, request: ImageGenerationRequest) -> ImageGenerationResult:
         try:
-            prediction = self._json_request(
-                self.MODEL_ENDPOINT,
-                "POST",
-                body={
-                    "input": {
-                        "prompt": request.prompt,
-                        "go_fast": True,
-                        "num_outputs": 1,
-                        "aspect_ratio": "16:9",
-                        "output_format": "png",
-                        "num_inference_steps": 4,
-                    }
-                },
-                prefer_wait=True,
-            )
-            prediction = self._wait_for_completion(prediction)
-            if prediction.get("status") != "succeeded":
-                raise RuntimeError(
-                    f"FLUX Schnell prediction {prediction.get('status')}: "
-                    f"{prediction.get('error') or 'unknown error'}"
+            for attempt in range(self.MAX_E9828_RETRIES + 1):
+                prediction = self._json_request(
+                    self.MODEL_ENDPOINT,
+                    "POST",
+                    body={
+                        "input": {
+                            "prompt": request.prompt,
+                            "go_fast": True,
+                            "num_outputs": 1,
+                            "aspect_ratio": "16:9",
+                            "output_format": "png",
+                            "num_inference_steps": 4,
+                        }
+                    },
+                    prefer_wait=True,
                 )
-            output = prediction.get("output")
-            image_url = output[0] if isinstance(output, list) and output else output
-            if not isinstance(image_url, str) or not image_url.startswith("https://"):
-                raise ValueError("FLUX Schnell returned no valid image URL.")
-            image_data = self._image_bytes(image_url)
-            if not image_data.startswith(self.PNG_SIGNATURE):
-                raise ValueError("FLUX Schnell output is not a valid PNG image.")
-            image_data = self._normalize_image(
-                image_data,
-                request.width,
-                request.height,
-            )
+                prediction = self._wait_for_completion(prediction)
+                if prediction.get("status") != "succeeded":
+                    prediction_error = prediction.get("error") or "unknown error"
+                    if (
+                        self._is_retryable_prediction_error(prediction_error)
+                        and attempt < self.MAX_E9828_RETRIES
+                    ):
+                        delay = self.E9828_RETRY_DELAY_SECONDS * (2**attempt)
+                        logger.warning(
+                            "Replicate FLUX Schnell returned E9828; retrying "
+                            "with a new prediction in %.1f seconds (retry %d/%d).",
+                            delay,
+                            attempt + 1,
+                            self.MAX_E9828_RETRIES,
+                        )
+                        time.sleep(delay)
+                        continue
+                    raise RuntimeError(
+                        f"FLUX Schnell prediction {prediction.get('status')}: "
+                        f"{prediction_error}"
+                    )
+                output = prediction.get("output")
+                image_url = (
+                    output[0] if isinstance(output, list) and output else output
+                )
+                if not isinstance(image_url, str) or not image_url.startswith("https://"):
+                    raise ValueError("FLUX Schnell returned no valid image URL.")
+                image_data = self._image_bytes(image_url)
+                if not image_data.startswith(self.PNG_SIGNATURE):
+                    raise ValueError("FLUX Schnell output is not a valid PNG image.")
+                image_data = self._normalize_image(
+                    image_data,
+                    request.width,
+                    request.height,
+                )
 
-            output_directory = Path(request.output_directory)
-            output_directory.mkdir(parents=True, exist_ok=True)
-            output_path = output_directory / f"{request.image_id}.png"
-            output_path.write_bytes(image_data)
-            return ImageGenerationResult(
-                image_id=request.image_id,
-                scene_id=request.scene_id,
-                provider=request.provider,
-                status="completed",
-                file_path=str(output_path),
-            )
+                output_directory = Path(request.output_directory)
+                output_directory.mkdir(parents=True, exist_ok=True)
+                output_path = output_directory / f"{request.image_id}.png"
+                output_path.write_bytes(image_data)
+                return ImageGenerationResult(
+                    image_id=request.image_id,
+                    scene_id=request.scene_id,
+                    provider=request.provider,
+                    status="completed",
+                    file_path=str(output_path),
+                )
         except Exception as exc:
             return ImageGenerationResult(
                 image_id=request.image_id,
