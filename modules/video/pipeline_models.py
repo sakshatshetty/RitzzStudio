@@ -2,7 +2,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-
 PipelineStageName = Literal[
     "asset_validation",
     "assembly",
@@ -27,6 +26,7 @@ class VideoProductionRequest(BaseModel):
     resume: bool = True
     retry_from_stage: PipelineStageName | None = None
     enable_image_ai_qa: bool = False
+    require_no_editorial_text: bool = False
 
 
 class VideoProductionResult(BaseModel):

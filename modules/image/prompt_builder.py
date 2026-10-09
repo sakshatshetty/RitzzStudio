@@ -26,7 +26,10 @@ class ImagePromptBuilder:
         "colors, and simple shading. Use clear silhouettes and an immediately "
         "understandable foreground action. Draw a contextually appropriate "
         "environment with enough simple, relevant props to explain the scene; "
-        "keep details secondary and uncluttered. Playful, informative, "
+        "keep details secondary and uncluttered. Use the same clean line-art "
+        "treatment, outline weight, and flat-color approach in every frame; "
+        "avoid painterly, textured, monochrome, or photorealistic departures. "
+        "Playful, informative, "
         "approachable 2D educational-explainer artwork."
     )
 
@@ -36,21 +39,24 @@ class ImagePromptBuilder:
         "Avoid photorealism, cinematic realism, realistic human anatomy, "
         "3D rendering, Pixar-like styling, anime, glossy surfaces, polished "
         "corporate vector art, hyper-detailed digital painting, photographic "
-        "textures, excessive shading, crowded compositions, visual clutter, "
-        "unnecessary props, and all generated text."
+        "textures, excessive shading, crowded compositions, collages, split "
+        "panels, visual clutter, unnecessary props, logos, watermarks, "
+        "signatures, and all generated text."
     )
 
     RITZZ_STRICT_NO_TEXT = (
-        "NO TEXT. The only exception is readable wording on a specific physical "
-        "object explicitly required by the current sentence and required-object "
-        "list; show only those required physical-object words. DO NOT DRAW "
-        "EDITORIAL CALLOUT TEXT. NO TITLES. NO HEADLINES. "
+        "NO TEXT. NO TEXT OF ANY KIND, including on physical objects. No words, letters, "
+        "captions, labels, callouts, or typography. "
+        "numbers, pseudo-writing, logos, watermarks, signatures, or brand marks. "
+        "If the narration mentions writing, show the object without reproducing "
+        "any writing. DO NOT DRAW EDITORIAL CALLOUT TEXT. NO TITLES. NO HEADLINES. "
         "NO LABELS. NO ARROWS. NO CAPTIONS. NO SUBTITLES. NO SPEECH BUBBLES. "
         "NO INFOGRAPHICS. NO DIAGRAMS. NO TIMELINES. NO ANNOTATIONS. "
-        "NO EXPLANATORY WRITING. Do not add editorial words, captions, labels, "
+        "NO EXPLANATORY WRITING. Do not add words, lettering, captions, labels, "
         "subtitles, callout text, UI text, decorative typography, titles, "
         "headlines, arrows, speech bubbles, infographics, diagrams, timelines, "
-        "annotations, or explanatory writing. Keep the artwork purely visual."
+        "annotations, watermarks, logos, signatures, or explanatory writing. "
+        "Keep the artwork purely visual."
     )
 
     RITZZ_NEGATIVE_STYLE_WITH_EDITORIAL_TEXT = (
@@ -99,7 +105,16 @@ class ImagePromptBuilder:
         "lower_right": "lower-right negative space",
     }
 
-    DEFAULT_CHARACTER_PROFILE = ""
+    DEFAULT_CHARACTER_PROFILE = (
+        "When the recurring RITZZ host appears, keep the same simple stick-figure "
+        "identity: a round white head, small black dot eyes, a simple mouth, a "
+        "slim black-line body and limbs, consistent head-to-body proportions, "
+        "and consistent outline weight. Change only pose and expression. Keep "
+        "other people in the same simple 2D cartoon language, and preserve a "
+        "person's identity and clothing across scenes when the scene contract "
+        "says that person recurs. Clothing and props must match the exact scene "
+        "period."
+    )
 
     EDITORIAL_ILLUSTRATION_COLOR_INSTRUCTION = (
         "Keep the illustration fully colored using the normal RITZZ flat-color palette. "
@@ -120,7 +135,7 @@ class ImagePromptBuilder:
 
         self.character_profile = (
             character_profile.strip()
-            if character_profile
+            if character_profile is not None
             else self.DEFAULT_CHARACTER_PROFILE
         )
         self.visual_world = visual_world
@@ -222,6 +237,12 @@ class ImagePromptBuilder:
                         "; ".join(contract.continuity_requirements)
                         or "Maintain the project world and recurring identities."
                     ),
+                    "ERA LOCK: Depict the period and setting stated in this scene's "
+                    "historical context. Do not mix eras or introduce modern objects "
+                    "into a historical scene, or historical objects into a present-day "
+                    "scene. Change periods only when this contract explicitly marks "
+                    "an intentional context transition, and then show only the period "
+                    "required for this scene.",
                 ]
             )
             if contract.context_transition:
@@ -246,7 +267,8 @@ class ImagePromptBuilder:
             "dominant and the background supportive. Use multiple characters "
             "or objects when the sentence requires them. Maintain the same "
             "RITZZ illustration style and visual world as every other scene. "
-            "Do not turn the scene into an infographic."
+            "Use one unified moment and location, not a collage, split-screen, "
+            "multi-panel layout, or montage. Do not turn the scene into an infographic."
         )
 
         parts.append("Static camera; the video uses hard cuts between still images.")

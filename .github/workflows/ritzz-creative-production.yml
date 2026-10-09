@@ -129,7 +129,7 @@ jobs:
         run: |
           python -m pip install -r requirements.txt
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends ffmpeg fonts-comic-neue fonts-dejavu-core
+          sudo apt-get install --yes --no-install-recommends ffmpeg fonts-comic-neue fonts-dejavu-core tesseract-ocr
 
       - name: Download the user-supplied ZIP
         if: ${{ inputs.mode == 'NEW' }}
@@ -228,10 +228,11 @@ jobs:
           RITZZ_FORCE_REGENERATE_IMAGES: ${{ inputs.mode == 'RESUME' && inputs.rerun_from_stage == 'IMAGES' && 'true' || 'false' }}
         run: python scripts/run_image_stage.py
 
-      - name: Render and run technical plus targeted semantic QA
+      - name: Enforce text-free images, render, and run technical QA
         if: ${{ inputs.mode == 'NEW' || inputs.rerun_from_stage != 'FINAL_PACKAGE' }}
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}
           RITZZ_PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
           RITZZ_RERUN_FROM_STAGE: ${{ inputs.mode == 'RESUME' && inputs.rerun_from_stage || 'CONTINUE' }}
         run: python scripts/run_render_stage.py
@@ -256,7 +257,7 @@ jobs:
             echo
             echo "Run and artifact link: $RUN_URL"
             echo
-            echo "A semantic QA REVIEW remains visible for human assessment; a technical QA FAIL blocks this stage."
+            echo "No-editorial-text QA must PASS before rendering. Other semantic REVIEW findings remain visible for human assessment; a technical QA FAIL blocks this stage."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Archive project for review and resume

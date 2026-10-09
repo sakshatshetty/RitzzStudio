@@ -10,6 +10,7 @@ from typing import Any, Protocol
 
 from modules.project.models import Project
 from modules.project.packaging import PackagingArtifact
+from modules.publishing.youtube_provider import YouTubeUploadRejected
 
 
 @dataclass
@@ -187,7 +188,10 @@ class PublishingEngine:
             previous_attempt = json.loads(
                 attempt_path.read_text(encoding="utf-8")
             )
-            if (
+            recoverable_tag_rejection = self._is_invalid_tags_rejection(
+                previous_attempt
+            )
+            if not recoverable_tag_rejection and (
                 not changed_master
                 or previous_attempt.get("status") != "completed"
             ):
@@ -195,6 +199,19 @@ class PublishingEngine:
                     "A prior upload attempt has no saved result. Reconcile its status "
                     "before retrying to avoid a duplicate upload."
                 )
+            if recoverable_tag_rejection and not changed_master:
+                history_directory = publish_dir / "history"
+                history_directory.mkdir(parents=True, exist_ok=True)
+                archive = history_directory / (
+                    "publish_attempt-"
+                    f"{hashlib.sha256(attempt_path.read_bytes()).hexdigest()}.json"
+                )
+                if archive.exists():
+                    raise RuntimeError(
+                        "The rejected upload attempt is already archived; refusing "
+                        "to overwrite upload history."
+                    )
+                attempt_path.replace(archive)
 
         if changed_master:
             history_directory = publish_dir / "history"
@@ -242,19 +259,34 @@ class PublishingEngine:
                 scheduled_for=schedule,
             )
         except Exception as exc:
+            rejected_tags = isinstance(exc, YouTubeUploadRejected)
+            failed_attempt = {
+                "status": "rejected" if rejected_tags else "outcome_unknown",
+                "title": title,
+                "started_at": datetime.now(timezone.utc).isoformat(),
+                "error": str(exc),
+            }
+            if rejected_tags:
+                failed_attempt["reason"] = exc.reason
             attempt_path.write_text(
                 json.dumps(
-                    {
-                        "status": "outcome_unknown",
-                        "title": title,
-                        "started_at": datetime.now(timezone.utc).isoformat(),
-                        "error": str(exc),
-                    },
+                    failed_attempt,
                     indent=2,
                 ),
                 encoding="utf-8",
             )
             raise
+
+        omitted_tags = response.get("youtube_tags_omitted")
+        if omitted_tags:
+            upload_details = {
+                **(upload_details or {}),
+                "youtube_tags_submitted": response.get(
+                    "youtube_tags_submitted",
+                    [],
+                ),
+                "youtube_tags_omitted": omitted_tags,
+            }
 
         result = PublishResult(
             publish_status="PRIVATE" if private_only else "PUBLISHED",
@@ -278,6 +310,23 @@ class PublishingEngine:
             encoding="utf-8",
         )
         return result
+
+    @staticmethod
+    def _is_invalid_tags_rejection(attempt: Any) -> bool:
+        if not isinstance(attempt, dict):
+            return False
+        if (
+            attempt.get("status") == "rejected"
+            and attempt.get("reason") == "invalidTags"
+        ):
+            return True
+        error = attempt.get("error")
+        return (
+            attempt.get("status") == "outcome_unknown"
+            and isinstance(error, str)
+            and "HttpError 400" in error
+            and "invalidTags" in error
+        )
 
     def publish_project(
         self,

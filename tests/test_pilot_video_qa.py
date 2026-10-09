@@ -267,6 +267,7 @@ def test_openai_rendered_scene_reviewer_requests_strict_json_schema(tmp_path):
         "scene_id": "scene_001",
         "narration_image": "PASS",
         "narration_description": "PASS",
+        "unwanted_text": "PASS",
         "rationale": "The illustration matches the narration and scene intent.",
         "correction_prompt": None,
         "failure_category": None,
@@ -318,9 +319,15 @@ def test_openai_rendered_scene_reviewer_requests_strict_json_schema(tmp_path):
     assert captured["text"]["format"]["schema"]["additionalProperties"] is False
     assert "technology_ceiling" in captured["input"][0]["content"][0]["text"]
     assert "failure_category" in captured["text"]["format"]["schema"]["required"]
+    assert "unwanted_text" in captured["text"]["format"]["schema"]["required"]
     assert "editorial_text" not in captured["text"]["format"]["schema"]["properties"]
     assert "editorial_context" not in captured["input"][0]["content"][0]["text"]
+    assert "garbled lettering" in captured["input"][0]["content"][0]["text"]
+    assert "consistent RITZZ 2D line art" in captured["input"][0]["content"][0]["text"]
+    assert "no exceptions for text on physical objects" in captured["input"][0]["content"][0]["text"]
+    assert "intentional context transition" in captured["input"][0]["content"][0]["text"]
     assert result.editorial_context == "PASS"
+    assert result.unwanted_text == "PASS"
 
 
 def test_openai_rendered_scene_reviewer_preserves_failure_category(
@@ -332,6 +339,7 @@ def test_openai_rendered_scene_reviewer_preserves_failure_category(
         "scene_id": "scene_001",
         "narration_image": "FAIL",
         "narration_description": "PASS",
+        "unwanted_text": "PASS",
         "rationale": "The scene action is not visible.",
         "correction_prompt": "Show the described action clearly.",
         "failure_category": "WRONG_ACTION",
@@ -352,6 +360,38 @@ def test_openai_rendered_scene_reviewer_preserves_failure_category(
     assert result.status == "FAIL"
     assert result.failure_category == "WRONG_ACTION"
     assert result.editorial_context == "PASS"
+
+
+def test_openai_rendered_scene_reviewer_flags_editorial_text(
+    tmp_path,
+    monkeypatch,
+):
+    storyboard, _, _, image = make_inputs(tmp_path)
+    payload = {
+        "scene_id": "scene_001",
+        "narration_image": "PASS",
+        "narration_description": "PASS",
+        "unwanted_text": "FAIL",
+        "rationale": "A misspelled editorial word is visible.",
+        "correction_prompt": "Remove all text from the illustration.",
+        "failure_category": "UNWANTED_TEXT",
+    }
+    reviewer = OpenAIImageEditorialReviewer(api_key="test-key", model="test-model")
+    monkeypatch.setattr(
+        reviewer.client.responses,
+        "create",
+        lambda **_kwargs: SimpleNamespace(
+            output_text=json.dumps(payload),
+            status="completed",
+            incomplete_details=None,
+        ),
+    )
+
+    result = reviewer.review(image, storyboard.scenes[0])
+
+    assert result.status == "FAIL"
+    assert result.unwanted_text == "FAIL"
+    assert result.failure_category == "UNWANTED_TEXT"
 
 
 def test_openai_rendered_scene_reviewer_reports_empty_incomplete_output(tmp_path):
@@ -406,6 +446,7 @@ def test_openai_rendered_scene_batch_preserves_full_narration_and_order(tmp_path
                 "scene_id": scene.scene_id,
                 "narration_image": "PASS",
                 "narration_description": "PASS",
+                "unwanted_text": "PASS",
                 "editorial_context": "PASS",
                 "editorial_text": "PASS",
                 "editorial_style": "PASS",

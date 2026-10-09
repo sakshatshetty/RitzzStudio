@@ -48,10 +48,30 @@ class VisualContextEngine:
         )
         contracts = self._plan_contracts(research, storyboard, world)
         by_id = {contract.scene_id: contract for contract in contracts}
-        scenes = [
-            scene.model_copy(update={"visual_contract": by_id[scene.scene_id]})
-            for scene in storyboard.scenes
-        ]
+        scenes = []
+        for scene in storyboard.scenes:
+            contract = by_id[scene.scene_id]
+            description = ". ".join(
+                text.strip().rstrip(".")
+                for text in (
+                    contract.subject,
+                    contract.action,
+                    contract.environment,
+                )
+                if text.strip()
+            )
+            scenes.append(
+                scene.model_copy(
+                    update={
+                        "visual_contract": contract,
+                        "visual_description": description,
+                        "character_action": contract.action,
+                        "background": contract.environment,
+                        "props": contract.required_objects,
+                        "scene_purpose": contract.purpose,
+                    }
+                )
+            )
         updated_storyboard = storyboard.model_copy(update={"scenes": scenes})
         (directory / SCENE_VISUAL_CONTRACTS_FILENAME).write_text(
             json.dumps(
@@ -156,10 +176,13 @@ class VisualContextEngine:
                         "content": (
                             "Create scene-level visual contracts using the project "
                             "world bible, approved research, storyboard intent, and "
-                            "neighboring scenes. The visual description/action and "
-                            "research are authoritative. The current narration sentence "
-                            "is the primary visual instruction: determine its subject "
-                            "and visible action from that sentence. Use previous/next "
+                            "neighboring scenes. Approved research and the current "
+                            "narration are authoritative. Existing visual descriptions, "
+                            "actions, backgrounds, and props may be generic placeholders "
+                            "or stale; use them only when they add concrete, supported "
+                            "information. The current narration sentence is the primary "
+                            "visual instruction: determine its subject and visible action "
+                            "from that sentence. Use previous/next "
                             "sentences only as continuity context; never substitute a "
                             "neighboring sentence's action. Explicitly resolve ambiguous "
                             "terms in plain visual language. Carry forward the same "
@@ -169,7 +192,10 @@ class VisualContextEngine:
                             "objects and required objects. Set semantic_review_reasons "
                             "when a generated image needs special semantic scrutiny, "
                             "such as ambiguity, historical restrictions, key props, "
-                            "or a stated continuity dependency."
+                            "or a stated continuity dependency. Each scene must describe "
+                            "one unified still-image moment, not a collage, split-screen, "
+                            "or text-bearing infographic. Never request text, lettering, "
+                            "logos, watermarks, or signatures."
                         ),
                     },
                     {

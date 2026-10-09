@@ -9,6 +9,8 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Any, ClassVar
 
+from modules.image.engine import ImageProviderProtocol
+from modules.image.models import ImageProvider
 from modules.project.config import ProductionConfig
 from modules.qa.engine import record_stage_qa
 from modules.qa.models import QAStageResult, QAStatus
@@ -100,7 +102,8 @@ class VideoProductionPipeline:
         motion_engine: VideoMotionEngine | None = None,
         renderer: FFmpegVideoRenderer | None = None,
         image_reviewer=None,
-        image_provider=None,
+        image_provider: ImageProviderProtocol | None = None,
+        image_provider_name: ImageProvider | None = None,
     ) -> None:
         self.assembly_engine = (
             assembly_engine
@@ -123,6 +126,7 @@ class VideoProductionPipeline:
         )
         self.image_reviewer = image_reviewer
         self.image_provider = image_provider
+        self.image_provider_name = image_provider_name
 
     # -----------------------------------------------------------------
     # Public API
@@ -139,6 +143,7 @@ class VideoProductionPipeline:
         resume: bool = True,
         retry_from_stage: PipelineStageName | None = None,
         enable_image_ai_qa: bool = False,
+        require_no_editorial_text: bool = False,
     ) -> VideoProductionRequest:
         """
         Create a typed production request.
@@ -170,6 +175,7 @@ class VideoProductionPipeline:
             resume=resume,
             retry_from_stage=retry_from_stage,
             enable_image_ai_qa=enable_image_ai_qa,
+            require_no_editorial_text=require_no_editorial_text,
         )
 
     def run(
@@ -216,6 +222,14 @@ class VideoProductionPipeline:
                 if image_ai_status == "FAIL":
                     raise RuntimeError(
                         f"Image semantic QA status was {image_ai_status}; "
+                        "video assembly cannot proceed. Review qa/qa_report.json."
+                    )
+                if (
+                    request.require_no_editorial_text
+                    and image_ai_status != "PASS"
+                ):
+                    raise RuntimeError(
+                        "Mandatory no-editorial-text image QA did not PASS; "
                         "video assembly cannot proceed. Review qa/qa_report.json."
                     )
 
@@ -508,6 +522,7 @@ class VideoProductionPipeline:
         from modules.storyboard.visual_context import load_visual_world_bible
         from modules.video.image_asset_qa import (
             duplicate_scene_findings,
+            detect_visible_text,
             expected_image_size,
             inspect_image_asset,
         )
@@ -614,6 +629,7 @@ class VideoProductionPipeline:
 
         expected_width, expected_height = expected_image_size()
         image_findings: dict[int, str] = {}
+        text_findings: dict[int, str] = {}
         image_hashes: list[int | None] = []
         for index, scene in enumerate(scenes):
             usage_metrics["deterministic_checked"] += 1
@@ -629,12 +645,22 @@ class VideoProductionPipeline:
                         f"expected {expected_width}x{expected_height} 16:9 PNG; "
                         f"received {inspection.width}x{inspection.height}"
                     )
-                image_hashes.append(inspection.difference_hash)
             except (OSError, ValueError) as exc:
                 image_hashes.append(None)
                 image_findings[index] = (
                     f"{scene.scene_id}: deterministic image check failed: {exc}"
                 )
+                continue
+            image_hashes.append(inspection.difference_hash)
+            if request.require_no_editorial_text:
+                detected_text = detect_visible_text(image_path)
+                if detected_text:
+                    finding = (
+                        f"{scene.scene_id}: OCR detected visible text: "
+                        f"{', '.join(detected_text)}"
+                    )
+                    image_findings[index] = finding
+                    text_findings[index] = finding
         try:
             similarity_threshold = float(
                 os.getenv("RITZZ_QA_IMAGE_SIMILARITY_THRESHOLD", "0.97")
@@ -665,7 +691,8 @@ class VideoProductionPipeline:
         def cache_key(index: int) -> str:
             image_path = image_directory / f"{scenes[index].scene_id}.png"
             payload = {
-                "semantic_qa_policy_version": 4,
+                "semantic_qa_policy_version": 6,
+                "require_no_editorial_text": request.require_no_editorial_text,
                 "reviewer": (
                     f"{type(reviewer).__module__}.{type(reviewer).__qualname__}:"
                     f"{getattr(reviewer, 'model', 'default')}"
@@ -785,13 +812,23 @@ class VideoProductionPipeline:
         pending_reviews: list[int] = []
         for index, scene in enumerate(scenes):
             if index in image_findings:
+                finding = image_findings[index]
+                is_text_finding = index in text_findings
                 first_reviews[index] = SceneQAResult(
                     scene_id=scene.scene_id,
                     status="FAIL",
-                    narration_image="FAIL",
+                    narration_image="PASS" if is_text_finding else "FAIL",
                     narration_description="PASS",
-                    rationale=image_findings[index],
-                    correction_prompt=image_findings[index],
+                    unwanted_text="FAIL" if is_text_finding else "PASS",
+                    rationale=finding,
+                    correction_prompt=(
+                        "Remove all visible words, letters, numbers, pseudo-writing, "
+                        "logos, watermarks, signatures, and speech bubbles. Keep the "
+                        "scene's required visual content, period, and RITZZ style."
+                        if is_text_finding
+                        else finding
+                    ),
+                    failure_category="UNWANTED_TEXT" if is_text_finding else None,
                 )
                 continue
             fingerprint = cache_key(index)
@@ -802,13 +839,20 @@ class VideoProductionPipeline:
                 and isinstance(saved.get("result"), dict)
             ):
                 cached_result = SceneQAResult.model_validate(saved["result"])
-                if cached_result.status == "PASS":
+                if (
+                    cached_result.status == "PASS"
+                    and (
+                        not request.require_no_editorial_text
+                        or cached_result.unwanted_text == "PASS"
+                    )
+                ):
                     first_reviews[index] = cached_result
                     continue
             if (
                 visual_world is not None
                 and scene.visual_contract is not None
                 and not scene.visual_contract.semantic_review_reasons
+                and not request.require_no_editorial_text
             ):
                 first_reviews[index] = SceneQAResult(
                     scene_id=scene.scene_id,
@@ -839,10 +883,24 @@ class VideoProductionPipeline:
                 review.status,
                 review.narration_image,
                 review.narration_description,
+                *(
+                    (review.unwanted_text,)
+                    if request.require_no_editorial_text
+                    else ()
+                ),
             )
             has_clear_failure = any(status == "FAIL" for status in review_statuses)
+            actionable_review_statuses = review_statuses
+            if (
+                request.require_no_editorial_text
+                and review.unwanted_text == "REVIEW"
+            ):
+                actionable_review_statuses = (
+                    review.narration_image,
+                    review.narration_description,
+                )
             has_actionable_review = (
-                any(status == "REVIEW" for status in review_statuses)
+                any(status == "REVIEW" for status in actionable_review_statuses)
                 and bool((review.correction_prompt or "").strip())
             )
             needs_visual_repair = has_clear_failure or has_actionable_review
@@ -934,6 +992,11 @@ class VideoProductionPipeline:
             repair_history = {"version": 1, "scenes": {}}
 
         failure_strategies = {
+            "UNWANTED_TEXT": (
+                "Remove all editorial callouts, captions, labels, lettering, and "
+                "text-like marks. Regenerate a purely visual illustration with no "
+                "written characters or typographic shapes."
+            ),
             "ANACHRONISM": (
                 "Remove objects, materials, clothing, infrastructure, and technology "
                 "that exceed the project technology ceiling."
@@ -985,7 +1048,9 @@ class VideoProductionPipeline:
             review = first_reviews.get(index)
             correction = suggested_fixes.get(index)
             category = (
-                review.failure_category
+                "UNWANTED_TEXT"
+                if review and review.unwanted_text == "FAIL"
+                else review.failure_category
                 if review and review.failure_category
                 else "VISUAL_DUPLICATE"
                 if review and "perceptually similar" in review.rationale
@@ -999,6 +1064,11 @@ class VideoProductionPipeline:
                 ) + (
                     "Correct the visible mismatch with the scene narration and visual description. "
                     "Keep the established character, hand-drawn style, and scene meaning accurate."
+                )
+            if review and review.unwanted_text == "FAIL":
+                correction += (
+                    " Remove all editorial text and text-like marks. No words, letters, "
+                    "captions, labels, callouts, or typography may appear in the artwork."
                 )
             strategy = failure_strategies.get(
                 category,
@@ -1048,6 +1118,11 @@ class VideoProductionPipeline:
             candidate_directory.mkdir(parents=True, exist_ok=True)
             provider = self.image_provider
             if provider is None:
+                if request.require_no_editorial_text:
+                    raise RuntimeError(
+                        "Cannot automatically repair an image with unwanted text "
+                        "because its original image-generation provider is unknown."
+                    )
                 from modules.image.providers.openai import OpenAIImageProvider
 
                 provider = OpenAIImageProvider()
@@ -1056,6 +1131,7 @@ class VideoProductionPipeline:
                     image_id=scene.scene_id,
                     scene_id=scene.scene_id,
                     prompt=correction_prompt,
+                    provider=self.image_provider_name or "openai",
                     output_directory=str(candidate_directory),
                 )
             )
@@ -1133,6 +1209,7 @@ class VideoProductionPipeline:
             save_repair_history()
         final_hashes: list[int | None] = []
         remaining_image_findings: dict[int, str] = {}
+        remaining_text_findings: dict[int, str] = {}
         for index, scene in enumerate(scenes):
             image_path = image_directory / f"{scene.scene_id}.png"
             try:
@@ -1146,12 +1223,22 @@ class VideoProductionPipeline:
                         f"expected {expected_width}x{expected_height} 16:9 PNG; "
                         f"received {inspection.width}x{inspection.height}"
                     )
-                final_hashes.append(inspection.difference_hash)
             except (OSError, ValueError) as exc:
                 final_hashes.append(None)
                 remaining_image_findings[index] = (
                     f"{scene.scene_id}: deterministic image check failed after repair: {exc}"
                 )
+                continue
+            final_hashes.append(inspection.difference_hash)
+            if request.require_no_editorial_text:
+                detected_text = detect_visible_text(image_path)
+                if detected_text:
+                    finding = (
+                        f"{scene.scene_id}: OCR detected visible text after repair: "
+                        f"{', '.join(detected_text)}"
+                    )
+                    remaining_image_findings[index] = finding
+                    remaining_text_findings[index] = finding
         remaining_duplicate_findings = duplicate_scene_findings(
             scene_ids,
             final_hashes,
@@ -1160,13 +1247,22 @@ class VideoProductionPipeline:
         )
         remaining_image_findings.update(remaining_duplicate_findings)
         for index, finding in remaining_image_findings.items():
+            is_text_finding = index in remaining_text_findings
             final_reviews[index] = SceneQAResult(
                 scene_id=scenes[index].scene_id,
                 status="FAIL",
-                narration_image="FAIL",
+                narration_image="PASS" if is_text_finding else "FAIL",
                 narration_description="PASS",
+                unwanted_text="FAIL" if is_text_finding else "PASS",
                 rationale=finding,
-                correction_prompt=finding,
+                correction_prompt=(
+                    "Remove all visible words, letters, numbers, pseudo-writing, "
+                    "logos, watermarks, signatures, and speech bubbles. Keep the "
+                    "scene's required visual content, period, and RITZZ style."
+                    if is_text_finding
+                    else finding
+                ),
+                failure_category="UNWANTED_TEXT" if is_text_finding else None,
             )
             if index not in affected_indices:
                 affected_indices.add(index)
@@ -1179,6 +1275,11 @@ class VideoProductionPipeline:
                     review.status,
                     review.narration_image,
                     review.narration_description,
+                    *(
+                        (review.unwanted_text,)
+                        if request.require_no_editorial_text
+                        else ()
+                    ),
                 )
             ):
                 unresolved.append(f"{scenes[index].scene_id}: {review.rationale}")
@@ -1190,6 +1291,11 @@ class VideoProductionPipeline:
                 review.status,
                 review.narration_image,
                 review.narration_description,
+                *(
+                    (review.unwanted_text,)
+                    if request.require_no_editorial_text
+                    else ()
+                ),
             )
         ]
         status: QAStatus = (
@@ -1241,6 +1347,11 @@ class VideoProductionPipeline:
             )
             for index, review in final_reviews.items()
         })
+        if request.require_no_editorial_text:
+            checks.update({
+                f"{scenes[index].scene_id}.unwanted_text": review.unwanted_text
+                for index, review in final_reviews.items()
+            })
         record_stage_qa(
             project_directory,
             QAStageResult(
@@ -1256,6 +1367,11 @@ class VideoProductionPipeline:
                             review.status,
                             review.narration_image,
                             review.narration_description,
+                            *(
+                                (review.unwanted_text,)
+                                if request.require_no_editorial_text
+                                else ()
+                            ),
                         )
                     )
                 ],

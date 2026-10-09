@@ -29,7 +29,13 @@ select `rerun_from_stage=IMAGES` so the images and dependent render are rebuilt.
 FLUX output is normalized to the existing 1536×864 image contract. The FLUX
 provider retries HTTP 429 responses up to five times, honoring Replicate's
 `Retry-After` value when available; persistent throttling remains a visible
-image-stage failure.
+image-stage failure. Before rendering, every image receives semantic image
+review and a separate text-free check. The text check uses local Tesseract OCR
+to catch visible lettering; the workflow installs `tesseract-ocr` for this
+mandatory check. OCR findings trigger a bounded repair using the provider
+recorded in the image manifest. Rendering is blocked unless every image passes;
+uncertain findings remain `REVIEW` and also block rendering for human
+inspection.
 
 The ZIP root must contain `project.json` and exactly the five files referenced
 by it. Example manifest:
@@ -48,13 +54,15 @@ by it. Example manifest:
 ```
 
 The script is UTF-8 text; title and description are UTF-8 text; `tags.txt` has
-one non-empty, trimmed tag per line; and the thumbnail is a readable RGB/RGBA
-PNG at approximately 16:9 (allowing up to one pixel of aspect-ratio rounding)
-and at least 1280×720. The script is checked against the target runtime before
-paid production calls. The ZIP importer preserves the source files and refuses
-project-ID reuse with different content. Audio-timed holds may vary from 1 to
-6 seconds, with hold reason, visual weight, narration density, and cut-boundary
-context recorded for QA. Camera movement and transitions remain disabled.
+one non-empty, trimmed tag per line and must fit YouTube's 500-character
+encoded limit, including commas and quotes around multi-word tags; and the
+thumbnail is a readable RGB/RGBA PNG at approximately 16:9 (allowing up to one
+pixel of aspect-ratio rounding) and at least 1280×720. The script is checked
+against the target runtime before paid production calls. The ZIP importer
+preserves the source files and refuses project-ID reuse with different content.
+Audio-timed holds may vary from 1 to 6 seconds, with hold reason, visual weight,
+narration density, and cut-boundary context recorded for QA. Camera movement
+and transitions remain disabled.
 
 To provide the ZIP without a separate hosting service, upload it as a GitHub
 release asset:

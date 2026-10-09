@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import csv
+import io
 import os
+import shutil
 import struct
+import subprocess
 import zlib
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +17,53 @@ class ImageAssetInspection:
     height: int
     color_type: int
     difference_hash: int
+
+
+def detect_visible_text(path: str | Path) -> tuple[str, ...]:
+    """Use Tesseract to find clearly readable words in an image."""
+    executable = shutil.which("tesseract")
+    if executable is None:
+        raise FileNotFoundError(
+            "Tesseract OCR is required for mandatory no-text image QA; "
+            "install the tesseract-ocr system package."
+        )
+
+    completed = subprocess.run(
+        [executable, str(path), "stdout", "--psm", "11", "tsv"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or "no error details returned"
+        raise RuntimeError(f"Tesseract OCR failed for {path}: {detail}")
+
+    reader = csv.DictReader(io.StringIO(completed.stdout), delimiter="\t")
+    if not reader.fieldnames or not {"conf", "text"}.issubset(reader.fieldnames):
+        raise RuntimeError(f"Tesseract returned malformed TSV output for {path}.")
+
+    detected: list[str] = []
+    seen: set[str] = set()
+    for row in reader:
+        word = (row.get("text") or "").strip()
+        if len(word) < 2:
+            continue
+        try:
+            confidence = float(row.get("conf", "-1"))
+        except ValueError as exc:
+            raise RuntimeError(
+                f"Tesseract returned an invalid confidence value for {path}."
+            ) from exc
+        normalized = word.casefold()
+        if (
+            confidence >= 35
+            and any(character.isalnum() for character in word)
+            and normalized not in seen
+        ):
+            detected.append(word)
+            seen.add(normalized)
+    return tuple(detected)
 
 
 def inspect_image_asset(path: str | Path) -> ImageAssetInspection:

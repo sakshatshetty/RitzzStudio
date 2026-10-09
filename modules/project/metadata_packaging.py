@@ -15,6 +15,8 @@ from modules.project.packaging import (
     PackagingArtifact,
     PackagingMetadata,
     TitleOption,
+    YOUTUBE_TAG_CHARACTER_LIMIT,
+    youtube_tag_character_count,
 )
 from modules.qa.engine import record_stage_qa
 from modules.qa.models import QAStageResult
@@ -508,8 +510,11 @@ class MetadataPackagingEngine:
             meaningful_tags.update(words)
         if meaningful_tags and meaningful_tags <= title_tokens:
             raise ValueError("Tags appear to be title-tokenized rather than topic phrases.")
-        if sum(len(tag) + 1 for tag in tags) > 500:
-            raise ValueError("Tags exceed YouTube's 500-character limit.")
+        if youtube_tag_character_count(tags) > YOUTUBE_TAG_CHARACTER_LIMIT:
+            raise ValueError(
+                "Tags exceed YouTube's 500-character limit after accounting "
+                "for commas and quotes around multi-word tags."
+            )
 
     @staticmethod
     def _validate_qa(qa_report: dict[str, Any]) -> dict[str, str]:

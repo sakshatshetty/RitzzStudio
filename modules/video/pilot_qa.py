@@ -288,6 +288,10 @@ _SEMANTIC_SCENE_SCHEMA = {
             "type": "string",
             "enum": ["PASS", "REVIEW", "FAIL"],
         },
+        "unwanted_text": {
+            "type": "string",
+            "enum": ["PASS", "REVIEW", "FAIL"],
+        },
         "rationale": {"type": "string"},
         "correction_prompt": {"type": ["string", "null"]},
         "failure_category": {
@@ -302,6 +306,7 @@ _SEMANTIC_SCENE_SCHEMA = {
                 "CHARACTER_CONTINUITY",
                 "NARRATION_MISMATCH",
                 "VISUAL_DUPLICATE",
+                "UNWANTED_TEXT",
                 "OTHER",
                 None,
             ],
@@ -311,6 +316,7 @@ _SEMANTIC_SCENE_SCHEMA = {
         "scene_id",
         "narration_image",
         "narration_description",
+        "unwanted_text",
         "rationale",
         "correction_prompt",
         "failure_category",
@@ -518,20 +524,33 @@ class OpenAIImageSemanticReviewer:
                 "detail": "low",
             })
         prompt = (
-            "Review each supplied scene independently for semantic fit between image, full narration, "
+            "Review the supplied scenes in order. Assess every image against its full narration, "
             "visual contract, project visual world, historical context, technology ceiling, required "
-            "objects, forbidden objects, and continuity requirements. Mark an obvious world or "
-            "historical mismatch as FAIL, not merely as stylistic preference. Do not assess or request "
-            "text, callouts, labels, captions, overlays, or text placement; video artwork must remain "
-            "unlettered. Return exactly one result per scene in the same order and preserve each "
+            "objects, forbidden objects, and continuity requirements. Also compare the images for "
+            "consistent RITZZ 2D line art, outline weight, flat-color treatment, and recurring "
+            "character identity; reject a clear style or identity change as FAIL. Mark an obvious "
+            "world or historical mismatch as FAIL, not merely as stylistic preference. Enforce the "
+            "scene's explicit historical context: modern objects in an ancient scene, or ancient "
+            "objects in a present-day scene, are ANACHRONISM failures unless the narration and scene "
+            "contract explicitly mark that scene as an intentional context transition. Do not design or request "
+            "editorial callouts, labels, captions, overlays, or text placement; production artwork "
+            "must contain absolutely no text. Separately assess unwanted_text: PASS only when there "
+            "are no visible words, letters, numbers, logos, watermarks, signatures, captions, labels, "
+            "speech bubbles, or text-like/garbled lettering; FAIL when any is clearly present; REVIEW "
+            "when uncertain. There are no exceptions for text on physical objects. Legacy "
+            "storyboard callout fields never authorize text. Provide an actionable correction_prompt "
+            "and failure_category UNWANTED_TEXT for a clear text violation. Return exactly one result "
+            "per scene in the same order and preserve each "
             "scene_id exactly. Use FAIL only for a clear mismatch, REVIEW when uncertain, and PASS "
             "when the visual evidence supports the scene. Every FAIL must include a concrete "
             "actionable correction_prompt. A REVIEW should include a correction only when a safe, "
             "specific visual change is clear; otherwise correction_prompt must be null. Classify clear failures "
             "using failure_category: ANACHRONISM, AMBIGUITY, WRONG_ACTION, WRONG_ENVIRONMENT, "
-            "MISSING_REQUIRED_OBJECT, FORBIDDEN_OBJECT, CHARACTER_CONTINUITY, NARRATION_MISMATCH, "
+            "MISSING_REQUIRED_OBJECT, FORBIDDEN_OBJECT, CHARACTER_CONTINUITY, UNWANTED_TEXT, "
+            "NARRATION_MISMATCH, "
             "VISUAL_DUPLICATE, or OTHER. For an editorial obstruction or missing safe space, "
-            "do not apply any text-related correction; video artwork contains no editorial overlay. "
+            "do not suggest reserving safe space or repositioning a callout; when unwanted_text "
+            "fails, the correction must remove the text instead. "
             "Keep corrections specific to the image and preserve the established character and illustration style."
         )
         if self.visual_world is not None:
@@ -583,12 +602,11 @@ class OpenAIImageSemanticReviewer:
                 raise ValueError("scene IDs do not match request ordering")
             validated: list[SceneQAResult] = []
             for item in results:
+                unwanted_text = item.get("unwanted_text", "PASS")
                 statuses = [
-                    item[key]
-                    for key in (
-                        "narration_image",
-                        "narration_description",
-                    )
+                    item["narration_image"],
+                    item["narration_description"],
+                    unwanted_text,
                 ]
                 if any(status not in {"PASS", "REVIEW", "FAIL"} for status in statuses):
                     raise ValueError("invalid status")
@@ -602,6 +620,7 @@ class OpenAIImageSemanticReviewer:
                     status=overall,
                     narration_image=item["narration_image"],
                     narration_description=item["narration_description"],
+                    unwanted_text=unwanted_text,
                     rationale=str(item.get("rationale", "")),
                     correction_prompt=item.get("correction_prompt"),
                     failure_category=item.get("failure_category"),
