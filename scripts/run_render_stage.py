@@ -13,12 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from modules.image.batch import ImageBatchEngine
-from modules.image.engine import ImageProviderProtocol
 from modules.image.image_overlays import create_thumbnail
-from modules.image.models import ImageProvider
-from modules.image.providers.openai import OpenAIImageProvider
-from modules.image.providers.replicate import ReplicateFluxSchnellProvider
 from modules.project.manager import ProjectManager
 from modules.project.packaging import PackagingArtifact
 from modules.storyboard.engine import StoryboardEngine
@@ -50,40 +45,6 @@ def _validate_production_render_format(probe: dict[str, object]) -> None:
     bitrate = probe.get("video_bit_rate_bps")
     if isinstance(bitrate, (int, float)) and bitrate < 1_200_000:
         raise RuntimeError(f"Production render bitrate is below the configured minimum: {bitrate}.")
-
-
-def _reject_semantic_qa_fail(status: str) -> None:
-    if status == "FAIL":
-        raise RuntimeError(
-            "Rendered-video semantic QA found a clear scene/narration mismatch."
-        )
-
-
-def _create_repair_image_provider(
-    image_directory: str | Path,
-) -> tuple[ImageProviderProtocol | None, ImageProvider | None]:
-    manifest_file = Path(image_directory) / "image_manifest.json"
-    if not manifest_file.is_file():
-        return None, None
-
-    assets = ImageBatchEngine.load_manifest(manifest_file)
-    providers = {
-        asset.provider
-        for asset in assets
-        if asset.status == "completed"
-    }
-    if len(providers) != 1:
-        raise RuntimeError(
-            "Cannot determine one image provider for QA repairs from "
-            f"{manifest_file}; completed providers were {sorted(providers)}."
-        )
-
-    provider_name = providers.pop()
-    if provider_name == "replicate":
-        return ReplicateFluxSchnellProvider(), provider_name
-    if provider_name == "openai":
-        return OpenAIImageProvider(), provider_name
-    raise ValueError(f"Unsupported image provider in manifest: {provider_name}.")
 
 
 def _reuse_or_create_thumbnail(
@@ -202,13 +163,7 @@ def main() -> int:
         "CONTINUE",
     )
     retry_from_stage = _pipeline_retry_stage(rerun_from_stage)
-    image_provider, image_provider_name = _create_repair_image_provider(
-        image_directory
-    )
-    pipeline = VideoProductionPipeline(
-        image_provider=image_provider,
-        image_provider_name=image_provider_name,
-    )
+    pipeline = VideoProductionPipeline()
     request = pipeline.create_request(
         storyboard_file=storyboard_file,
         image_directory=image_directory,
@@ -218,8 +173,8 @@ def main() -> int:
         output_video_file=output_video_file,
         resume=True,
         retry_from_stage=retry_from_stage,
-        enable_image_ai_qa=True,
-        require_no_editorial_text=True,
+        enable_image_ai_qa=False,
+        require_no_editorial_text=False,
     )
     result = pipeline.run(request)
     print(f"Render status: {result.status}")

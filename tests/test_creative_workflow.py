@@ -9,10 +9,8 @@ def test_primary_workflow_uses_supplied_creative_and_gates_private_upload():
     required_steps = [
         "Validate and import the creative ZIP",
         "Generate or reuse supplied-script narration",
-        "Research factual visual context",
-        "Build context-driven audio-timed storyboard",
-        "Generate or resume scene images",
-        "Enforce text-free images, render, and run technical QA",
+        "Time supplied Flow storyboard against narration",
+        "Render supplied stills and run technical QA",
         "Create exact-input final review package",
         "Human review and private YouTube upload",
     ]
@@ -23,9 +21,13 @@ def test_primary_workflow_uses_supplied_creative_and_gates_private_upload():
     assert "upload_youtube_thumbnail.py" in workflow
     assert "RITZZ_HUMAN_APPROVED: \"true\"" in workflow
     assert "public" not in workflow.casefold()
+    assert "OPENAI_API_KEY" not in workflow
+    assert "REPLICATE_API_TOKEN" not in workflow
+    assert "run_image_stage.py" not in workflow
+    assert "run_creative_research.py" not in workflow
 
 
-def test_primary_workflow_does_not_run_legacy_creative_generation():
+def test_primary_workflow_keeps_legacy_topic_discovery_separate():
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
     for forbidden_step in (
@@ -70,44 +72,39 @@ def test_checkpoint_uploads_include_hidden_artifact_directory_files():
     assert workflow.count("include-hidden-files: true") == 3
 
 
-def test_resume_workflow_exposes_stage_rerun_choices_and_reuse_controls():
+def test_resume_workflow_exposes_only_remaining_local_production_stages():
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
     for stage in (
         "CONTINUE",
         "NARRATION",
-        "RESEARCH",
         "STORYBOARD",
-        "IMAGES",
         "RENDER",
         "FINAL_PACKAGE",
     ):
         assert f"          - {stage}" in workflow
 
-    assert "RITZZ_FORCE_RESEARCH:" in workflow
-    assert "RITZZ_FORCE_REGENERATE_IMAGES:" in workflow
     assert "RITZZ_RERUN_FROM_STAGE:" in workflow
     assert (
         "RITZZ_RESUME: ${{ inputs.mode == 'RESUME' && "
         "inputs.rerun_from_stage != 'NARRATION'"
     ) in workflow
     assert (
-        "inputs.rerun_from_stage == 'CONTINUE' || "
-        "inputs.rerun_from_stage == 'IMAGES' || "
-        "inputs.rerun_from_stage == 'RENDER'"
+        "inputs.rerun_from_stage != 'NARRATION'"
     ) in workflow
-    assert "inputs.rerun_from_stage == 'RESEARCH'" in workflow
-    assert "inputs.rerun_from_stage == 'IMAGES'" in workflow
-    assert workflow.count("inputs.rerun_from_stage != 'FINAL_PACKAGE'") == 5
+    assert "inputs.rerun_from_stage == 'STORYBOARD'" in workflow
+    assert workflow.count("inputs.rerun_from_stage != 'FINAL_PACKAGE'") == 2
 
 
-def test_workflow_selects_flux_or_gpt_image_backend_without_prompt_changes():
+def test_workflow_does_not_select_or_generate_image_backend():
     workflow = WORKFLOW.read_text(encoding="utf-8")
+    render_stage = Path("scripts/run_render_stage.py").read_text(encoding="utf-8")
 
-    assert "      image_model:" in workflow
-    assert "          - FLUX_SCHNELL" in workflow
-    assert "          - GPT_IMAGE_2" in workflow
-    assert "        default: FLUX_SCHNELL" in workflow
-    assert "REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}" in workflow
-    assert "python scripts/validate_pipeline_prerequisites.py" in workflow
-    assert '--image-model "$RITZZ_IMAGE_MODEL"' in workflow
+    assert "image_model:" not in workflow
+    assert "RITZZ_IMAGE_MODEL" not in workflow
+    assert "OPENAI_API_KEY" not in workflow
+    assert "REPLICATE_API_TOKEN" not in workflow
+    assert "python scripts/run_storyboard_stage.py" in workflow
+    assert "python scripts/run_render_stage.py" in workflow
+    assert "OpenAIImageProvider" not in render_stage
+    assert "_review_and_repair_images" not in render_stage

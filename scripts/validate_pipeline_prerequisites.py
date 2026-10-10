@@ -47,7 +47,7 @@ def validate_prerequisites(
         tuple(
             name
             for name in REQUIRED_ENVIRONMENT_VARIABLES
-            if name != "VIDIQ_MCP_API_KEY"
+            if name not in {"OPENAI_API_KEY", "VIDIQ_MCP_API_KEY"}
         )
         if creative_package
         else REQUIRED_ENVIRONMENT_VARIABLES

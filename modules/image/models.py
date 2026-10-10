@@ -12,6 +12,12 @@ ImageStatus = Literal[
 ImageProvider = Literal[
     "openai",
     "replicate",
+    "flow_mcp",
+]
+
+ImageGenerationProvider = Literal[
+    "openai",
+    "replicate",
 ]
 
 ImageModel = Literal[
@@ -39,7 +45,7 @@ class ImageGenerationRequest(BaseModel):
     image_id: str
     scene_id: str
     prompt: str = Field(min_length=1)
-    provider: ImageProvider = "openai"
+    provider: ImageGenerationProvider = "openai"
     output_directory: str
 
     # Ritzz production image format: exact 16:9.
@@ -50,7 +56,7 @@ class ImageGenerationRequest(BaseModel):
 class ImageGenerationResult(BaseModel):
     image_id: str
     scene_id: str
-    provider: ImageProvider
+    provider: ImageGenerationProvider
     status: ImageStatus
     file_path: str | None = None
     error_message: str | None = None

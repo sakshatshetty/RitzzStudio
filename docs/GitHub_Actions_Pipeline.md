@@ -1,44 +1,93 @@
 # GitHub Actions Pipeline
 
-RITZZ video runs are started from the GitHub Actions web interface. Normal video
-production does not require a local command-line command.
+Normal production uses a human-created creative package and starts from the
+GitHub Actions web interface. ChatGPT or Claude prepares the script, metadata,
+Flow-ready storyboard prompts, and thumbnail prompt. A local Flow MCP launcher
+reads the single brief in the input folder, generates the scenes in Agent
+batches, generates the thumbnail, and stages the files for human review. The
+PowerShell package builder validates and releases the approved assets. GitHub
+Actions then generates only the narration, aligns the supplied storyboard to
+the real narration timestamps, renders and technically checks the video, waits
+for human approval, packages the approved inputs, and uploads privately to
+YouTube.
 
-## Primary workflow: user-supplied creative package
+## Primary workflow: Flow creative package
 
 Workflow file: `.github/workflows/ritzz-creative-production.yml`
 
-This is the normal production path. It does not discover/select a topic or
-generate/rewrite the supplied script, title, description, tags, or thumbnail.
-The ZIP is validated before research, ElevenLabs, or image-generation calls.
-Production then researches factual visual context, generates narration from the
-supplied script, aligns scenes to actual narration timestamps, plans visual
-contracts with neighboring-scene context, generates images, runs deterministic
-and targeted semantic QA, renders with static images and hard cuts, and creates
-a final review ZIP. Uncertain semantic checks remain visible for human review;
-clear failures and technical QA failures block progression.
+### Prepare and release the input
 
-Narration uses the configured RITZZ ElevenLabs voice with `eleven_multilingual_v2`:
-speed `1.0`, stability `0.90`, similarity boost `0.75`, style exaggeration `0`,
-and speaker boost enabled.
+1. Paste the prompt from
+   `D:\AIStudio\Projects\Ritzz\Default\Ritzz_4_Master_Prompts\Ritzz_Single_Topic_Content_Master_Prompt.txt`
+   into ChatGPT or Claude with the project ID, topic, target duration, and word
+   count. It returns one text file containing the supplied metadata and a
+   machine-readable storyboard. Each scene includes an exact narration excerpt,
+   a visual description, a self-contained Flow image prompt, and a canonical
+   image filename.
+2. Put the brief in
+   `D:\AIStudio\Projects\Ritzz\Default\Ritzz_4_Master_Prompts\temp`. Keep
+   exactly one `.txt` creative brief in that folder. Ensure the Flow MCP Chrome
+   session is signed in and has a Flow project open, then double-click
+   `D:\AIStudio\flow-mcp\Generate RITZZ Images.cmd`. It reads the brief without
+   a file picker, generates scene prompts in batches of up to 50, generates
+   the thumbnail separately, downloads the results, and stages them beside a
+   copy of the brief in a new project-specific subfolder under `temp`. The
+   staging folder is printed when generation completes. Legacy stickman-style
+   prompts are upgraded to detailed storybook/editorial-cartoon prompts in the
+   staged copy; the source brief is left unchanged. A running Flow MCP job
+   blocks a new run; wait for it to finish instead of launching another batch.
+3. Review every staged image and thumbnail. The generator reports Flow's
+   measured credit change when available. Flow Agent has reported zero credit
+   use in prior runs, but Google can change quotas and limits; do not treat
+   zero-cost generation as guaranteed. A failed or incomplete batch is not
+   presented as ready for packaging.
+4. Run `creative_work.bat` with the staging folder path, for example:
 
-Choose `image_model` when dispatching the workflow. `FLUX_SCHNELL` is the
-default; `GPT_IMAGE_2` remains available as an alternative. Both use the same
-existing image prompts and prompt builder. Configure the `REPLICATE_API_TOKEN`
-GitHub Actions secret for FLUX. When switching models on a resumed project,
-select `rerun_from_stage=IMAGES` so the images and dependent render are rebuilt.
-FLUX output is normalized to the existing 1536×864 image contract. The FLUX
-provider retries HTTP 429 responses up to five times, honoring Replicate's
-`Retry-After` value when available; persistent throttling remains a visible
-image-stage failure. Before rendering, every image receives semantic image
-review and a separate text-free check. The text check uses local Tesseract OCR
-to catch visible lettering; the workflow installs `tesseract-ocr` for this
-mandatory check. OCR findings trigger a bounded repair using the provider
-recorded in the image manifest. Rendering is blocked unless every image passes;
-uncertain findings remain `REVIEW` and also block rendering for human
-inspection.
+   ```powershell
+   .\creative_work.bat -InputDirectory "D:\AIStudio\Projects\Ritzz\Default\Ritzz_4_Master_Prompts\temp\<generated-run-folder>"
+   ```
 
-The ZIP root must contain `project.json` and exactly the five files referenced
-by it. Example manifest:
+   This step is separate from image generation so you can review before
+   packaging or publishing. The script checks the supplied
+   title, description, tag character count, script duration, storyboard
+   coverage/order, thumbnail, and exact scene-image count; it converts scene
+   images to 1536×864 PNG and the thumbnail to 1280×720 PNG. It writes the
+   project's files, creates `creative-package.zip`, validates it with the same
+   Python importer used by Actions, and creates a GitHub release whose tag is
+   exactly the project ID. The asset name is `creative-package.zip`.
+
+Flow MCP's Agent image-batch tool accepts up to 50 prompts per call. The
+launcher splits larger storyboards automatically and stages scene images as
+`scene_001.jpeg`, `scene_002.jpeg`, and so on, with `thumbnail.jpeg` for the
+thumbnail. Review generated assets manually. The package builder checks file
+integrity and dimensions; it does not claim visual content is correct.
+
+### Run, review, and upload
+
+In **Actions → RITZZ Creative Package Production → Run workflow**, select
+`mode=NEW` and enter the project ID in `creative_package_release_tag`. The
+workflow validates the ZIP before making a paid voice API call. No OpenAI,
+Replicate, research, storyboard-planning, image-generation, or thumbnail-
+generation API is called in Actions.
+
+The supplied script is narrated with the configured RITZZ ElevenLabs voice
+(`eleven_multilingual_v2`, speed `1.0`, stability `0.90`, similarity boost
+`0.75`, style exaggeration `0`, speaker boost enabled). Scene starts are mapped
+to actual ElevenLabs character timestamps. The workflow validates scene/image
+coverage, uses static stills and hard cuts, then renders and runs technical
+video QA. A technical failure blocks approval. The rendered video is the human
+check for image/narration relevance and image quality.
+
+The production job publishes the downloadable final review ZIP and pauses at
+the protected `ritzz-packaging-approval` environment. A trusted reviewer
+watches the video and approves or rejects the job. After approval, the workflow
+revalidates the exact supplied title, description, tags, and thumbnail, builds
+the approved final package, and uploads the video privately with the supplied
+metadata and thumbnail. Public visibility is not enabled.
+
+The creative ZIP root must contain `project.json`, the five named metadata/
+thumbnail assets, the storyboard JSON, and every PNG referenced in
+`image_files`. Example:
 
 ```json
 {
@@ -49,62 +98,38 @@ by it. Example manifest:
   "title_file": "title.txt",
   "description_file": "description.txt",
   "tags_file": "tags.txt",
-  "thumbnail_file": "thumbnail.png"
+  "thumbnail_file": "thumbnail.png",
+  "storyboard_file": "storyboard.json",
+  "image_files": [
+    "images/scene_001.png",
+    "images/scene_002.png"
+  ]
 }
 ```
 
-The script is UTF-8 text; title and description are UTF-8 text; `tags.txt` has
-one non-empty, trimmed tag per line and must fit YouTube's 500-character
-encoded limit, including commas and quotes around multi-word tags; and the
-thumbnail is a readable RGB/RGBA PNG at approximately 16:9 (allowing up to one
-pixel of aspect-ratio rounding) and at least 1280×720. The script is checked
-against the target runtime before paid production calls. The ZIP importer
-preserves the source files and refuses project-ID reuse with different content.
-Audio-timed holds may vary from 1 to 6 seconds, with hold reason, visual weight,
-narration density, and cut-boundary context recorded for QA. Camera movement
-and transitions remain disabled.
+Storyboard scene excerpts must reproduce the supplied script exactly in order
+when normalized for whitespace and punctuation. Each image is a readable
+RGB/RGBA 1536×864 PNG named for its scene ID. The thumbnail must be a readable
+RGB/RGBA PNG, at least 1280×720 and 16:9 (allowing one-pixel rounding). The
+storyboard supports at most 200 scenes, and the release ZIP is limited to
+250 MiB. Image semantic relevance remains a human-review responsibility.
 
-To provide the ZIP without a separate hosting service, upload it as a GitHub
-release asset:
+### Resume a production
 
-1. Open the repository's **Releases** page and choose **Draft a new release**.
-2. Enter a new release tag (for example, `creative-20261007-01`).
-3. Attach the ZIP and name the asset exactly `creative-package.zip`.
-4. Publish the release. The repository can remain private; the workflow uses
-   its read-only GitHub token to download the asset.
-5. In **Actions → RITZZ Creative Package Production → Run workflow**, choose
-   `mode=NEW` and enter the release tag in `creative_package_release_tag`.
+Choose `mode=RESUME`, and provide the project ID and source Actions run ID with
+an unexpired checkpoint:
 
-The ZIP must be no larger than 250 MiB. No package-host variable or download
-token secret is required. Configure the existing `ritzz-packaging-approval`
-environment with trusted reviewers. The final review job runs only after
-protected approval; it uploads the exact supplied title, description, tags, and
-thumbnail with the technically validated video. YouTube visibility remains
-private.
-
-To resume, choose `mode=RESUME` and provide the project ID plus the Actions run
-ID that contains its checkpoint. A resume requires an unexpired checkpoint
-artifact. Completed voice/storyboard assets are validated and reused, and
-completed images are resumed from their manifest. Choose `rerun_from_stage` to
-rerun from a specific point:
-
-- `CONTINUE` resumes completed work and retries any incomplete stage.
-- `NARRATION` generates narration again, rebuilds the audio-timed storyboard,
-  and rerenders the video. Matching scene images are reused from the manifest.
-- `RESEARCH` refreshes visual-context research, then rebuilds the storyboard
-  and downstream outputs.
-- `STORYBOARD` rebuilds scene timing and visual contracts from the saved
-  narration and research.
-- `IMAGES` regenerates every scene image.
-- `RENDER` reuses narration, storyboard, and images, and reruns video rendering.
+- `CONTINUE` reuses the completed voice, aligned storyboard, and render stages.
+- `NARRATION` generates narration again, retimes the supplied storyboard, and
+  rerenders.
+- `STORYBOARD` reuses narration, retimes the supplied scenes, and rerenders.
+- `RENDER` reuses the voice and timed storyboard and rerenders.
 - `FINAL_PACKAGE` reuses the saved render and recreates the final review ZIP.
 
-For reruns before `IMAGES`, valid images are reused only when their scene IDs,
-provider, prompts, and dimensions still match; changed or invalid assets are
-regenerated. Later production stages run after the selected stage. The
-human-review/private-upload job remains protected by its existing approval
-environment. It skips a previously uploaded identical video, but a changed
-rendered master is uploaded as a new private video after approval.
+Changing the creative files requires creating a new project ID and release.
+Reruns preserve the accepted input package and do not regenerate Flow images.
+The protected approval environment remains in force for runs that proceed to
+upload.
 
 ## Legacy generated-creative workflow
 
@@ -208,14 +233,16 @@ selected automatically.
 
 ## Repository setup
 
-Configure these GitHub repository secrets:
+The primary Flow-package workflow needs these secrets:
 
-- `OPENAI_API_KEY`
-- `VIDIQ_MCP_API_KEY`
 - `ELEVENLABS_API_KEY`
 - `RITZZ_VOICE_ID`
 - `GOOGLE_CLIENT_SECRETS_B64`
 - `GOOGLE_TOKEN_B64`
+
+The legacy generated-creative workflow still uses `OPENAI_API_KEY`,
+`VIDIQ_MCP_API_KEY`, and any image-provider credentials it requires. Those
+secrets are not passed to the primary Flow-package workflow.
 
 The OAuth token must include both YouTube upload and read-only scopes so the
 pipeline can perform one non-blocking processing-status check after upload.
@@ -226,15 +253,20 @@ The `RITZZ_VIDEO_BITRATE` Actions variable is optional and defaults to `10M`.
 The render and upload jobs use the same value; the upload gate rejects targets
 or measured masters outside 8–12 Mbps.
 
-Create these GitHub environments and require reviewers for each environment:
+Create the protected environment for the primary Flow-package workflow and
+require trusted reviewers:
+
+- `ritzz-packaging-approval`
+
+The legacy generated-creative workflow uses these additional environments:
 
 - `ritzz-topic-approval`
 - `ritzz-test-approval`
 - `ritzz-video-approval`
-- `ritzz-packaging-approval`
 
-The workflow requires issue write permission so it can create the topic approval
-issue. Only trusted repository collaborators should reply to that issue.
+The legacy workflow requires issue write permission so it can create the topic
+approval issue. Only trusted repository collaborators should reply to that
+issue.
 
 ## Test-video rule
 

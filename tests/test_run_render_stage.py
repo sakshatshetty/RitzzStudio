@@ -4,15 +4,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from modules.image.batch import ImageBatchEngine
-from modules.image.models import ImageAsset
 from modules.project.manager import ProjectManager
 from scripts import run_render_stage
 from scripts.run_render_stage import (
     _copy_supplied_thumbnail,
-    _create_repair_image_provider,
     _pipeline_retry_stage,
-    _reject_semantic_qa_fail,
     _reuse_or_create_thumbnail,
     _validate_production_render_format,
 )
@@ -85,39 +81,6 @@ def test_unknown_rerun_stage_is_rejected() -> None:
 def test_production_render_format_rejects_nonstandard_output(probe, message):
     with pytest.raises(RuntimeError, match=message):
         _validate_production_render_format(probe)
-
-
-def test_semantic_qa_fail_blocks_but_review_is_allowed_for_human_review():
-    with pytest.raises(RuntimeError, match="semantic QA found a clear"):
-        _reject_semantic_qa_fail("FAIL")
-
-    _reject_semantic_qa_fail("REVIEW")
-    _reject_semantic_qa_fail("PASS")
-
-
-def test_repair_image_provider_matches_manifest_backend(tmp_path, monkeypatch):
-    image_directory = tmp_path / "images"
-    image_directory.mkdir()
-    ImageBatchEngine.save_manifest(
-        [
-            ImageAsset(
-                image_id="scene_001",
-                scene_id="scene_001",
-                provider="replicate",
-                prompt="An image without text.",
-                file_path=str(image_directory / "scene_001.png"),
-                status="completed",
-            )
-        ],
-        image_directory / "image_manifest.json",
-    )
-    monkeypatch.setenv("REPLICATE_API_TOKEN", "test-token")
-
-    provider, provider_name = _create_repair_image_provider(image_directory)
-
-    assert provider_name == "replicate"
-    assert provider is not None
-    assert provider.__class__.__name__ == "ReplicateFluxSchnellProvider"
 
 
 def test_existing_thumbnail_is_reused_without_regeneration(tmp_path, monkeypatch):
@@ -249,8 +212,8 @@ def test_main_generates_thumbnail_after_successful_render(tmp_path, monkeypatch)
             )
 
         def create_request(self, **kwargs):
-            assert kwargs["enable_image_ai_qa"] is True
-            assert kwargs["require_no_editorial_text"] is True
+            assert kwargs["enable_image_ai_qa"] is False
+            assert kwargs["require_no_editorial_text"] is False
             return object()
 
         def run(self, _request):

@@ -23,14 +23,6 @@ on:
         description: Actions run ID containing the saved project checkpoint (RESUME only)
         required: false
         type: string
-      image_model:
-        description: Image model backend; prompts and storyboard settings stay unchanged
-        required: true
-        type: choice
-        options:
-          - FLUX_SCHNELL
-          - GPT_IMAGE_2
-        default: FLUX_SCHNELL
       rerun_from_stage:
         description: Earliest stage to rerun when resuming; CONTINUE reuses completed work
         required: true
@@ -38,9 +30,7 @@ on:
         options:
           - CONTINUE
           - NARRATION
-          - RESEARCH
           - STORYBOARD
-          - IMAGES
           - RENDER
           - FINAL_PACKAGE
         default: CONTINUE
@@ -58,13 +48,10 @@ jobs:
     name: Validate credentials and focused tests
     runs-on: ubuntu-latest
     env:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
       RITZZ_VOICE_ID: ${{ secrets.RITZZ_VOICE_ID }}
       GOOGLE_CLIENT_SECRETS_B64: ${{ secrets.GOOGLE_CLIENT_SECRETS_B64 }}
       GOOGLE_TOKEN_B64: ${{ secrets.GOOGLE_TOKEN_B64 }}
-      REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}
-      RITZZ_IMAGE_MODEL: ${{ inputs.image_model }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -87,7 +74,6 @@ jobs:
         run: >-
           python scripts/validate_pipeline_prerequisites.py
           --creative-package
-          --image-model "$RITZZ_IMAGE_MODEL"
 
       - name: Run creative production regression tests
         run: >-
@@ -95,7 +81,7 @@ jobs:
           tests/test_creative_package.py
           tests/test_creative_workflow.py
           tests/test_download_creative_package.py
-          tests/test_audio_timed_storyboard.py
+          tests/test_run_storyboard_stage.py
           tests/test_run_render_stage.py
           tests/test_video_pipeline_engine.py
           tests/test_voice_engine.py
@@ -112,7 +98,6 @@ jobs:
     outputs:
       project_id: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
     env:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
       RITZZ_VOICE_ID: ${{ secrets.RITZZ_VOICE_ID }}
     steps:
@@ -129,7 +114,7 @@ jobs:
         run: |
           python -m pip install -r requirements.txt
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends ffmpeg fonts-comic-neue fonts-dejavu-core tesseract-ocr
+          sudo apt-get install --yes --no-install-recommends ffmpeg fonts-comic-neue fonts-dejavu-core
 
       - name: Download the user-supplied ZIP
         if: ${{ inputs.mode == 'NEW' }}
@@ -202,37 +187,15 @@ jobs:
           RITZZ_RERUN_FROM_STAGE: ${{ inputs.mode == 'RESUME' && inputs.rerun_from_stage || 'CONTINUE' }}
         run: python scripts/run_voice_stage.py
 
-      - name: Research factual visual context
-        if: ${{ inputs.mode == 'NEW' || inputs.rerun_from_stage != 'FINAL_PACKAGE' }}
+      - name: Time supplied Flow storyboard against narration
+        if: ${{ inputs.mode == 'NEW' || inputs.rerun_from_stage == 'NARRATION' || inputs.rerun_from_stage == 'STORYBOARD' }}
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           RITZZ_PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
-          RITZZ_FORCE_RESEARCH: ${{ inputs.mode == 'RESUME' && inputs.rerun_from_stage == 'RESEARCH' && 'true' || 'false' }}
-        run: python scripts/run_creative_research.py
-
-      - name: Build context-driven audio-timed storyboard
-        if: ${{ inputs.mode == 'NEW' || inputs.rerun_from_stage != 'FINAL_PACKAGE' }}
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          RITZZ_PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
-          RITZZ_RESUME: ${{ inputs.mode == 'RESUME' && (inputs.rerun_from_stage == 'CONTINUE' || inputs.rerun_from_stage == 'IMAGES' || inputs.rerun_from_stage == 'RENDER') && 'true' || 'false' }}
         run: python scripts/run_storyboard_stage.py
 
-      - name: Generate or resume scene images
+      - name: Render supplied stills and run technical QA
         if: ${{ inputs.mode == 'NEW' || inputs.rerun_from_stage != 'FINAL_PACKAGE' }}
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}
-          RITZZ_PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
-          RITZZ_IMAGE_MODEL: ${{ inputs.image_model }}
-          RITZZ_FORCE_REGENERATE_IMAGES: ${{ inputs.mode == 'RESUME' && inputs.rerun_from_stage == 'IMAGES' && 'true' || 'false' }}
-        run: python scripts/run_image_stage.py
-
-      - name: Enforce text-free images, render, and run technical QA
-        if: ${{ inputs.mode == 'NEW' || inputs.rerun_from_stage != 'FINAL_PACKAGE' }}
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}
           RITZZ_PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
           RITZZ_RERUN_FROM_STAGE: ${{ inputs.mode == 'RESUME' && inputs.rerun_from_stage || 'CONTINUE' }}
         run: python scripts/run_render_stage.py
@@ -257,7 +220,7 @@ jobs:
             echo
             echo "Run and artifact link: $RUN_URL"
             echo
-            echo "No-editorial-text QA must PASS before rendering. Other semantic REVIEW findings remain visible for human assessment; a technical QA FAIL blocks this stage."
+            echo "Flow images, storyboard, supplied metadata, and thumbnail were provided before this run. Review scene/narration matches in the rendered video; technical QA failures block approval."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Archive project for review and resume
