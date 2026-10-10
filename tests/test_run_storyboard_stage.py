@@ -69,6 +69,50 @@ def _write_project(
     )
 
 
+def _set_scene_start_times(
+    project_directory: Path,
+    *,
+    second_scene_start: float,
+    third_scene_start: float,
+    audio_duration: float,
+) -> None:
+    narration_file = project_directory / "voice" / "narration_result.json"
+    result = json.loads(narration_file.read_text(encoding="utf-8"))
+    alignment = result["alignment"]
+    characters = alignment["characters"]
+    text = "".join(characters)
+    anchors = [
+        (0, 0.0),
+        (text.index("Second scene."), second_scene_start),
+        (text.index("Last image."), third_scene_start),
+        (len(characters) - 1, audio_duration - 0.25),
+    ]
+    starts = []
+    anchor_index = 0
+    for character_index in range(len(characters)):
+        while (
+            anchor_index + 1 < len(anchors)
+            and character_index > anchors[anchor_index + 1][0]
+        ):
+            anchor_index += 1
+        left_index, left_time = anchors[anchor_index]
+        right_index, right_time = anchors[
+            min(anchor_index + 1, len(anchors) - 1)
+        ]
+        fraction = (
+            0
+            if right_index == left_index
+            else (character_index - left_index) / (right_index - left_index)
+        )
+        starts.append(left_time + fraction * (right_time - left_time))
+    alignment["character_start_times_seconds"] = starts
+    alignment["character_end_times_seconds"] = [
+        start + 0.001 for start in starts
+    ]
+    result["actual_duration_seconds"] = audio_duration
+    narration_file.write_text(json.dumps(result), encoding="utf-8")
+
+
 def test_times_supplied_scenes_to_character_alignment_with_static_hard_cuts(
     tmp_path,
 ):
@@ -101,6 +145,55 @@ def test_times_supplied_scenes_to_character_alignment_with_static_hard_cuts(
         )
     )
     assert len(saved["scenes"]) == 3
+
+
+@pytest.mark.parametrize(
+    ("second_scene_start", "third_scene_start", "accepted"),
+    [
+        (6.083, 12.0, True),
+        (6.101, 12.1, False),
+    ],
+)
+def test_allows_only_small_scene_maximum_timing_overage(
+    tmp_path,
+    second_scene_start,
+    third_scene_start,
+    accepted,
+):
+    project_directory = tmp_path / "project"
+    _write_project(project_directory)
+    _set_scene_start_times(
+        project_directory,
+        second_scene_start=second_scene_start,
+        third_scene_start=third_scene_start,
+        audio_duration=17.5,
+    )
+    config = ProductionConfig(
+        target_duration_seconds=60,
+        minimum_duration_seconds=1,
+        scene_minimum_duration_seconds=1,
+        scene_maximum_duration_seconds=6,
+    )
+
+    if accepted:
+        storyboard = build_audio_timed_storyboard(
+            project_directory,
+            "Supplied topic",
+            "First image. Second scene. Last image.",
+            config,
+        )
+        assert storyboard.scenes[0].duration_seconds == pytest.approx(6.083)
+    else:
+        with pytest.raises(
+            ValueError,
+            match="above the configured 6.000s maximum by more than the 0.100s",
+        ):
+            build_audio_timed_storyboard(
+                project_directory,
+                "Supplied topic",
+                "First image. Second scene. Last image.",
+                config,
+            )
 
 
 def test_accepts_absolute_manifest_image_paths_for_relative_project_directory(

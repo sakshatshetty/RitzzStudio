@@ -15,6 +15,8 @@ from modules.project.manager import ProjectManager
 from modules.storyboard.models import Storyboard, StoryboardScene
 from modules.video.sync_engine import VideoSynchronizationEngine
 
+SCENE_DURATION_MAXIMUM_TOLERANCE_SECONDS = 0.1
+
 
 def build_audio_timed_storyboard(
     project_directory: Path,
@@ -113,10 +115,15 @@ def build_audio_timed_storyboard(
                 f"{scene.scene_id} holds for {duration:.3f}s, below the configured "
                 f"{production_config.scene_minimum_duration_seconds:.3f}s minimum."
             )
-        if duration > production_config.scene_maximum_duration_seconds:
+        maximum_overage = (
+            duration - production_config.scene_maximum_duration_seconds
+        )
+        if maximum_overage > SCENE_DURATION_MAXIMUM_TOLERANCE_SECONDS:
             raise ValueError(
                 f"{scene.scene_id} holds for {duration:.3f}s, above the configured "
-                f"{production_config.scene_maximum_duration_seconds:.3f}s maximum. "
+                f"{production_config.scene_maximum_duration_seconds:.3f}s maximum "
+                f"by more than the {SCENE_DURATION_MAXIMUM_TOLERANCE_SECONDS:.3f}s "
+                "timing tolerance. "
                 "Split long narration across additional prepared scenes."
             )
         timed_scenes.append(
