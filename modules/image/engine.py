@@ -3,9 +3,9 @@ from typing import Protocol
 
 from modules.image.models import (
     ImageAsset,
+    ImageGenerationProvider,
     ImageGenerationRequest,
     ImageGenerationResult,
-    ImageProvider,
 )
 
 
@@ -25,10 +25,10 @@ class ImageEngine:
     def __init__(
         self,
         provider: ImageProviderProtocol,
-        provider_name: ImageProvider = "openai",
+        provider_name: ImageGenerationProvider = "openai",
     ) -> None:
         self.provider = provider
-        self.provider_name = provider_name
+        self.provider_name: ImageGenerationProvider = provider_name
 
     def create_request(
         self,
@@ -36,15 +36,18 @@ class ImageEngine:
         scene_id: str,
         prompt: str,
         output_directory: str | Path,
-        provider: ImageProvider | None = None,
+        provider: ImageGenerationProvider | None = None,
     ) -> ImageGenerationRequest:
         """Create an image-generation request."""
 
+        selected_provider: ImageGenerationProvider = (
+            self.provider_name if provider is None else provider
+        )
         return ImageGenerationRequest(
             image_id=image_id,
             scene_id=scene_id,
             prompt=prompt,
-            provider=provider or self.provider_name,
+            provider=selected_provider,
             output_directory=str(output_directory),
         )
 

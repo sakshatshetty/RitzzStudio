@@ -6,6 +6,7 @@ from zipfile import ZipFile
 
 import pytest
 
+from modules.image.batch import ImageBatchEngine
 from modules.project.creative_package import (
     CreativePackageError,
     load_creative_package,
@@ -56,6 +57,8 @@ def _write_package(
         "description_file": "description.txt",
         "tags_file": "tags.txt",
         "thumbnail_file": "thumbnail.png",
+        "storyboard_file": "storyboard.json",
+        "image_files": ["images/scene_001.png"],
     }
     manifest.update(overrides or {})
     files = {
@@ -65,6 +68,21 @@ def _write_package(
         manifest["description_file"]: b"Supplied description exactly.\nLine two.",
         manifest["tags_file"]: b"tag one\ntag two\n",
         manifest["thumbnail_file"]: _png(*thumbnail_size),
+        manifest["storyboard_file"]: json.dumps(
+            {
+                "thumbnail_prompt": "A clean Flow thumbnail prompt with no text.",
+                "scenes": [
+                    {
+                        "scene_id": "scene_001",
+                        "narration": supplied_script,
+                        "visual_description": "A supplied visual description.",
+                        "image_prompt": "A supplied Flow image-generation prompt.",
+                        "image_file": "images/scene_001.png",
+                    }
+                ]
+            }
+        ).encode(),
+        "images/scene_001.png": _png(1536, 864),
     }
     files.update(extra_files or {})
     with ZipFile(path, "w") as archive:
@@ -86,6 +104,7 @@ def test_loads_manifest_associated_files_and_preserves_exact_values(tmp_path):
     assert package.description == "Supplied description exactly.\nLine two."
     assert package.tags == ["tag one", "tag two"]
     assert package.thumbnail == files["thumbnail.png"]
+    assert package.storyboard.scenes[0].scene_id == "scene_001"
 
 
 def test_rejects_missing_required_member_before_ingestion(tmp_path):
@@ -97,6 +116,34 @@ def test_rejects_missing_required_member_before_ingestion(tmp_path):
             output.writestr(name, contents)
 
     with pytest.raises(CreativePackageError, match="missing: thumbnail.png"):
+        load_creative_package(archive)
+
+
+def test_rejects_storyboard_not_covering_the_script_in_order(tmp_path):
+    archive = tmp_path / "storyboard-mismatch.zip"
+    files = _write_package(archive)
+    storyboard = json.loads(files["storyboard.json"])
+    storyboard["scenes"][0]["narration"] = "A different script excerpt."
+    files["storyboard.json"] = json.dumps(storyboard).encode()
+    with ZipFile(archive, "w") as output:
+        for name, contents in files.items():
+            output.writestr(name, contents)
+
+    with pytest.raises(CreativePackageError, match="cover the supplied script"):
+        load_creative_package(archive)
+
+
+def test_rejects_scene_images_with_incorrect_resolution(tmp_path):
+    archive = tmp_path / "invalid-scene-image.zip"
+    files = _write_package(
+        archive,
+        extra_files={"images/scene_001.png": _png(1280, 720)},
+    )
+    with ZipFile(archive, "w") as output:
+        for name, contents in files.items():
+            output.writestr(name, contents)
+
+    with pytest.raises(CreativePackageError, match="exactly 1536x864"):
         load_creative_package(archive)
 
 
@@ -241,6 +288,24 @@ def test_materializes_immutable_creative_assets_for_existing_engines(tmp_path):
     )
     assert acceptance["status"] == "ACCEPTED"
     assert acceptance["manifest"]["thumbnail_file"] == "thumbnail.png"
+    assert (
+        project_directory / "storyboard" / "storyboard_source.json"
+    ).is_file()
+    assert (
+        project_directory / "images" / "scene_001.png"
+    ).read_bytes() == files["images/scene_001.png"]
+    image_manifest = json.loads(
+        (project_directory / "images" / "image_manifest.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert image_manifest[0]["provider"] == "flow_mcp"
+    assert image_manifest[0]["scene_id"] == "scene_001"
+    loaded_assets = ImageBatchEngine.load_manifest(
+        project_directory / "images" / "image_manifest.json"
+    )
+    assert len(loaded_assets) == 1
+    assert loaded_assets[0].provider == "flow_mcp"
 
     resumed_project, resumed_directory = materialize_creative_package(
         package,

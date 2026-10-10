@@ -23,6 +23,27 @@ def test_image_asset_model():
     assert asset.file_path is None
 
 
+def test_flow_mcp_assets_are_validated_without_becoming_a_generation_provider():
+    asset = ImageAsset(
+        image_id="scene_001",
+        scene_id="scene_001",
+        provider="flow_mcp",
+        prompt="A supplied Flow MCP image prompt.",
+        file_path="projects/example/images/scene_001.png",
+        status="completed",
+    )
+    assert asset.provider == "flow_mcp"
+
+    with pytest.raises(ValidationError):
+        ImageGenerationRequest(
+            image_id="scene_001",
+            scene_id="scene_001",
+            prompt="A supplied Flow MCP image prompt.",
+            output_directory="output/images",
+            provider="flow_mcp",
+        )
+
+
 def test_image_generation_request():
     request = ImageGenerationRequest(
         image_id="image_001",

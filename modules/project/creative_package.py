@@ -17,20 +17,21 @@ from modules.project.config import ProductionConfig
 from modules.project.manager import ProjectManager
 from modules.project.models import Project
 from modules.project.packaging import (
+    YOUTUBE_TAG_CHARACTER_LIMIT,
     PackagingArtifact,
     PackagingMetadata,
-    YOUTUBE_TAG_CHARACTER_LIMIT,
     youtube_tag_character_count,
 )
 from modules.script.models import Script, ScriptSection
 from modules.video.image_asset_qa import inspect_image_asset
 
-CREATIVE_PACKAGE_WORKFLOW_VERSION = "creative_zip_v2"
+CREATIVE_PACKAGE_WORKFLOW_VERSION = "creative_flow_zip_v3"
 CREATIVE_PACKAGE_MAX_ARCHIVE_BYTES = 250 * 1024 * 1024
 CREATIVE_PACKAGE_MAX_UNCOMPRESSED_BYTES = 300 * 1024 * 1024
 CREATIVE_PACKAGE_MAX_TEXT_BYTES = 5 * 1024 * 1024
 CREATIVE_PACKAGE_MAX_THUMBNAIL_BYTES = 25 * 1024 * 1024
-CREATIVE_PACKAGE_MAX_MEMBERS = 32
+CREATIVE_PACKAGE_MAX_IMAGE_BYTES = 25 * 1024 * 1024
+CREATIVE_PACKAGE_MAX_MEMBERS = 256
 _PROJECT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
 _REQUIRED_FILE_FIELDS = (
     "script_file",
@@ -38,7 +39,9 @@ _REQUIRED_FILE_FIELDS = (
     "description_file",
     "tags_file",
     "thumbnail_file",
+    "storyboard_file",
 )
+_SCENE_ID_PATTERN = re.compile(r"^scene_[0-9]{3,}$")
 
 
 class CreativePackageError(ValueError):
@@ -56,6 +59,8 @@ class CreativePackageManifest(BaseModel):
     description_file: str = Field(min_length=1)
     tags_file: str = Field(min_length=1)
     thumbnail_file: str = Field(min_length=1)
+    storyboard_file: str = Field(min_length=1)
+    image_files: list[str] = Field(min_length=1, max_length=200)
 
     @field_validator("project_id")
     @classmethod
@@ -74,6 +79,30 @@ class CreativePackageManifest(BaseModel):
         return value
 
 
+class CreativeStoryboardScene(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scene_id: str
+    narration: str = Field(min_length=1)
+    visual_description: str = Field(min_length=10)
+    image_prompt: str = Field(min_length=10)
+    image_file: str = Field(min_length=1)
+
+    @field_validator("scene_id")
+    @classmethod
+    def validate_scene_id(cls, value: str) -> str:
+        if not _SCENE_ID_PATTERN.fullmatch(value):
+            raise ValueError("scene_id must use the scene_NNN naming format.")
+        return value
+
+
+class CreativeStoryboard(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    thumbnail_prompt: str = Field(min_length=10)
+    scenes: list[CreativeStoryboardScene] = Field(min_length=1, max_length=200)
+
+
 class CreativePackage(BaseModel):
     """The immutable creative files associated by a validated manifest."""
 
@@ -84,6 +113,7 @@ class CreativePackage(BaseModel):
     tags_text: str
     tags: list[str]
     thumbnail: bytes
+    storyboard: CreativeStoryboard
     archive_sha256: str
     source_files: dict[str, bytes]
 
@@ -269,6 +299,32 @@ def materialize_creative_package(
     )
     thumbnail_path = project_directory / "thumbnail" / "supplied_thumbnail.png"
     thumbnail_path.write_bytes(package.thumbnail)
+    storyboard_path = project_directory / "storyboard" / "storyboard_source.json"
+    storyboard_path.write_text(
+        package.storyboard.model_dump_json(indent=2) + "\n",
+        encoding="utf-8",
+    )
+    image_directory = project_directory / "images"
+    image_assets = []
+    for scene in package.storyboard.scenes:
+        relative_image = PurePosixPath(scene.image_file)
+        image_path = image_directory / relative_image.name
+        image_path.write_bytes(package.source_files[scene.image_file])
+        image_assets.append(
+            {
+                "image_id": scene.scene_id,
+                "scene_id": scene.scene_id,
+                "provider": "flow_mcp",
+                "prompt": scene.image_prompt,
+                "file_path": str(image_path),
+                "status": "completed",
+                "error_message": None,
+            }
+        )
+    (image_directory / "image_manifest.json").write_text(
+        json.dumps(image_assets, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
     acceptance_path.write_text(
         json.dumps(
             {
@@ -331,15 +387,28 @@ def load_creative_package(archive_path: str | Path) -> CreativePackage:
                 field: _validate_manifest_path(getattr(manifest, field), field)
                 for field in _REQUIRED_FILE_FIELDS
             }
+            image_files = [
+                _validate_manifest_path(name, "image_files")
+                for name in manifest.image_files
+            ]
+            if len(image_files) != len(set(image_files)):
+                raise CreativePackageError(
+                    "INPUT_VALIDATION_FAILED: image_files references must be distinct."
+                )
             if len(set(referenced.values())) != len(referenced):
                 raise CreativePackageError(
                     "INPUT_VALIDATION_FAILED: manifest file references must be distinct."
                 )
-            if "project.json" in referenced.values():
+            all_referenced = {*referenced.values(), *image_files}
+            if "project.json" in all_referenced:
                 raise CreativePackageError(
                     "INPUT_VALIDATION_FAILED: asset files cannot reference project.json."
                 )
-            expected_files = {"project.json", *referenced.values()}
+            if len(all_referenced) != len(referenced) + len(image_files):
+                raise CreativePackageError(
+                    "INPUT_VALIDATION_FAILED: manifest file references must be distinct."
+                )
+            expected_files = {"project.json", *all_referenced}
             expected_directories = {
                 "/".join(PurePosixPath(name).parts[:index]) + "/"
                 for name in expected_files
@@ -376,6 +445,8 @@ def load_creative_package(archive_path: str | Path) -> CreativePackage:
                     max_bytes=(
                         CREATIVE_PACKAGE_MAX_THUMBNAIL_BYTES
                         if name == referenced["thumbnail_file"]
+                        else CREATIVE_PACKAGE_MAX_IMAGE_BYTES
+                        if name in image_files
                         else CREATIVE_PACKAGE_MAX_TEXT_BYTES
                     ),
                 )
@@ -407,6 +478,52 @@ def load_creative_package(archive_path: str | Path) -> CreativePackage:
                 max_bytes=CREATIVE_PACKAGE_MAX_THUMBNAIL_BYTES,
             )
             _validate_thumbnail(thumbnail, referenced["thumbnail_file"])
+            try:
+                storyboard = CreativeStoryboard.model_validate_json(
+                    source_files[referenced["storyboard_file"]]
+                )
+            except (ValueError, TypeError) as exc:
+                raise CreativePackageError(
+                    f"INPUT_VALIDATION_FAILED: storyboard JSON is invalid: {exc}"
+                ) from exc
+            if len(storyboard.scenes) != len(image_files):
+                raise CreativePackageError(
+                    "INPUT_VALIDATION_FAILED: storyboard scene count does not match "
+                    "the image file count."
+                )
+            scene_image_files = [scene.image_file for scene in storyboard.scenes]
+            if scene_image_files != image_files:
+                raise CreativePackageError(
+                    "INPUT_VALIDATION_FAILED: storyboard image_file values must match "
+                    "project.json image_files in scene order."
+                )
+            scene_ids = [scene.scene_id for scene in storyboard.scenes]
+            if len(scene_ids) != len(set(scene_ids)):
+                raise CreativePackageError(
+                    "INPUT_VALIDATION_FAILED: storyboard scene IDs must be unique."
+                )
+            for scene in storyboard.scenes:
+                image_path = PurePosixPath(scene.image_file)
+                if (
+                    image_path.parts[0] != "images"
+                    or image_path.name != f"{scene.scene_id}.png"
+                ):
+                    raise CreativePackageError(
+                        "INPUT_VALIDATION_FAILED: each scene image must be named "
+                        f"images/{scene.scene_id}.png."
+                    )
+            script_compact = _compact_text(script)
+            storyboard_compact = "".join(
+                _compact_text(scene.narration) for scene in storyboard.scenes
+            )
+            if storyboard_compact != script_compact:
+                raise CreativePackageError(
+                    "INPUT_VALIDATION_FAILED: storyboard narration excerpts must "
+                    "cover the supplied script exactly once and in order."
+                )
+            for scene in storyboard.scenes:
+                image_data = source_files[scene.image_file]
+                _validate_scene_image(image_data, scene.image_file)
     except CreativePackageError:
         raise
     except (OSError, zipfile.BadZipFile, RuntimeError, zlib.error) as exc:
@@ -422,9 +539,14 @@ def load_creative_package(archive_path: str | Path) -> CreativePackage:
         tags_text=tags_text,
         tags=tags,
         thumbnail=thumbnail,
+        storyboard=storyboard,
         archive_sha256=archive_digest,
         source_files=source_files,
     )
+
+
+def _compact_text(value: str) -> str:
+    return "".join(character.lower() for character in value if character.isalnum())
 
 
 def _validate_zip_members(members: list[zipfile.ZipInfo]) -> None:
@@ -561,4 +683,26 @@ def _validate_thumbnail(data: bytes, filename: str) -> None:
         raise CreativePackageError(
             "INPUT_VALIDATION_FAILED: thumbnail must be 16:9 (allowing one-pixel "
             "rounding) and at least 1280x720."
+        )
+
+
+def _validate_scene_image(data: bytes, filename: str) -> None:
+    if Path(filename).suffix.casefold() != ".png":
+        raise CreativePackageError(
+            f"INPUT_VALIDATION_FAILED: scene image must be a PNG: {filename}"
+        )
+    with tempfile.TemporaryDirectory(prefix="ritzz_creative_scene_") as directory:
+        image_path = Path(directory) / "scene.png"
+        image_path.write_bytes(data)
+        try:
+            inspection = inspect_image_asset(image_path)
+        except (OSError, ValueError) as exc:
+            raise CreativePackageError(
+                f"INPUT_VALIDATION_FAILED: scene image is not a readable RGB/RGBA PNG "
+                f"({filename}): {exc}"
+            ) from exc
+    if inspection.width != 1536 or inspection.height != 864:
+        raise CreativePackageError(
+            "INPUT_VALIDATION_FAILED: scene images must be exactly 1536x864; "
+            f"{filename} is {inspection.width}x{inspection.height}."
         )

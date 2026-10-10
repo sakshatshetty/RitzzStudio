@@ -37,13 +37,16 @@ def test_validate_prerequisites_accepts_configured_secrets(monkeypatch):
     assert result["api_calls_made"] == "none"
 
 
-def test_creative_package_preflight_does_not_require_vidiq(monkeypatch):
+def test_creative_package_preflight_only_requires_voice_and_youtube_credentials(
+    monkeypatch,
+):
     _set_valid_environment(monkeypatch)
     monkeypatch.delenv("VIDIQ_MCP_API_KEY")
+    monkeypatch.delenv("OPENAI_API_KEY")
 
     result = validate_prerequisites(creative_package=True)
 
-    assert result["required_secrets"] == "5"
+    assert result["required_secrets"] == "4"
     assert result["api_calls_made"] == "none"
 
 
@@ -62,7 +65,7 @@ def test_flux_image_model_requires_replicate_token(monkeypatch):
         creative_package=True,
         image_model="FLUX_SCHNELL",
     )
-    assert result["required_secrets"] == "6"
+    assert result["required_secrets"] == "5"
 
 
 def test_gpt_image_model_does_not_require_replicate_token(monkeypatch):
@@ -74,7 +77,7 @@ def test_gpt_image_model_does_not_require_replicate_token(monkeypatch):
         image_model="GPT_IMAGE_2",
     )
 
-    assert result["required_secrets"] == "5"
+    assert result["required_secrets"] == "4"
 
 
 def test_validate_prerequisites_rejects_unknown_image_model(monkeypatch):
