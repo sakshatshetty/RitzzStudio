@@ -280,8 +280,6 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ritzz-creative-production-${{ needs.production.outputs.project_id }}-checkpoint
-          run-id: ${{ github.run_id }}
-          github-token: ${{ github.token }}
           path: .pipeline-artifacts
 
       - name: Restore project and prepare OAuth files

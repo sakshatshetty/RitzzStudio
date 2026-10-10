@@ -72,6 +72,23 @@ def test_checkpoint_uploads_include_hidden_artifact_directory_files():
     assert workflow.count("include-hidden-files: true") == 3
 
 
+def test_human_review_downloads_checkpoint_from_the_current_workflow_run():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    human_review = workflow.split("  human-review-and-private-upload:\n", 1)[1]
+    download_step = human_review.split(
+        "      - name: Restore project and prepare OAuth files\n", 1
+    )[0]
+    resume_download_step = workflow.split(
+        "      - name: Download saved project checkpoint\n", 1
+    )[1].split("      - name: Restore saved project\n", 1)[0]
+
+    assert "uses: actions/download-artifact@v4" in download_step
+    assert "run-id:" not in download_step
+    assert "github-token:" not in download_step
+    assert "run-id: ${{ inputs.source_run_id }}" in resume_download_step
+    assert "github-token: ${{ github.token }}" in resume_download_step
+
+
 def test_resume_workflow_exposes_only_remaining_local_production_stages():
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
