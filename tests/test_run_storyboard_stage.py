@@ -103,6 +103,36 @@ def test_times_supplied_scenes_to_character_alignment_with_static_hard_cuts(
     assert len(saved["scenes"]) == 3
 
 
+def test_accepts_absolute_manifest_image_paths_for_relative_project_directory(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.chdir(tmp_path)
+    project_directory = Path("projects") / "project"
+    _write_project(project_directory)
+    manifest_file = project_directory / "images" / "image_manifest.json"
+    manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+    for asset in manifest:
+        asset["file_path"] = str(
+            (project_directory / "images" / f"{asset['scene_id']}.png").resolve()
+        )
+    manifest_file.write_text(json.dumps(manifest), encoding="utf-8")
+
+    storyboard = build_audio_timed_storyboard(
+        project_directory,
+        "Supplied topic",
+        "First image. Second scene. Last image.",
+        ProductionConfig(
+            target_duration_seconds=60,
+            minimum_duration_seconds=1,
+            scene_minimum_duration_seconds=1,
+            scene_maximum_duration_seconds=6,
+        ),
+    )
+
+    assert len(storyboard.scenes) == 3
+
+
 def test_rejects_missing_or_mismatched_flow_image_manifest(tmp_path):
     project_directory = tmp_path / "project"
     _write_project(project_directory)

@@ -60,10 +60,12 @@ def build_audio_timed_storyboard(
     for scene in source.scenes:
         asset = assets_by_scene[scene.scene_id]
         image_path = image_directory / Path(scene.image_file).name
+        manifest_image_path = asset.get("file_path")
         if (
             asset.get("status") != "completed"
             or asset.get("provider") != "flow_mcp"
-            or asset.get("file_path") != str(image_path)
+            or not isinstance(manifest_image_path, str)
+            or Path(manifest_image_path).resolve() != image_path.resolve()
             or not image_path.is_file()
             or image_path.stat().st_size == 0
         ):
