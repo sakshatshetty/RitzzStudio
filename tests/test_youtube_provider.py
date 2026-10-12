@@ -11,27 +11,28 @@ from modules.publishing.youtube_provider import YouTubeProvider
 
 
 class FakeRequest:
-    def __init__(self, response: dict[str, str], error: Exception | None = None):
+    def __init__(self, response: dict[str, Any], error: Exception | None = None):
         self.response = response
         self.error = error
 
-    def execute(self) -> dict[str, str]:
+    def execute(self) -> dict[str, Any]:
         if self.error:
             raise self.error
         return self.response
 
 
 class FakeVideos:
-    def __init__(self, list_response=None):
+    def __init__(self, list_response=None, insert_response=None):
         self.insert_args: dict[str, Any] | None = None
         self.list_args: dict[str, Any] | None = None
         self.list_response = list_response or {"items": []}
+        self.insert_response = insert_response or {"id": "abc123"}
         self.insert_error: Exception | None = None
         self.list_calls = 0
 
     def insert(self, **kwargs: Any):
         self.insert_args = kwargs
-        return FakeRequest({"id": "abc123"}, self.insert_error)
+        return FakeRequest(self.insert_response, self.insert_error)
 
     def list(self, **kwargs: Any):
         self.list_args = kwargs
@@ -48,16 +49,35 @@ class FakeThumbnails:
         return FakeRequest({"kind": "youtube#thumbnailSetResponse"})
 
 
-class FakeService:
+class FakeChannels:
     def __init__(self, list_response=None):
-        self.video_resource = FakeVideos(list_response)
+        self.list_args: dict[str, Any] | None = None
+        self.list_response = list_response or {"items": []}
+
+    def list(self, **kwargs: Any):
+        self.list_args = kwargs
+        return FakeRequest(self.list_response)
+
+
+class FakeService:
+    def __init__(
+        self,
+        list_response=None,
+        channels_response=None,
+        insert_response=None,
+    ):
+        self.video_resource = FakeVideos(list_response, insert_response)
         self.thumbnail_resource = FakeThumbnails()
+        self.channel_resource = FakeChannels(channels_response)
 
     def videos(self):
         return self.video_resource
 
     def thumbnails(self):
         return self.thumbnail_resource
+
+    def channels(self):
+        return self.channel_resource
 
 
 def test_youtube_provider_maps_metadata_and_schedule_without_network(tmp_path: Path):
@@ -105,6 +125,115 @@ def test_youtube_provider_maps_metadata_and_schedule_without_network(tmp_path: P
     }
     assert request["media_body"] is media_file
     assert request["notifySubscribers"] is False
+
+
+def test_youtube_provider_verifies_selected_channel_and_upload_response(
+    tmp_path: Path,
+):
+    video_file = tmp_path / "final.mp4"
+    video_file.write_bytes(b"video")
+    service = FakeService(
+        channels_response={
+            "items": [
+                {
+                    "id": "UCritzzhistory",
+                    "snippet": {"title": "Ritzz History"},
+                }
+            ]
+        },
+        insert_response={
+            "id": "abc123",
+            "snippet": {"channelId": "UCritzzhistory"},
+        },
+    )
+    provider = YouTubeProvider(
+        tmp_path / "client-secret.json",
+        tmp_path / "token.json",
+        service=service,
+        media_upload_builder=lambda _path: object(),
+    )
+
+    channel = provider.verify_authenticated_channel("Ritzz History")
+    result = provider.upload_video(
+        video_file=video_file,
+        title="A title",
+        description="A description",
+        metadata={},
+    )
+
+    assert channel == {
+        "channel_id": "UCritzzhistory",
+        "channel_title": "Ritzz History",
+    }
+    assert service.channel_resource.list_args == {
+        "part": "id,snippet",
+        "mine": True,
+    }
+    assert result["channel_id"] == "UCritzzhistory"
+
+
+def test_youtube_provider_rejects_token_for_another_selected_channel(
+    tmp_path: Path,
+):
+    service = FakeService(
+        channels_response={
+            "items": [
+                {
+                    "id": "UCritzz",
+                    "snippet": {"title": "Ritzz"},
+                }
+            ]
+        }
+    )
+    provider = YouTubeProvider(
+        tmp_path / "client-secret.json",
+        tmp_path / "token.json",
+        service=service,
+    )
+
+    with pytest.raises(RuntimeError, match="does not match the OAuth token"):
+        provider.verify_authenticated_channel("Ritzz Tech")
+
+    assert service.video_resource.insert_args is None
+
+
+def test_youtube_provider_rejects_upload_response_for_wrong_channel(
+    tmp_path: Path,
+):
+    video_file = tmp_path / "final.mp4"
+    video_file.write_bytes(b"video")
+    service = FakeService(
+        channels_response={
+            "items": [
+                {
+                    "id": "UCritzzhistory",
+                    "snippet": {"title": "Ritzz History"},
+                }
+            ]
+        },
+        insert_response={
+            "id": "abc123",
+            "snippet": {"channelId": "UCritzztech"},
+        },
+    )
+    provider = YouTubeProvider(
+        tmp_path / "client-secret.json",
+        tmp_path / "token.json",
+        service=service,
+        media_upload_builder=lambda _path: object(),
+    )
+    provider.verify_authenticated_channel("Ritzz History")
+
+    with pytest.raises(
+        RuntimeError,
+        match="created video 'abc123'.*verify YouTube before retrying",
+    ):
+        provider.upload_video(
+            video_file=video_file,
+            title="A title",
+            description="A description",
+            metadata={},
+        )
 
 
 def test_youtube_provider_fits_encoded_tags_to_the_api_limit(tmp_path: Path):

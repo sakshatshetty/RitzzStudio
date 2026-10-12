@@ -98,6 +98,12 @@ coverage, uses static stills and hard cuts, then renders and runs technical
 video QA. A technical failure blocks approval. The rendered video is the human
 check for image/narration relevance and image quality.
 
+At workflow dispatch, select `Ritzz-Explains`, `RitzzHistory`, or `RitzzTech1`.
+The selected channel is shown in the review summary and controls which
+channel-specific OAuth token is used for upload. The upload stage verifies the
+token's authenticated channel title before it creates approval state or uploads
+anything; it also checks YouTube's returned channel ID after upload.
+
 Before pausing at the protected `ritzz-packaging-approval` environment, the
 production job publishes a separate `ritzz-review-video-<project-id>` artifact
 containing only the rendered MP4, in addition to the complete final review ZIP.
@@ -270,16 +276,30 @@ The primary Flow-package workflow needs these secrets:
 - `ELEVENLABS_API_KEY`
 - `RITZZ_VOICE_ID`
 - `GOOGLE_CLIENT_SECRETS_B64`
-- `GOOGLE_TOKEN_B64`
+- `GOOGLE_TOKEN_B64` for `Ritzz-Explains` (`@Ritzz-Explains`)
+- `GOOGLE_TOKEN_RITZZ_HISTORY_B64` for `RitzzHistory` (`@RitzzHistory`)
+- `GOOGLE_TOKEN_RITZZ_TECH_B64` for `RitzzTech1` (`@RitzzTech1`)
+
+Create a separate OAuth token for each channel by authorizing the YouTube API
+client while the corresponding channel is selected, then store each token file
+as Base64 JSON in its named GitHub Actions secret. The existing
+`GOOGLE_TOKEN_B64` remains the token for `Ritzz-Explains`. All three tokens
+require the YouTube upload and read-only scopes. Selecting a channel whose
+secret is missing fails during prerequisite validation, before production
+starts.
 
 The legacy generated-creative workflow still uses `OPENAI_API_KEY`,
 `VIDIQ_MCP_API_KEY`, and any image-provider credentials it requires. Those
 secrets are not passed to the primary Flow-package workflow.
 
 The OAuth token must include both YouTube upload and read-only scopes so the
-pipeline can perform one non-blocking processing-status check after upload.
-If the token was authorized before this change, reauthorize it with
-`scripts/authorize_youtube.py` and update `GOOGLE_TOKEN_B64`.
+pipeline can verify the selected channel and perform one non-blocking
+processing-status check after upload. To create a token for a channel, set
+`GOOGLE_TOKEN_FILE` to a unique path, select that channel during OAuth, and run
+`scripts/authorize_youtube.py`. Set `RITZZ_YOUTUBE_CHANNEL_TITLE` to its exact
+channel title and run `scripts/verify_youtube_channel.py` before storing the
+Base64 token as the matching Actions secret. Never reuse one channel's token
+secret for another selection.
 
 The `RITZZ_VIDEO_BITRATE` Actions variable is optional and defaults to `10M`.
 The render and upload jobs use the same value; the upload gate rejects targets

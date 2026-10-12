@@ -11,6 +11,15 @@ on:
           - NEW
           - RESUME
         default: NEW
+      youtube_channel:
+        description: YouTube channel that will receive the private upload
+        required: true
+        type: choice
+        options:
+          - Ritzz-Explains
+          - RitzzHistory
+          - RitzzTech1
+        default: Ritzz-Explains
       creative_package_release_tag:
         description: Published GitHub release tag with creative-package.zip (NEW only)
         required: false
@@ -45,13 +54,15 @@ concurrency:
 
 jobs:
   validate:
-    name: Validate credentials and focused tests
+    name: Validate credentials, selected channel, and focused tests
     runs-on: ubuntu-latest
     env:
       ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
       RITZZ_VOICE_ID: ${{ secrets.RITZZ_VOICE_ID }}
       GOOGLE_CLIENT_SECRETS_B64: ${{ secrets.GOOGLE_CLIENT_SECRETS_B64 }}
-      GOOGLE_TOKEN_B64: ${{ secrets.GOOGLE_TOKEN_B64 }}
+      GOOGLE_TOKEN_B64: ${{ inputs.youtube_channel == 'Ritzz-Explains' && secrets.GOOGLE_TOKEN_B64 || inputs.youtube_channel == 'RitzzHistory' && secrets.GOOGLE_TOKEN_RITZZ_HISTORY_B64 || inputs.youtube_channel == 'RitzzTech1' && secrets.GOOGLE_TOKEN_RITZZ_TECH_B64 || '' }}
+      RITZZ_YOUTUBE_CHANNEL: ${{ inputs.youtube_channel }}
+      RITZZ_YOUTUBE_CHANNEL_TITLE: ${{ inputs.youtube_channel == 'Ritzz-Explains' && 'Ritzz' || inputs.youtube_channel == 'RitzzHistory' && 'Ritzz History' || inputs.youtube_channel == 'RitzzTech1' && 'Ritzz Tech' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -74,6 +85,16 @@ jobs:
         run: >-
           python scripts/validate_pipeline_prerequisites.py
           --creative-package
+
+      - name: Verify selected YouTube channel access
+        env:
+          GOOGLE_CLIENT_SECRETS_FILE: ${{ runner.temp }}/youtube-client-secrets.json
+          GOOGLE_TOKEN_FILE: ${{ runner.temp }}/youtube-token.json
+        run: |
+          set -euo pipefail
+          printf '%s' "$GOOGLE_CLIENT_SECRETS_B64" | base64 --decode > "$GOOGLE_CLIENT_SECRETS_FILE"
+          printf '%s' "$GOOGLE_TOKEN_B64" | base64 --decode > "$GOOGLE_TOKEN_FILE"
+          python scripts/verify_youtube_channel.py
 
       - name: Run creative production regression tests
         run: >-
@@ -236,11 +257,13 @@ jobs:
         env:
           PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
           RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          YOUTUBE_CHANNEL: ${{ inputs.youtube_channel }}
         run: |
           {
             echo "## RITZZ production review"
             echo
             echo "Project: \`$PROJECT_ID\`"
+            echo "Selected YouTube channel: \`$YOUTUBE_CHANNEL\`"
             echo
             echo "Download the MP4-only \`ritzz-review-video-$PROJECT_ID\` artifact and review \`$PROJECT_ID.mp4\` before approving the protected upload job."
             echo "GitHub Actions artifacts download as ZIP files; extract the MP4 into your local Downloads folder. The cloud runner cannot write directly to your PC."
@@ -294,7 +317,9 @@ jobs:
     env:
       RITZZ_PROJECT_ID: ${{ needs.production.outputs.project_id }}
       GOOGLE_CLIENT_SECRETS_B64: ${{ secrets.GOOGLE_CLIENT_SECRETS_B64 }}
-      GOOGLE_TOKEN_B64: ${{ secrets.GOOGLE_TOKEN_B64 }}
+      GOOGLE_TOKEN_B64: ${{ inputs.youtube_channel == 'Ritzz-Explains' && secrets.GOOGLE_TOKEN_B64 || inputs.youtube_channel == 'RitzzHistory' && secrets.GOOGLE_TOKEN_RITZZ_HISTORY_B64 || inputs.youtube_channel == 'RitzzTech1' && secrets.GOOGLE_TOKEN_RITZZ_TECH_B64 || '' }}
+      RITZZ_YOUTUBE_CHANNEL: ${{ inputs.youtube_channel }}
+      RITZZ_YOUTUBE_CHANNEL_TITLE: ${{ inputs.youtube_channel == 'Ritzz-Explains' && 'Ritzz' || inputs.youtube_channel == 'RitzzHistory' && 'Ritzz History' || inputs.youtube_channel == 'RitzzTech1' && 'Ritzz Tech' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4

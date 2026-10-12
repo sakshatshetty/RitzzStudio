@@ -15,6 +15,18 @@ To authorize without uploading a video, run `scripts/authorize_youtube.py`. It
 only initializes the YouTube OAuth service and saves the token configured by
 `GOOGLE_TOKEN_FILE`.
 
+For the three-channel workflow, create a distinct token file per YouTube
+channel. Before each authorization, set `GOOGLE_TOKEN_FILE` to a different
+path, complete OAuth with the intended channel selected, and verify the saved
+token with `scripts/verify_youtube_channel.py` before encoding it as a
+repository secret. Set `RITZZ_YOUTUBE_CHANNEL_TITLE` to the exact channel title
+being authorized when running that script. Configure
+`GOOGLE_TOKEN_B64` for `@Ritzz-Explains`,
+`GOOGLE_TOKEN_RITZZ_HISTORY_B64` for `@RitzzHistory`, and
+`GOOGLE_TOKEN_RITZZ_TECH_B64` for `@RitzzTech1`. The workflow checks that the
+selected token resolves to the expected channel title before production and
+again before uploading.
+
 ## Provider wiring
 
 ```python

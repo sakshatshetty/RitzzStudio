@@ -62,6 +62,7 @@ def _prepare_upload(tmp_path, monkeypatch, *, probe=None, processing_status=None
     monkeypatch.setenv("RITZZ_PIPELINE_ARTIFACTS", str(artifacts))
     monkeypatch.setenv("GOOGLE_CLIENT_SECRETS_FILE", "client.json")
     monkeypatch.setenv("GOOGLE_TOKEN_FILE", "token.json")
+    monkeypatch.setenv("RITZZ_YOUTUBE_CHANNEL_TITLE", "Test Channel")
     summary = tmp_path / "summary.md"
     monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
 
@@ -76,6 +77,14 @@ def _prepare_upload(tmp_path, monkeypatch, *, probe=None, processing_status=None
         def __init__(self):
             self.upload_calls = []
             self.status_calls = []
+            self.channel_checks = []
+
+        def verify_authenticated_channel(self, expected_title):
+            self.channel_checks.append(expected_title)
+            return {
+                "channel_id": "UCselected",
+                "channel_title": expected_title,
+            }
 
         def upload_video(self, **kwargs):
             self.upload_calls.append(kwargs)
@@ -115,6 +124,7 @@ def test_upload_validates_and_uploads_only_exact_master_then_persists_details(
     assert run_private_upload_stage.main() == 0
 
     assert len(provider.upload_calls) == 1
+    assert provider.channel_checks == ["Test Channel"]
     assert Path(provider.upload_calls[0]["video_file"]) == master
     assert provider.status_calls == ["video-123"]
     result_path = project_directory / "publishing" / "publish.json"
@@ -126,6 +136,10 @@ def test_upload_validates_and_uploads_only_exact_master_then_persists_details(
     assert result["upload_details"]["sha256"] == hashlib.sha256(
         master.read_bytes()
     ).hexdigest()
+    assert result["upload_details"]["youtube_channel"] == {
+        "channel_id": "UCselected",
+        "channel_title": "Test Channel",
+    }
     assert result["upload_details"]["local_master"]["width"] == 1920
     assert result["upload_details"]["local_master"]["height"] == 1080
     assert result["youtube_processing_status"] == "YOUTUBE_PROCESSING_PENDING"
@@ -136,6 +150,26 @@ def test_upload_validates_and_uploads_only_exact_master_then_persists_details(
     assert "**LOCAL MASTER**" in summary_text
     assert "**YOUTUBE**" in summary_text
     assert "YOUTUBE_PROCESSING_PENDING" in summary_text
+
+
+def test_channel_mismatch_stops_before_approval_or_upload(
+    tmp_path,
+    monkeypatch,
+):
+    _project, project_directory, _master, provider, _state_store, _summary = (
+        _prepare_upload(tmp_path, monkeypatch)
+    )
+
+    def reject_channel(_expected_title):
+        raise RuntimeError("OAuth token does not match the selected channel.")
+
+    provider.verify_authenticated_channel = reject_channel
+
+    with pytest.raises(RuntimeError, match="does not match the selected channel"):
+        run_private_upload_stage.main()
+
+    assert provider.upload_calls == []
+    assert not (project_directory / "publishing" / "publish.json").exists()
 
 
 def test_private_upload_summary_reports_tags_omitted_for_youtube_limit(

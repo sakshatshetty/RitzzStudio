@@ -7,6 +7,7 @@ def test_primary_workflow_uses_supplied_creative_and_gates_private_upload():
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
     required_steps = [
+        "Verify selected YouTube channel access",
         "Validate and import the creative ZIP",
         "Generate or reuse supplied-script narration",
         "Time supplied Flow storyboard against narration",
@@ -27,6 +28,28 @@ def test_primary_workflow_uses_supplied_creative_and_gates_private_upload():
     assert "REPLICATE_API_TOKEN" not in workflow
     assert "run_image_stage.py" not in workflow
     assert "run_creative_research.py" not in workflow
+
+
+def test_primary_workflow_selects_a_channel_and_uses_its_oauth_token():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    dispatch_inputs = workflow.split("  creative_package_release_tag:", 1)[0]
+
+    for channel in ("Ritzz-Explains", "RitzzHistory", "RitzzTech1"):
+        assert f"          - {channel}" in dispatch_inputs
+        assert f"inputs.youtube_channel == '{channel}'" in workflow
+    assert "secrets.GOOGLE_TOKEN_B64" in workflow
+    assert (
+        "inputs.youtube_channel == 'RitzzHistory' && "
+        "secrets.GOOGLE_TOKEN_RITZZ_HISTORY_B64"
+    ) in workflow
+    assert (
+        "inputs.youtube_channel == 'RitzzTech1' && "
+        "secrets.GOOGLE_TOKEN_RITZZ_TECH_B64"
+    ) in workflow
+    assert "|| '' }}" in workflow
+    assert "RITZZ_YOUTUBE_CHANNEL_TITLE:" in workflow
+    assert "Selected YouTube channel:" in workflow
+    assert "python scripts/verify_youtube_channel.py" in workflow
 
 
 def test_primary_workflow_keeps_legacy_topic_discovery_separate():
