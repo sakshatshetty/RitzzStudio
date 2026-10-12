@@ -18,20 +18,22 @@ Workflow file: `.github/workflows/ritzz-creative-production.yml`
 ### Prepare and release the input
 
 1. Paste the prompt from
-   `D:\AIStudio\Projects\Ritzz\Default\Ritzz_4_Master_Prompts\Ritzz_Single_Topic_Content_Master_Prompt.txt`
+   `prompts/flow/Ritzz_Single_Topic_Content_Master_Prompt.txt`
    into ChatGPT or Claude with the project ID, topic, target duration, and word
    count. It returns one text file containing the supplied metadata and a
    machine-readable storyboard. Each scene includes an exact narration excerpt,
    a visual description, a self-contained Flow image prompt, and a canonical
    image filename.
 2. Put the brief in
-   `D:\AIStudio\Projects\Ritzz\Default\Ritzz_4_Master_Prompts\temp`. Keep
-   exactly one `.txt` creative brief in that folder. Ensure the Flow MCP Chrome
-   session is signed in and has a Flow project open, then double-click
-   `D:\AIStudio\flow-mcp\Generate RITZZ Images.cmd`. It reads the brief without
+   `projects/flow_staging`. Keep exactly one `.txt` creative brief in that
+   folder. Install the local Flow MCP dependencies once by running `npm ci`
+   from `tools/flow-mcp`, then run `npm run build` there. Ensure the Flow MCP
+   Chrome session is signed in and has a Flow project open, then run
+   `tools/flow-mcp/Generate RITZZ Images.cmd`. It reads the brief without
    a file picker, generates scene prompts in batches of up to 24, generates
    the thumbnail separately, downloads the results, and stages them beside a
-   copy of the brief in a new project-specific subfolder under `temp`. The
+   copy of the brief in a new project-specific subfolder under
+   `projects/flow_staging`. The
    staging folder is printed when generation completes. Legacy stickman-style
    prompts are upgraded to detailed storybook/editorial-cartoon prompts in the
    staged copy; the source brief is left unchanged. A running Flow MCP job
@@ -44,7 +46,7 @@ Workflow file: `.github/workflows/ritzz-creative-production.yml`
 4. Run `creative_package.bat` with the staging folder path, for example:
 
    ```powershell
-   .\creative_package.bat "D:\AIStudio\Projects\Ritzz\Default\Ritzz_4_Master_Prompts\temp\<generated-run-folder>"
+   .\creative_package.bat "projects\flow_staging\<generated-run-folder>"
    ```
 
    If you double-click the batch file without an argument, it asks for the
@@ -58,6 +60,20 @@ Workflow file: `.github/workflows/ritzz-creative-production.yml`
    project's files, creates `creative-package.zip`, validates it with the same
    Python importer used by Actions, and creates a GitHub release whose tag is
    exactly the project ID. The asset name is `creative-package.zip`.
+
+The Windows launchers and scripts are versioned in the repository:
+`creative_package.bat`, `creative_work.bat` / `creative_work.ps1`,
+`delete_workflow.bat` / `delete_workflow.ps1`, and
+`new_ritzz_project.bat` / `New-RitzzProject.ps1`. They default to the sibling
+`Projects\Ritzz` output directory when this repository is checked out under
+`D:\AIStudio`; the PowerShell scripts also accept explicit root parameters for
+another checkout. `projects/flow_staging` is ignored by Git so generated briefs
+and images stay local.
+
+To remove one project's local folder, GitHub release/tag, and matching Actions
+runs/artifacts, run `delete_workflow.bat <PROJECT_ID>`. The script asks for the
+exact confirmation phrase before deletion; `-WhatIf` can be passed to inspect
+the targets without deleting them.
 
 Flow MCP's Agent image-batch tool accepts up to 50 prompts per call, but Flow's
 generation UI reports a 24-image-at-a-time limit. The launcher uses the smaller

@@ -1,0 +1,10 @@
+{
+  "project_id": "Ritzz_Video_1",
+  "topic": "Why Do Pirates Wear Eye Patches?",
+  "target_duration_minutes": 8,
+  "script_file": "script.txt",
+  "title_file": "title.txt",
+  "description_file": "description.txt",
+  "tags_file": "tags.txt",
+  "thumbnail_file": "thumbnail.png"
+}
