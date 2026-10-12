@@ -326,7 +326,7 @@ def test_gemini_watermark_spot_reduction_is_on_by_default_and_can_be_disabled(
         assembly_plan,
         motion_plan,
     )
-    assert "delogo=x=292:y=154:w=10:h=10:show=0" in default_filter
+    assert "delogo=x=292:y=150:w=14:h=16:show=0" in default_filter
     masked_filter = default_renderer.build_filter_script(
         assembly_plan,
         motion_plan,
@@ -364,6 +364,16 @@ def test_gemini_mask_is_a_valid_pgm_and_contains_a_localized_shape():
         assert len(pixels) == 320 * 180
         assert 0 < sum(pixel > 0 for pixel in pixels) < 320 * 180
         assert pixels[0] == 0
+        sparkle_tips = [
+            (round(0.9336 * 320), round(0.85 * 180)),
+            (round(0.95 * 320), round(0.875 * 180)),
+            (round(0.9336 * 320), round(0.90 * 180)),
+            (round(0.917 * 320), round(0.875 * 180)),
+        ]
+        assert all(
+            pixels[y * 320 + x] > 0
+            for x, y in sparkle_tips
+        )
     finally:
         mask_file.unlink(missing_ok=True)
 
