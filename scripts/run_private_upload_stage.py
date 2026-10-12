@@ -39,6 +39,7 @@ def _write_upload_summary(
         "youtube_processing_status",
         "YOUTUBE_PROCESSING_UNVERIFIED",
     )
+    channel = master.get("youtube_channel") or {}
     lines = [
         "## YouTube upload quality",
         "",
@@ -53,6 +54,8 @@ def _write_upload_summary(
         f"SHA-256: `{master.get('sha256', 'not recorded')}`",
         "",
         "**YOUTUBE**",
+        f"Selected channel: `{channel.get('channel_title', 'not recorded')}` "
+        f"(`{channel.get('channel_id', 'unknown')}`)",
         f"Upload: {upload.get('upload_status', 'unknown')}",
         f"Video ID: `{upload.get('video_id', 'unknown')}`",
         f"Processing: {processing_status}",
@@ -159,6 +162,18 @@ def main() -> int:
     credentials_file = Path(os.environ["GOOGLE_CLIENT_SECRETS_FILE"])
     token_file = Path(os.environ["GOOGLE_TOKEN_FILE"])
     provider = YouTubeProvider(credentials_file, token_file)
+    selected_channel_title = os.environ.get(
+        "RITZZ_YOUTUBE_CHANNEL_TITLE",
+        "",
+    ).strip()
+    if not selected_channel_title:
+        raise RuntimeError(
+            "The selected YouTube channel title is missing; refusing to upload."
+        )
+    selected_channel = provider.verify_authenticated_channel(
+        selected_channel_title,
+    )
+    upload_details["youtube_channel"] = selected_channel
     engine = PublishingEngine(projects_directory, provider=provider)
     engine.create_approval(project, approved=True, approved_by=approved_by)
     result = engine.publish_packaged_video(

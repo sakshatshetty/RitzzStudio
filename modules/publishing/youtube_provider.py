@@ -36,6 +36,8 @@ class YouTubeProvider:
         self._service = service
         self._service_builder = service_builder or self._build_service
         self._media_upload_builder = media_upload_builder or self._build_media_upload
+        self._expected_channel_id: str | None = None
+        self._expected_channel_title: str | None = None
 
     @property
     def service(self) -> Any:
@@ -46,6 +48,47 @@ class YouTubeProvider:
                 self.SCOPES,
             )
         return self._service
+
+    def verify_authenticated_channel(self, expected_title: str) -> dict[str, str]:
+        if not expected_title.strip():
+            raise ValueError("A selected YouTube channel title is required.")
+
+        response = (
+            self.service.channels()
+            .list(part="id,snippet", mine=True)
+            .execute()
+        )
+        items = response.get("items", [])
+        if not isinstance(items, list):
+            raise RuntimeError("YouTube returned an invalid authenticated-channel list.")
+
+        matching_channels = []
+        available_titles = []
+        for item in items:
+            snippet = item.get("snippet", {}) if isinstance(item, dict) else {}
+            title = snippet.get("title") if isinstance(snippet, dict) else None
+            if isinstance(title, str) and title.strip():
+                available_titles.append(title.strip())
+                if title.strip().casefold() == expected_title.strip().casefold():
+                    matching_channels.append(item)
+
+        if len(matching_channels) != 1:
+            available = ", ".join(sorted(available_titles)) or "none"
+            raise RuntimeError(
+                f"The selected YouTube channel '{expected_title}' does not match "
+                f"the OAuth token's authenticated channel(s): {available}."
+            )
+
+        channel_id = matching_channels[0].get("id")
+        if not isinstance(channel_id, str) or not channel_id.strip():
+            raise RuntimeError(
+                "YouTube did not return a channel ID for the authenticated channel."
+            )
+
+        channel_title = matching_channels[0]["snippet"]["title"].strip()
+        self._expected_channel_id = channel_id
+        self._expected_channel_title = channel_title
+        return {"channel_id": channel_id, "channel_title": channel_title}
 
     def upload_video(
         self,
@@ -103,11 +146,35 @@ class YouTubeProvider:
                     "the video was not created."
                 ) from exc
             raise
-        video_id = response["id"]
+        response_video_id = response.get("id")
+        response_snippet = response.get("snippet")
+        response_channel_id = (
+            response_snippet.get("channelId")
+            if isinstance(response_snippet, dict)
+            else None
+        )
+        if (
+            self._expected_channel_id is not None
+            and response_channel_id != self._expected_channel_id
+        ):
+            expected_title = self._expected_channel_title or "the selected channel"
+            raise RuntimeError(
+                f"YouTube created video {response_video_id!r} with channel ID "
+                f"{response_channel_id!r}; "
+                f"expected {self._expected_channel_id!r} for '{expected_title}'. "
+                "The upload may have completed; verify YouTube before retrying."
+            )
+        if not isinstance(response_video_id, str) or not response_video_id:
+            raise RuntimeError(
+                "YouTube returned no video ID after upload; verify YouTube before retrying."
+            )
+        video_id = response_video_id
         result: dict[str, Any] = {
             "video_id": video_id,
             "url": f"https://youtu.be/{video_id}",
         }
+        if isinstance(response_channel_id, str):
+            result["channel_id"] = response_channel_id
         if omitted_tags:
             result["youtube_tags_submitted"] = submitted_tags
             result["youtube_tags_omitted"] = omitted_tags
