@@ -29,7 +29,7 @@ Workflow file: `.github/workflows/ritzz-creative-production.yml`
    exactly one `.txt` creative brief in that folder. Ensure the Flow MCP Chrome
    session is signed in and has a Flow project open, then double-click
    `D:\AIStudio\flow-mcp\Generate RITZZ Images.cmd`. It reads the brief without
-   a file picker, generates scene prompts in batches of up to 50, generates
+   a file picker, generates scene prompts in batches of up to 24, generates
    the thumbnail separately, downloads the results, and stages them beside a
    copy of the brief in a new project-specific subfolder under `temp`. The
    staging folder is printed when generation completes. Legacy stickman-style
@@ -41,14 +41,17 @@ Workflow file: `.github/workflows/ritzz-creative-production.yml`
    use in prior runs, but Google can change quotas and limits; do not treat
    zero-cost generation as guaranteed. A failed or incomplete batch is not
    presented as ready for packaging.
-4. Run `creative_work.bat` with the staging folder path, for example:
+4. Run `creative_package.bat` with the staging folder path, for example:
 
    ```powershell
-   .\creative_work.bat -InputDirectory "D:\AIStudio\Projects\Ritzz\Default\Ritzz_4_Master_Prompts\temp\<generated-run-folder>"
+   .\creative_package.bat "D:\AIStudio\Projects\Ritzz\Default\Ritzz_4_Master_Prompts\temp\<generated-run-folder>"
    ```
 
-   This step is separate from image generation so you can review before
-   packaging or publishing. The script checks the supplied
+   If you double-click the batch file without an argument, it asks for the
+   staging folder path.
+   The builder asks for the project ID and verifies that it matches the brief;
+   a blank response stops before packaging. This step is separate from image
+   generation so you can review before packaging or publishing. The script checks the supplied
    title, description, tag character count, script duration, storyboard
    coverage/order, thumbnail, and exact scene-image count; it converts scene
    images to 1536×864 PNG and the thumbnail to 1280×720 PNG. It writes the
@@ -56,8 +59,9 @@ Workflow file: `.github/workflows/ritzz-creative-production.yml`
    Python importer used by Actions, and creates a GitHub release whose tag is
    exactly the project ID. The asset name is `creative-package.zip`.
 
-Flow MCP's Agent image-batch tool accepts up to 50 prompts per call. The
-launcher splits larger storyboards automatically and stages scene images as
+Flow MCP's Agent image-batch tool accepts up to 50 prompts per call, but Flow's
+generation UI reports a 24-image-at-a-time limit. The launcher uses the smaller
+24-scene batch size and splits larger storyboards automatically; it stages images as
 `scene_001.jpeg`, `scene_002.jpeg`, and so on, with `thumbnail.jpeg` for the
 thumbnail. Review generated assets manually. The package builder checks file
 integrity and dimensions; it does not claim visual content is correct.
