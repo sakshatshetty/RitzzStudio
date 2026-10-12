@@ -279,6 +279,95 @@ def test_audio_loudness_settings_are_configurable(monkeypatch):
     )
 
 
+def test_gemini_watermark_spot_reduction_is_on_by_default_and_can_be_disabled(
+    monkeypatch,
+):
+    assembly_plan = VideoAssemblyPlan(
+        topic="Gemini mark",
+        width=320,
+        height=180,
+        fps=30,
+        clips=[
+            VideoClip(
+                scene_id="scene_001",
+                image_path="one.png",
+                start_seconds=0.0,
+                duration_seconds=1.0,
+            )
+        ],
+        total_duration_seconds=1.0,
+    )
+    motion_plan = VideoMotionPlan(
+        topic="Gemini mark",
+        width=320,
+        height=180,
+        fps=30,
+        instructions=[
+            MotionInstruction(
+                scene_id="scene_001",
+                start_seconds=0.0,
+                duration_seconds=1.0,
+                motion="static",
+                zoom_start=1.0,
+                zoom_end=1.0,
+                position_x_start=0.5,
+                position_x_end=0.5,
+                position_y_start=0.5,
+                position_y_end=0.5,
+            )
+        ],
+        total_duration_seconds=1.0,
+    )
+
+    monkeypatch.delenv("RITZZ_REMOVE_GEMINI_WATERMARK", raising=False)
+    default_renderer = FFmpegVideoRenderer()
+    assert default_renderer.remove_gemini_watermark is True
+    default_filter = default_renderer.build_filter_script(
+        assembly_plan,
+        motion_plan,
+    )
+    assert "delogo=x=292:y=154:w=10:h=10:show=0" in default_filter
+    masked_filter = default_renderer.build_filter_script(
+        assembly_plan,
+        motion_plan,
+        gemini_mask_file="gemini_mask.pgm",
+    )
+    assert "removelogo=filename=gemini_mask.pgm" in masked_filter
+    assert "delogo=" not in masked_filter
+
+    monkeypatch.setenv("RITZZ_REMOVE_GEMINI_WATERMARK", "false")
+    disabled_renderer = FFmpegVideoRenderer()
+    assert disabled_renderer.remove_gemini_watermark is False
+    disabled_filter = disabled_renderer.build_filter_script(
+        assembly_plan,
+        motion_plan,
+    )
+    assert "delogo=" not in disabled_filter
+
+
+def test_gemini_watermark_setting_rejects_invalid_values(monkeypatch):
+    monkeypatch.setenv("RITZZ_REMOVE_GEMINI_WATERMARK", "sometimes")
+
+    with pytest.raises(ValueError, match="RITZZ_REMOVE_GEMINI_WATERMARK"):
+        FFmpegVideoRenderer()
+
+
+def test_gemini_mask_is_a_valid_pgm_and_contains_a_localized_shape():
+    renderer = FFmpegVideoRenderer()
+    mask_file = renderer._create_gemini_watermark_mask(320, 180)
+
+    try:
+        content = mask_file.read_bytes()
+        header = b"P5\n320 180\n255\n"
+        assert content.startswith(header)
+        pixels = content[len(header) :]
+        assert len(pixels) == 320 * 180
+        assert 0 < sum(pixel > 0 for pixel in pixels) < 320 * 180
+        assert pixels[0] == 0
+    finally:
+        mask_file.unlink(missing_ok=True)
+
+
 def test_audio_filter_tightens_true_peak_target_from_measured_qa():
     renderer = FFmpegVideoRenderer()
 
