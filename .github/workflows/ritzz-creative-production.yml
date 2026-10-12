@@ -205,6 +205,32 @@ jobs:
           RITZZ_PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
         run: python scripts/package_creative_production.py
 
+      - name: Prepare MP4-only review download
+        env:
+          PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
+        run: |
+          set -euo pipefail
+          mapfile -d '' project_dirs < <(find projects -mindepth 1 -maxdepth 1 -type d -name "${PROJECT_ID}_*" -print0)
+          if [[ "${#project_dirs[@]}" -ne 1 ]]; then
+            echo "Expected one project directory for $PROJECT_ID; found ${#project_dirs[@]}." >&2
+            exit 1
+          fi
+          video_file="${project_dirs[0]}/video/ritzz_test.mp4"
+          if [[ ! -s "$video_file" ]]; then
+            echo "The rendered review MP4 is missing or empty: $video_file" >&2
+            exit 1
+          fi
+          mkdir -p .pipeline-artifacts/review-video
+          cp -- "$video_file" ".pipeline-artifacts/review-video/${PROJECT_ID}.mp4"
+
+      - name: Upload MP4-only review video
+        uses: actions/upload-artifact@v4
+        with:
+          name: ritzz-review-video-${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
+          path: .pipeline-artifacts/review-video/${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}.mp4
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Publish review link
         if: ${{ always() && (steps.new-project.outputs.project_id != '' || steps.resume-project.outputs.project_id != '') }}
         env:
@@ -216,7 +242,16 @@ jobs:
             echo
             echo "Project: \`$PROJECT_ID\`"
             echo
-            echo "Review the downloadable \`final-package-$PROJECT_ID.zip\` artifact before approving the protected upload job."
+            echo "Download the MP4-only \`ritzz-review-video-$PROJECT_ID\` artifact and review \`$PROJECT_ID.mp4\` before approving the protected upload job."
+            echo "GitHub Actions artifacts download as ZIP files; extract the MP4 into your local Downloads folder. The cloud runner cannot write directly to your PC."
+            echo
+            echo "From local PowerShell with GitHub CLI authenticated, download and extract only the MP4 directly to Downloads:"
+            download_command="gh run download ${GITHUB_RUN_ID} --repo ${GITHUB_REPOSITORY} --name ritzz-review-video-${PROJECT_ID} --dir \"\$env:USERPROFILE\\Downloads\""
+            echo '```powershell'
+            echo "$download_command"
+            echo '```'
+            echo
+            echo "The complete review package is also available as \`final-package-$PROJECT_ID.zip\`."
             echo
             echo "Run and artifact link: $RUN_URL"
             echo

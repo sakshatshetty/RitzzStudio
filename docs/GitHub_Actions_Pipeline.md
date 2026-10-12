@@ -82,12 +82,24 @@ coverage, uses static stills and hard cuts, then renders and runs technical
 video QA. A technical failure blocks approval. The rendered video is the human
 check for image/narration relevance and image quality.
 
-The production job publishes the downloadable final review ZIP and pauses at
-the protected `ritzz-packaging-approval` environment. A trusted reviewer
-watches the video and approves or rejects the job. After approval, the workflow
-revalidates the exact supplied title, description, tags, and thumbnail, builds
-the approved final package, and uploads the video privately with the supplied
-metadata and thumbnail. Public visibility is not enabled.
+Before pausing at the protected `ritzz-packaging-approval` environment, the
+production job publishes a separate `ritzz-review-video-<project-id>` artifact
+containing only the rendered MP4, in addition to the complete final review ZIP.
+Download the MP4-only artifact and extract its MP4 into your local Downloads
+folder for review. GitHub Actions artifacts are delivered as ZIP files; the
+cloud runner cannot write directly to a reviewer's PC. To download and extract
+only that MP4 directly into Downloads, use the PowerShell command shown in the
+workflow summary (GitHub CLI must be authenticated):
+
+```powershell
+gh run download <run-id> --repo sakshatshetty/RitzzStudio --name "ritzz-review-video-<project-id>" --dir "$env:USERPROFILE\Downloads"
+```
+
+A trusted reviewer watches the video and approves or rejects the job. After
+approval, the workflow revalidates the exact supplied title, description, tags,
+and thumbnail, builds the approved final package, and uploads the video
+privately with the supplied metadata and thumbnail. Public visibility is not
+enabled.
 
 The creative ZIP root must contain `project.json`, the five named metadata/
 thumbnail assets, the storyboard JSON, and every PNG referenced in

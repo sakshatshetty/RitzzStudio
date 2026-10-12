@@ -1,3 +1,4 @@
+import hashlib
 import json
 import struct
 import zlib
@@ -362,7 +363,11 @@ def test_rejects_project_id_reuse_for_a_different_topic(tmp_path):
         materialize_creative_package(different_topic, projects)
 
 
-def test_final_package_keeps_user_metadata_and_thumbnail_exact(tmp_path):
+def test_final_package_keeps_metadata_and_packages_processed_thumbnail(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("RITZZ_REMOVE_GEMINI_WATERMARK", "true")
     archive = tmp_path / "creative.zip"
     source_files = _write_package(
         archive,
@@ -399,11 +404,24 @@ def test_final_package_keeps_user_metadata_and_thumbnail_exact(tmp_path):
         assert final_package.read("title.txt") == source_files["title.txt"]
         assert final_package.read("description.txt") == source_files["description.txt"]
         assert final_package.read("tags.txt") == source_files["tags.txt"]
-        assert final_package.read("thumbnail.png") == source_files["thumbnail.png"]
+        packaged_thumbnail = final_package.read("thumbnail.png")
+        assert packaged_thumbnail != source_files["thumbnail.png"]
+        assert struct.unpack(">II", packaged_thumbnail[16:24]) == (1280, 720)
         manifest = json.loads(final_package.read("package_manifest.json"))
+        assert manifest["files_sha256"]["thumbnail.png"] == hashlib.sha256(
+            packaged_thumbnail
+        ).hexdigest()
         assert manifest["human_approval"] == "PENDING"
         assert manifest["qa_status"] == "REVIEW"
         assert manifest["technical_qa_status"] == "PASS"
+
+    assert (
+        (project_directory / "creative_input" / "thumbnail.png").read_bytes()
+        == source_files["thumbnail.png"]
+    )
+    assert (video_directory / "thumbnail.png").read_bytes() == source_files[
+        "thumbnail.png"
+    ]
 
     approved_output = build_final_package(
         project_directory,

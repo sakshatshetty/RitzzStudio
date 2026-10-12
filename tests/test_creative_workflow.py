@@ -12,6 +12,8 @@ def test_primary_workflow_uses_supplied_creative_and_gates_private_upload():
         "Time supplied Flow storyboard against narration",
         "Render supplied stills and run technical QA",
         "Create exact-input final review package",
+        "Prepare MP4-only review download",
+        "Upload MP4-only review video",
         "Human review and private YouTube upload",
     ]
     positions = [workflow.index(step) for step in required_steps]
@@ -68,8 +70,29 @@ def test_project_archive_steps_brace_ids_before_appending_wildcards():
 def test_checkpoint_uploads_include_hidden_artifact_directory_files():
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
-    assert workflow.count("uses: actions/upload-artifact@v4") == 3
+    assert workflow.count("uses: actions/upload-artifact@v4") == 4
     assert workflow.count("include-hidden-files: true") == 3
+
+
+def test_preapproval_review_artifact_contains_only_the_rendered_mp4():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    production = workflow.split("  human-review-and-private-upload:\n", 1)[0]
+    prepare_video = production.split(
+        "      - name: Prepare MP4-only review download\n", 1
+    )[1].split("      - name: Upload MP4-only review video\n", 1)[0]
+    upload_video = production.split(
+        "      - name: Upload MP4-only review video\n", 1
+    )[1].split("      - name: Publish review link\n", 1)[0]
+
+    assert 'find projects -mindepth 1 -maxdepth 1 -type d -name "${PROJECT_ID}_*"' in prepare_video
+    assert 'video/ritzz_test.mp4' in prepare_video
+    assert '.pipeline-artifacts/review-video/${PROJECT_ID}.mp4' in prepare_video
+    assert "name: ritzz-review-video-" in upload_video
+    assert "path: .pipeline-artifacts/review-video/${{" in upload_video
+    assert "if-no-files-found: error" in upload_video
+    assert "extract the MP4 into your local Downloads folder" in production
+    assert "gh run download ${GITHUB_RUN_ID}" in production
+    assert r"\$env:USERPROFILE\\Downloads" in production
 
 
 def test_human_review_downloads_checkpoint_from_the_current_workflow_run():
