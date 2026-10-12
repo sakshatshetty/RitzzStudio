@@ -228,6 +228,68 @@ class FFmpegVideoRenderer:
                 mask_path.unlink(missing_ok=True)
             raise
 
+    def remove_gemini_watermark_from_image(
+        self,
+        source_file: str | Path,
+        output_file: str | Path,
+    ) -> Path:
+        """Remove the Gemini sparkle from a still image using the render mask."""
+
+        source_path = Path(source_file)
+        output_path = Path(output_file)
+        if not source_path.is_file() or source_path.stat().st_size == 0:
+            raise FileNotFoundError(
+                f"Thumbnail image is missing or empty: {source_path}"
+            )
+        if source_path.resolve() == output_path.resolve():
+            raise ValueError(
+                "Watermark removal must write to a separate image file."
+            )
+
+        if not self.remove_gemini_watermark:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source_path, output_path)
+            return output_path
+
+        probe = self._probe_media(source_path)
+        width = probe["width"]
+        height = probe["height"]
+        if width <= 0 or height <= 0:
+            raise ValueError(f"Thumbnail has invalid dimensions: {source_path}")
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        mask_file = self._create_gemini_watermark_mask(width, height)
+        try:
+            command = [
+                self.ffmpeg_path,
+                "-y",
+                "-i",
+                str(source_path),
+                "-vf",
+                f"removelogo=filename={mask_file.name}",
+                "-frames:v",
+                "1",
+                str(output_path),
+            ]
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if completed.returncode != 0:
+                raise RuntimeError(
+                    "FFmpeg could not remove the Gemini watermark from the "
+                    f"thumbnail.\n{completed.stderr}"
+                )
+            if not output_path.is_file() or output_path.stat().st_size == 0:
+                raise RuntimeError(
+                    "FFmpeg did not create the processed thumbnail image."
+                )
+            return output_path
+        finally:
+            mask_file.unlink(missing_ok=True)
+
     @staticmethod
     def _parse_bitrate(value: str) -> int:
         match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*([kKmM]?)\s*", value)
