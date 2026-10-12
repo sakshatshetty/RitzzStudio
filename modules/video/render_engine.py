@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,20 @@ class FFmpegVideoRenderer:
     AUDIO_TRUE_PEAK_CODEC_HEADROOM_DB = 1.0
     VIDEO_BITRATE_TOLERANCE = 0.20
 
+    # Approximate outline of the Gemini sparkle seen in the project's 16:9
+    # images. A shaped mask avoids modifying the surrounding scene rectangle.
+    GEMINI_WATERMARK_POLYGON = (
+        (0.9277, 0.8588),
+        (0.9330, 0.8750),
+        (0.9453, 0.8808),
+        (0.9355, 0.8912),
+        (0.9316, 0.9110),
+        (0.9251, 0.8947),
+        (0.9154, 0.8843),
+        (0.9245, 0.8762),
+    )
+    GEMINI_WATERMARK_RECT = (0.9154, 0.8588, 0.0299, 0.0522)
+
     DURATION_TOLERANCE_SECONDS = 0.25
     _EBU_R128_SUMMARY_PATTERN = re.compile(
         r"Integrated loudness:\s*I:\s*"
@@ -55,6 +70,8 @@ class FFmpegVideoRenderer:
         self,
         ffmpeg_path: str | None = None,
         ffprobe_path: str | None = None,
+        *,
+        remove_gemini_watermark: bool | None = None,
     ) -> None:
         self.ffmpeg_path = (
             ffmpeg_path
@@ -66,6 +83,11 @@ class FFmpegVideoRenderer:
             ffprobe_path
             or os.getenv("RITZZ_FFPROBE_PATH")
             or shutil.which("ffprobe")
+        )
+        self.remove_gemini_watermark = self._parse_bool_setting(
+            "RITZZ_REMOVE_GEMINI_WATERMARK",
+            default=True,
+            value=remove_gemini_watermark,
         )
         self.video_bitrate = os.getenv(
             "RITZZ_VIDEO_BITRATE",
@@ -104,6 +126,107 @@ class FFmpegVideoRenderer:
                 "Install FFmpeg or configure "
                 "RITZZ_FFPROBE_PATH."
             )
+
+    @staticmethod
+    def _parse_bool_setting(
+        name: str,
+        *,
+        default: bool,
+        value: bool | None = None,
+    ) -> bool:
+        if value is not None:
+            if not isinstance(value, bool):
+                raise ValueError(f"{name} must be true or false.")
+            return value
+
+        configured = os.getenv(name)
+        if configured is None:
+            return default
+        normalized = configured.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+        raise ValueError(f"{name} must be true or false.")
+
+    @classmethod
+    def _build_gemini_delogo_filter(
+        cls,
+        width: int,
+        height: int,
+    ) -> str:
+        """Build a proportional FFmpeg delogo filter for 16:9 Gemini art."""
+
+        x_ratio, y_ratio, width_ratio, height_ratio = (
+            cls.GEMINI_WATERMARK_RECT
+        )
+
+        def even_coordinate(value: float) -> int:
+            return max(0, int(round(value / 2.0) * 2))
+
+        x = even_coordinate(width * x_ratio)
+        y = even_coordinate(height * y_ratio)
+        box_width = max(2, even_coordinate(width * width_ratio))
+        box_height = max(2, even_coordinate(height * height_ratio))
+        box_width = min(box_width, max(2, width - x))
+        box_height = min(box_height, max(2, height - y))
+        return (
+            f"delogo=x={x}:y={y}:w={box_width}:h={box_height}:show=0"
+        )
+
+    @classmethod
+    def _create_gemini_watermark_mask(
+        cls,
+        width: int,
+        height: int,
+    ) -> Path:
+        """Write an FFmpeg PGM mask for the Gemini sparkle in the render."""
+
+        points = [
+            (round(x_ratio * width), round(y_ratio * height))
+            for x_ratio, y_ratio in cls.GEMINI_WATERMARK_POLYGON
+        ]
+        x_min = max(0, min(x for x, _ in points))
+        x_max = min(width - 1, max(x for x, _ in points))
+        y_min = max(0, min(y for _, y in points))
+        y_max = min(height - 1, max(y for _, y in points))
+        pixels = bytearray(width * height)
+
+        for y in range(y_min, y_max + 1):
+            for x in range(x_min, x_max + 1):
+                inside = False
+                previous_x, previous_y = points[-1]
+                for current_x, current_y in points:
+                    if (current_y > y) != (previous_y > y):
+                        crossing_x = (
+                            (previous_x - current_x)
+                            * (y - current_y)
+                            / (previous_y - current_y)
+                            + current_x
+                        )
+                        if x < crossing_x:
+                            inside = not inside
+                    previous_x, previous_y = current_x, current_y
+                if inside:
+                    pixels[y * width + x] = 255
+
+        mask_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="wb",
+                suffix=".pgm",
+                prefix=".ritzz_gemini_mask_",
+                dir=Path.cwd(),
+                delete=False,
+            ) as mask_file:
+                mask_path = Path(mask_file.name)
+                mask_file.write(f"P5\n{width} {height}\n255\n".encode("ascii"))
+                mask_file.write(pixels)
+            return mask_path
+        except Exception:
+            if mask_path is not None:
+                mask_path.unlink(missing_ok=True)
+            raise
 
     @staticmethod
     def _parse_bitrate(value: str) -> int:
@@ -332,10 +455,24 @@ class FFmpegVideoRenderer:
             exist_ok=True,
         )
 
-        filter_script = self.build_filter_script(
-            assembly_plan,
-            motion_plan,
+        gemini_mask_file = (
+            self._create_gemini_watermark_mask(
+                assembly_plan.width,
+                assembly_plan.height,
+            )
+            if self.remove_gemini_watermark
+            else None
         )
+        try:
+            filter_script = self.build_filter_script(
+                assembly_plan,
+                motion_plan,
+                gemini_mask_file=gemini_mask_file,
+            )
+        except Exception:
+            if gemini_mask_file is not None:
+                gemini_mask_file.unlink(missing_ok=True)
+            raise
 
         command = [
             self.ffmpeg_path,
@@ -411,12 +548,16 @@ class FFmpegVideoRenderer:
             ]
         )
 
-        completed = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        finally:
+            if gemini_mask_file is not None:
+                gemini_mask_file.unlink(missing_ok=True)
 
         if completed.returncode != 0:
             raise RuntimeError(
@@ -549,6 +690,8 @@ class FFmpegVideoRenderer:
         self,
         assembly_plan: VideoAssemblyPlan,
         motion_plan: VideoMotionPlan,
+        *,
+        gemini_mask_file: str | Path | None = None,
     ) -> str:
         """
         Build the FFmpeg filter graph.
@@ -565,6 +708,19 @@ class FFmpegVideoRenderer:
         filters: list[str] = []
 
         video_labels: list[str] = []
+        if not self.remove_gemini_watermark:
+            gemini_removal_filter = ""
+        elif gemini_mask_file is not None:
+            mask_name = Path(gemini_mask_file).name
+            gemini_removal_filter = f"removelogo=filename={mask_name},"
+        else:
+            gemini_removal_filter = (
+                self._build_gemini_delogo_filter(
+                    assembly_plan.width,
+                    assembly_plan.height,
+                )
+                + ","
+            )
 
         for index, (
             clip,
@@ -643,6 +799,7 @@ class FFmpegVideoRenderer:
                     f"{assembly_plan.height}:"
                     f"(ow-iw)/2:"
                     f"(oh-ih)/2,"
+                    f"{gemini_removal_filter}"
                     f"setsar=1,"
                     f"fps={assembly_plan.fps},"
                     f"trim=end_frame={frames},"
@@ -663,6 +820,7 @@ class FFmpegVideoRenderer:
                 f"{assembly_plan.height}:"
                 f"(ow-iw)/2:"
                 f"(oh-ih)/2,"
+                f"{gemini_removal_filter}"
                 f"setsar=1,"
                 f"zoompan="
                 f"z='{zoom_expression}':"
