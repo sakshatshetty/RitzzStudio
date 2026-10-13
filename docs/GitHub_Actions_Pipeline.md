@@ -28,7 +28,9 @@ Workflow file: `.github/workflows/ritzz-creative-production.yml`
    `projects/flow_staging`. Keep exactly one `.txt` creative brief in that
    folder. Install the local Flow MCP dependencies once by running `npm ci`
    from `tools/flow-mcp`, then run `npm run build` there. Ensure the Flow MCP
-   Chrome session is signed in and has a Flow project open, then run
+   Chrome session is signed in. The launcher waits up to two minutes for a
+   project; if needed, open or create one in the dedicated Flow Chrome window
+   when prompted. Then run
    `tools/flow-mcp/Generate RITZZ Images.cmd`. It reads the brief without
    a file picker, generates scene prompts in batches of up to 24, generates
    the thumbnail separately, downloads the results, and stages them beside a
@@ -38,6 +40,9 @@ Workflow file: `.github/workflows/ritzz-creative-production.yml`
    prompts are upgraded to detailed storybook/editorial-cartoon prompts in the
    staged copy; the source brief is left unchanged. A running Flow MCP job
    blocks a new run; wait for it to finish instead of launching another batch.
+   The launcher starts Flow Studio in its own command session and stops that
+   service when the run ends or is interrupted. If VS Code or another MCP
+   client already owns Flow, the launcher reuses it and leaves it running.
 3. Review every staged image and thumbnail. The generator reports Flow's
    measured credit change when available. Flow Agent has reported zero credit
    use in prior runs, but Google can change quotas and limits; do not treat

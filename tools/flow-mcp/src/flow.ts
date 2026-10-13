@@ -644,7 +644,11 @@ export interface FlowAsset {
 // media id yet, so entries are keyed by title and the id is filled in from whichever pass saw it.
 async function scanGrid(page: Page, stopAt?: (assets: FlowAsset[]) => boolean): Promise<FlowAsset[]> {
   await dismissOverlays(page);
-  await page.getByRole("navigation", { name: "Project navigation" }).getByText("All media", { exact: true }).click().catch(() => {});
+  const grid = page.locator(".page-container");
+  if (!(await grid.isVisible().catch(() => false))) {
+    const allMedia = page.getByRole("navigation", { name: "Project navigation" }).getByText("All media", { exact: true });
+    if (await allMedia.isVisible().catch(() => false)) await allMedia.click({ timeout: 3000 });
+  }
   await pause(page, 600);
   await scrollToTop(page);
   const seen = new Map<string, FlowAsset>();
@@ -1253,16 +1257,18 @@ async function agentRound(
   // Tiles finish in any order and the agent rewords prompts, so each image is matched back to its scene by the
   // prompt Flow stored for it ("Reuse prompt" puts that text in the composer).
   const prompts: string[] = [];
-  for (const tile of fresh) {
+  for (const [promptIndex, tile] of fresh.entries()) {
+    job.progress = `reading scene prompt ${promptIndex + 1}/${fresh.length}`;
+    await closeAgentSession(page);
     await scanGrid(page, (seen) => seen.some((x) => x.id === tile.id));
     const el = mediaTile(page, tile.id!);
     await el.scrollIntoViewIfNeeded();
     await el.hover();
-    await el.getByRole("button", { name: "Reuse prompt" }).click();
-    await pause(page, 900);
+    await el.getByRole("button", { name: "Reuse prompt" }).click({ timeout: 5000 });
+    await pause(page, 400);
     prompts.push(await page.locator(".ProseMirror").first().innerText());
+    await closeAgentSession(page);
   }
-  await closeAgentSession(page);
 
   const assigned = matchScenes(
     indexes.map((i) => scenes[i]),
@@ -1272,14 +1278,18 @@ async function agentRound(
   mkdirSync(s.output_dir, { recursive: true });
   const base = Number(s.file_stem.match(/\d+/)?.[0] ?? 1);
   let produced = 0;
+  const downloadCount = assigned.reduce((count, tileIndexes) => count + tileIndexes.length, 0);
+  let downloaded = 0;
   for (const [n, tileIndexes] of assigned.entries()) {
     const sceneIndex = indexes[n];
     if (!tileIndexes.length || sceneIndex + 1 === drop) continue;
     for (const [v, tileIndex] of tileIndexes.entries()) {
+      job.progress = `downloading image ${downloaded + 1}/${downloadCount} (scene ${sceneIndex + 1})`;
       const id = fresh[tileIndex].id!;
       await scanGrid(page, (seen) => seen.some((x) => x.id === id));
       const stem = join(s.output_dir, `scene-${String(base + sceneIndex).padStart(2, "0")}${v ? `-v${v + 1}` : ""}`);
       files.push(...(await downloadTile(page, mediaTile(page, id), stem, s.download_quality ?? "original")));
+      downloaded++;
       await pause(page, 800);
     }
     done.add(sceneIndex);

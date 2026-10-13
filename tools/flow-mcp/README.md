@@ -219,7 +219,7 @@ key → Save key**. It's checked with Google before it's saved, and stored only 
 | Symptom | Cause |
 |---|---|
 | Mac: the server will not start, `EPERM: operation not permitted` | The folder is in a macOS-protected location. Move it out of `~/Desktop`, `~/Documents` or `~/Downloads` and update the path in your Claude config |
-| *"Not signed in"* or *"no project open"* | Run `npm run login`, sign in, open a Flow project, leave the window open |
+| *"Not signed in"* or *"no project open"* | Run `npm run login`, sign in, open a Flow project, leave the window open. The RITZZ image launcher waits up to two minutes for this setup. |
 | A clip generated but no file arrived | The media is still in Flow. `flow_download` pulls it back for nothing — never re-generate and pay twice |
 | Everything times out | The Chrome window was closed, or the machine slept. Reopen it with `npm run login` |
 

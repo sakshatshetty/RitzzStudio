@@ -24,23 +24,12 @@ if not exist "scripts\ritzz-generate-flow-images.mjs" (
   exit /b 1
 )
 
-if /i "%~1"=="--dry-run" goto generate
-
-echo Starting the connected Flow Studio session...
-start "Flow Studio" /min "%~dp0Flow Studio.cmd"
-if errorlevel 1 (
-  echo ERROR: Could not start Flow Studio.
-  pause
-  exit /b 1
-)
-
-:generate
 if /i "%~1"=="--dry-run" (
   echo Validating the creative brief without contacting Flow...
 ) else (
-  echo Waiting for Flow, loading the single creative brief from the temp folder, and generating images...
+  echo Starting Flow for this run, loading the single creative brief from the temp folder, and generating images...
 )
-"%NODE_EXE%" "%~dp0scripts\ritzz-generate-flow-images.mjs" %*
+"%NODE_EXE%" "%~dp0scripts\run-ritzz-image-generation.mjs" %*
 set "EXIT_CODE=%ERRORLEVEL%"
 
 if "%EXIT_CODE%"=="0" (
