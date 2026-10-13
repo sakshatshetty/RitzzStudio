@@ -120,8 +120,10 @@ gh run download <run-id> --repo sakshatshetty/RitzzStudio --name "ritzz-review-v
 A trusted reviewer watches the video and approves or rejects the job. After
 approval, the workflow revalidates the exact supplied title, description, tags,
 and thumbnail, builds the approved final package, and uploads the video
-privately with the supplied metadata and thumbnail. Public visibility is not
-enabled.
+privately with the supplied metadata. It creates a separate
+`thumbnail/processed_thumbnail.png` using the same Gemini spot-reduction mask
+as the renderer and uploads that copy as the YouTube thumbnail; the supplied
+source image remains unchanged. Public visibility is not enabled.
 
 The creative ZIP root must contain `project.json`, the five named metadata/
 thumbnail assets, the storyboard JSON, and every PNG referenced in

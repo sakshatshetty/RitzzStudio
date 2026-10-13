@@ -1,5 +1,6 @@
 """Set the supplied or generated thumbnail on an uploaded private video."""
 
+import hashlib
 import json
 import os
 import sys
@@ -22,11 +23,16 @@ def main() -> int:
     project = manager.load_project(project_id)
     project_directory = manager.get_project_path(project)
     publishing_directory = project_directory / "publishing"
+    processed_thumbnail = (
+        project_directory / "thumbnail" / "processed_thumbnail.png"
+    )
     supplied_thumbnail = (
         project_directory / "thumbnail" / "supplied_thumbnail.png"
     )
     thumbnail_file = (
-        supplied_thumbnail
+        processed_thumbnail
+        if processed_thumbnail.is_file()
+        else supplied_thumbnail
         if supplied_thumbnail.is_file()
         else project_directory / "video" / "thumbnail.jpg"
     )
@@ -39,6 +45,11 @@ def main() -> int:
     publish_result = PublishingEngine.load_publish_result(project_directory)
     if not publish_result.video_id.strip():
         raise ValueError(f"Saved publish result has no YouTube video ID: {result_file}")
+    if not thumbnail_file.is_file() or thumbnail_file.stat().st_size == 0:
+        raise FileNotFoundError(
+            f"Thumbnail image is missing or empty: {thumbnail_file}"
+        )
+    thumbnail_hash = hashlib.sha256(thumbnail_file.read_bytes()).hexdigest()
     if marker_file.is_file():
         marker = json.loads(marker_file.read_text(encoding="utf-8"))
         if marker.get("status") == "completed":
@@ -46,12 +57,13 @@ def main() -> int:
                 raise RuntimeError(
                     "Saved thumbnail upload marker belongs to a different video ID."
                 )
-            print(f"Thumbnail already uploaded for video {publish_result.video_id}.")
-            return 0
-    if not thumbnail_file.is_file() or thumbnail_file.stat().st_size == 0:
-        raise FileNotFoundError(
-            f"Thumbnail image is missing or empty: {thumbnail_file}"
-        )
+            if marker.get("thumbnail_sha256") == thumbnail_hash:
+                print(f"Thumbnail already uploaded for video {publish_result.video_id}.")
+                return 0
+            print(
+                "The selected thumbnail differs from the completed upload marker; "
+                "updating the thumbnail on the existing video."
+            )
 
     provider = YouTubeProvider(
         Path(os.environ["GOOGLE_CLIENT_SECRETS_FILE"]),
@@ -61,6 +73,10 @@ def main() -> int:
         video_id=publish_result.video_id,
         thumbnail_file=thumbnail_file,
     )
+    print(
+        "Uploaded thumbnail file: "
+        f"{thumbnail_file.relative_to(project_directory).as_posix()}"
+    )
     marker_file.parent.mkdir(parents=True, exist_ok=True)
     temporary_marker = marker_file.with_suffix(".json.tmp")
     temporary_marker.write_text(
@@ -68,6 +84,10 @@ def main() -> int:
             {
                 "status": "completed",
                 "video_id": publish_result.video_id,
+                "thumbnail_file": thumbnail_file.relative_to(
+                    project_directory
+                ).as_posix(),
+                "thumbnail_sha256": thumbnail_hash,
                 "uploaded_at": datetime.now(timezone.utc).isoformat(),
                 "response": response,
             },

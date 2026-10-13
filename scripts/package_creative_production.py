@@ -6,7 +6,6 @@ import hashlib
 import json
 import os
 import sys
-import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
 
@@ -108,46 +107,46 @@ def build_final_package(
 
     archive = Path(output_file)
     archive.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="ritzz-package-") as temporary_dir:
-        processed_thumbnail = FFmpegVideoRenderer().remove_gemini_watermark_from_image(
-            supplied["thumbnail.png"][1],
-            Path(temporary_dir) / "thumbnail.png",
+    processed_thumbnail = project_path / "thumbnail" / "processed_thumbnail.png"
+    FFmpegVideoRenderer().remove_gemini_watermark_from_image(
+        supplied["thumbnail.png"][1],
+        processed_thumbnail,
+    )
+    entries: dict[str, Path] = {
+        "final_video.mp4": video_file,
+        "thumbnail.png": processed_thumbnail,
+        "title.txt": supplied["title.txt"][1],
+        "description.txt": supplied["description.txt"][1],
+        "tags.txt": supplied["tags.txt"][1],
+        "script.txt": supplied["script.txt"][1],
+        "qa_report.json": qa_file,
+    }
+    hashes = {
+        name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for name, path in entries.items()
+    }
+    package_manifest = {
+        "workflow_version": acceptance["workflow_version"],
+        "project_id": manifest["project_id"],
+        "topic": manifest["topic"],
+        "target_duration_minutes": manifest["target_duration_minutes"],
+        "human_approval": human_approval,
+        "qa_status": qa_report.status,
+        "technical_qa_status": technical_attempts[-1].status,
+        "files_sha256": hashes,
+    }
+    with zipfile.ZipFile(
+        archive,
+        mode="w",
+        compression=zipfile.ZIP_DEFLATED,
+        compresslevel=6,
+    ) as output:
+        for name, source in entries.items():
+            output.write(source, name)
+        output.writestr(
+            "package_manifest.json",
+            json.dumps(package_manifest, indent=2, ensure_ascii=False) + "\n",
         )
-        entries: dict[str, Path] = {
-            "final_video.mp4": video_file,
-            "thumbnail.png": processed_thumbnail,
-            "title.txt": supplied["title.txt"][1],
-            "description.txt": supplied["description.txt"][1],
-            "tags.txt": supplied["tags.txt"][1],
-            "script.txt": supplied["script.txt"][1],
-            "qa_report.json": qa_file,
-        }
-        hashes = {
-            name: hashlib.sha256(path.read_bytes()).hexdigest()
-            for name, path in entries.items()
-        }
-        package_manifest = {
-            "workflow_version": acceptance["workflow_version"],
-            "project_id": manifest["project_id"],
-            "topic": manifest["topic"],
-            "target_duration_minutes": manifest["target_duration_minutes"],
-            "human_approval": human_approval,
-            "qa_status": qa_report.status,
-            "technical_qa_status": technical_attempts[-1].status,
-            "files_sha256": hashes,
-        }
-        with zipfile.ZipFile(
-            archive,
-            mode="w",
-            compression=zipfile.ZIP_DEFLATED,
-            compresslevel=6,
-        ) as output:
-            for name, source in entries.items():
-                output.write(source, name)
-            output.writestr(
-                "package_manifest.json",
-                json.dumps(package_manifest, indent=2, ensure_ascii=False) + "\n",
-            )
     return archive
 
 

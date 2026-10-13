@@ -419,6 +419,10 @@ def test_final_package_keeps_metadata_and_packages_processed_thumbnail(
         (project_directory / "creative_input" / "thumbnail.png").read_bytes()
         == source_files["thumbnail.png"]
     )
+    assert (
+        (project_directory / "thumbnail" / "processed_thumbnail.png").read_bytes()
+        == packaged_thumbnail
+    )
     assert (video_directory / "thumbnail.png").read_bytes() == source_files[
         "thumbnail.png"
     ]
