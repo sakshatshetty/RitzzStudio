@@ -70,7 +70,8 @@ export async function getFlowPage(): Promise<Page> {
   const b = await getBrowser();
   const context = b.contexts()[0];
   if (!context) throw new Error("Chrome has no browser context; restart the Flow Chrome window.");
-  const existing = context.pages().find((p) => FLOW_HOSTS.test(p.url()));
+  const flowPages = context.pages().filter((p) => FLOW_HOSTS.test(p.url()));
+  const existing = flowPages.find((p) => /\/project\//.test(p.url())) ?? flowPages[0];
   if (existing) return existing;
   const page = await context.newPage();
   await page.goto(FLOW_URL, { waitUntil: "domcontentloaded" });

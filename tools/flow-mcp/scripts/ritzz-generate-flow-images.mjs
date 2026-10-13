@@ -10,6 +10,8 @@ const FLOW_HOME = process.env.FLOW_MCP_HOME ?? join(homedir(), ".flow-mcp");
 const FLOW_URL = `http://127.0.0.1:${process.env.FLOW_MCP_PORT ?? "8787"}`;
 const MAX_AGENT_SCENES = 24;
 const MAX_WAIT_SECONDS = 30;
+const PROJECT_READY_TIMEOUT_MS = 120_000;
+const PROJECT_READY_POLL_MS = 2_000;
 const RICH_ILLUSTRATION_STYLE =
   "Polished 2D editorial-cartoon illustration with expressive rounded characters: oversized round white heads, clear facial expressions, compact softly rounded white bodies, and short, thick, curved arms and legs as solid filled shapes with strong clean black outlines. Connect the limbs naturally to the body; do not use thin line-only limbs, skeletal stick figures, or realistic human anatomy. Avoid crude doodles: use confident smooth contour lines, readable poses, thoughtful expressions, and subtle highlights and shadows. Surround the characters with a richly detailed, story-specific environment, layered foreground, midground and background, textured props, nuanced colors, and cinematic light. Compose one coherent 16:9 illustration; the setting should feel complete and detailed without overpowering the rounded character.";
 const SCENE_FIDELITY_GUIDANCE =
@@ -174,6 +176,26 @@ function assertReady(status) {
   if (active.length) fail(`Flow already has an active job (${active.map((job) => `${job.id}: ${job.status}`).join(", ")}). Let it finish before starting a new batch.`);
 }
 
+async function waitForProject() {
+  const deadline = Date.now() + PROJECT_READY_TIMEOUT_MS;
+  let status;
+  let lastHint = "";
+  while (Date.now() < deadline) {
+    status = await api("status", { detailed: false });
+    if (status.flow?.signedIn && status.flow?.inProject) {
+      assertReady(status);
+      return;
+    }
+    const hint = status.flow?.hint ?? "Flow is not ready.";
+    if (hint !== lastHint) {
+      console.log(`${hint} Waiting up to 2 minutes for Flow readiness.`);
+      lastHint = hint;
+    }
+    await delay(PROJECT_READY_POLL_MS);
+  }
+  fail(`Timed out after 2 minutes waiting for Flow. ${status?.flow?.hint ?? "Open Flow and try again."}`);
+}
+
 async function runBatch({ runProject, prompts, label }) {
   const queued = await api("agent", {
     project: runProject,
@@ -280,8 +302,7 @@ async function main() {
   }
 
   await waitForFlowServer();
-  const status = await api("status", { detailed: false });
-  assertReady(status);
+  await waitForProject();
 
   const timestamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
   const runProject = `${parsed.projectId}_flow_${timestamp}`;
