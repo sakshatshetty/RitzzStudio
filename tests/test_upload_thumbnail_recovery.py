@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 
@@ -50,8 +51,17 @@ def test_thumbnail_upload_resume_skips_completed_thumbnail(
     publishing = project_directory / "publishing"
     publishing.mkdir(parents=True, exist_ok=True)
     create_saved_publish_result(project_directory)
+    processed = project_directory / "thumbnail" / "processed_thumbnail.png"
+    processed.parent.mkdir(parents=True, exist_ok=True)
+    processed.write_bytes(b"processed thumbnail")
     (publishing / "thumbnail_upload.json").write_text(
-        json.dumps({"status": "completed", "video_id": "existing-video"}),
+        json.dumps(
+            {
+                "status": "completed",
+                "video_id": "existing-video",
+                "thumbnail_sha256": hashlib.sha256(processed.read_bytes()).hexdigest(),
+            }
+        ),
         encoding="utf-8",
     )
     monkeypatch.setenv("RITZZ_PROJECT_ID", project.project_id)
@@ -105,7 +115,7 @@ def test_thumbnail_retry_reuses_video_id_and_skips_video_upload(
     assert marker["video_id"] == "existing-video"
 
 
-def test_supplied_thumbnail_is_used_instead_of_generated_thumbnail(
+def test_processed_thumbnail_is_used_instead_of_supplied_or_generated(
     tmp_path: Path,
     monkeypatch,
 ):
@@ -117,6 +127,8 @@ def test_supplied_thumbnail_is_used_instead_of_generated_thumbnail(
     supplied = project_directory / "thumbnail" / "supplied_thumbnail.png"
     supplied.parent.mkdir(parents=True, exist_ok=True)
     supplied.write_bytes(b"supplied thumbnail")
+    processed = project_directory / "thumbnail" / "processed_thumbnail.png"
+    processed.write_bytes(b"processed thumbnail")
     generated = project_directory / "video" / "thumbnail.jpg"
     generated.write_bytes(b"generated thumbnail")
     monkeypatch.setenv("RITZZ_PROJECT_ID", project.project_id)
@@ -136,7 +148,45 @@ def test_supplied_thumbnail_is_used_instead_of_generated_thumbnail(
 
     assert upload_youtube_thumbnail.main() == 0
 
-    assert uploaded_paths == [supplied]
+    assert uploaded_paths == [processed]
+
+
+def test_completed_thumbnail_marker_without_hash_reuploads_processed_thumbnail(
+    tmp_path: Path,
+    monkeypatch,
+):
+    monkeypatch.chdir(tmp_path)
+    manager = ProjectManager(Path("projects"))
+    project = manager.create_project("A stale thumbnail marker test")
+    project_directory = manager.get_project_path(project)
+    publishing = create_saved_publish_result(project_directory)
+    (publishing / "thumbnail_upload.json").write_text(
+        json.dumps({"status": "completed", "video_id": "existing-video"}),
+        encoding="utf-8",
+    )
+    processed = project_directory / "thumbnail" / "processed_thumbnail.png"
+    processed.parent.mkdir(parents=True, exist_ok=True)
+    processed.write_bytes(b"new processed thumbnail")
+    monkeypatch.setenv("RITZZ_PROJECT_ID", project.project_id)
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRETS_FILE", str(tmp_path / "client.json"))
+    monkeypatch.setenv("GOOGLE_TOKEN_FILE", str(tmp_path / "token.json"))
+    uploaded_paths = []
+
+    class Provider:
+        def __init__(self, *_args):
+            pass
+
+        def set_thumbnail(self, *, video_id, thumbnail_file):
+            uploaded_paths.append((video_id, Path(thumbnail_file)))
+            return {"kind": "thumbnail"}
+
+    monkeypatch.setattr(upload_youtube_thumbnail, "YouTubeProvider", Provider)
+
+    assert upload_youtube_thumbnail.main() == 0
+
+    assert uploaded_paths == [("existing-video", processed)]
+    marker = json.loads((publishing / "thumbnail_upload.json").read_text(encoding="utf-8"))
+    assert marker["thumbnail_sha256"] == hashlib.sha256(processed.read_bytes()).hexdigest()
 
 
 def test_completed_thumbnail_marker_must_match_saved_video_id(
@@ -148,6 +198,9 @@ def test_completed_thumbnail_marker_must_match_saved_video_id(
     project = manager.create_project("A recovery test")
     project_directory = manager.get_project_path(project)
     publishing = create_saved_publish_result(project_directory)
+    supplied = project_directory / "thumbnail" / "supplied_thumbnail.png"
+    supplied.parent.mkdir(parents=True, exist_ok=True)
+    supplied.write_bytes(b"supplied thumbnail")
     (publishing / "thumbnail_upload.json").write_text(
         json.dumps({"status": "completed", "video_id": "different-video"}),
         encoding="utf-8",
