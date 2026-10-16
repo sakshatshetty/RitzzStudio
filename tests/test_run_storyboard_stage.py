@@ -196,6 +196,42 @@ def test_allows_only_small_scene_maximum_timing_overage(
             )
 
 
+def test_migrates_resumed_creative_package_to_6_6_second_scene_ceiling(
+    tmp_path,
+):
+    project_directory = tmp_path / "project"
+    _write_project(project_directory)
+    _set_scene_start_times(
+        project_directory,
+        second_scene_start=6.582,
+        third_scene_start=12.6,
+        audio_duration=17.5,
+    )
+    (project_directory / "topic_selection.json").write_text(
+        json.dumps({"source": "creative_package"}),
+        encoding="utf-8",
+    )
+    config = ProductionConfig(
+        target_duration_seconds=60,
+        minimum_duration_seconds=1,
+        scene_minimum_duration_seconds=1,
+        scene_maximum_duration_seconds=6,
+    )
+    config_file = project_directory / "production_config.json"
+    config_file.write_text(config.model_dump_json(), encoding="utf-8")
+
+    storyboard = build_audio_timed_storyboard(
+        project_directory,
+        "Supplied topic",
+        "First image. Second scene. Last image.",
+        config,
+    )
+
+    assert storyboard.scenes[0].duration_seconds == pytest.approx(6.582)
+    updated_config = json.loads(config_file.read_text(encoding="utf-8"))
+    assert updated_config["scene_maximum_duration_seconds"] == pytest.approx(6.6)
+
+
 def test_accepts_absolute_manifest_image_paths_for_relative_project_directory(
     tmp_path,
     monkeypatch,

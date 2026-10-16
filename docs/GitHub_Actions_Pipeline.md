@@ -1,15 +1,16 @@
 # GitHub Actions Pipeline
 
 Normal production uses a human-created creative package and starts from the
-GitHub Actions web interface. ChatGPT or Claude prepares the script, metadata,
-Flow-ready storyboard prompts, and thumbnail prompt. A local Flow MCP launcher
-reads the single brief in the input folder, generates the scenes in Agent
-batches, generates the thumbnail, and stages the files for human review. The
-PowerShell package builder validates and releases the approved assets. GitHub
-Actions then generates only the narration, aligns the supplied storyboard to
-the real narration timestamps, renders and technically checks the video, waits
-for human approval, packages the approved inputs, and uploads privately to
-YouTube.
+GitHub Actions web interface. Claude prepares the script and storyboard
+handoff; Gemini fills all scene prompts and provides four character-reference
+prompts. Images are generated manually in Flow Agent in gated batches of 10,
+with the thumbnail as a separate final batch. Flow MCP is used afterward only
+to match saved prompts and rename scene tiles; images are downloaded manually.
+The PowerShell package builder validates and releases the approved assets.
+GitHub Actions then generates only the narration, aligns the supplied
+storyboard to the real narration timestamps, renders and technically checks
+the video, waits for human approval, packages the approved inputs, and uploads
+privately to YouTube.
 
 ## Primary workflow: Flow creative package
 
@@ -17,38 +18,26 @@ Workflow file: `.github/workflows/ritzz-creative-production.yml`
 
 ### Prepare and release the input
 
-1. Paste the prompt from
-   `prompts/flow/Ritzz_Single_Topic_Content_Master_Prompt.txt`
-   into ChatGPT or Claude with the project ID, topic, target duration, and word
-   count. It returns one text file containing the supplied metadata and a
-   machine-readable storyboard. Each scene includes an exact narration excerpt,
-   a visual description, a self-contained Flow image prompt, and a canonical
-   image filename.
-2. Put the brief in
-   `projects/flow_staging`. Keep exactly one `.txt` creative brief in that
-   folder. Install the local Flow MCP dependencies once by running `npm ci`
-   from `tools/flow-mcp`, then run `npm run build` there. Ensure the Flow MCP
-   Chrome session is signed in. The launcher waits up to two minutes for a
-   project; if needed, open or create one in the dedicated Flow Chrome window
-   when prompted. Then run
-   `tools/flow-mcp/Generate RITZZ Images.cmd`. It reads the brief without
-   a file picker, generates scene prompts in batches of up to 24, generates
-   the thumbnail separately, downloads the results, and stages them beside a
-   copy of the brief in a new project-specific subfolder under
-   `projects/flow_staging`. The
-   staging folder is printed when generation completes. Legacy stickman-style
-   prompts are upgraded to detailed storybook/editorial-cartoon prompts in the
-   staged copy; the source brief is left unchanged. A running Flow MCP job
-   blocks a new run; wait for it to finish instead of launching another batch.
-   The launcher starts Flow Studio in its own command session and stops that
-   service when the run ends or is interrupted. If VS Code or another MCP
-   client already owns Flow, the launcher reuses it and leaves it running.
-3. Review every staged image and thumbnail. The generator reports Flow's
-   measured credit change when available. Flow Agent has reported zero credit
-   use in prior runs, but Google can change quotas and limits; do not treat
-   zero-cost generation as guaranteed. A failed or incomplete batch is not
-   presented as ready for packaging.
-4. Run `creative_package.bat` with the staging folder path, for example:
+1. Use the current master prompt at
+   `D:\AIStudio\Projects\Ritzz\Default\Ritzz_4_Master_Prompts\Ritzz_Single_Topic_Content_Master_Prompt.txt`.
+   Claude creates the script and storyboard handoff; Gemini returns the
+   complete final brief with four character references and every scene prompt.
+   Do not use the legacy one-stage prompt in `prompts/flow` for new projects.
+2. Open a dedicated Flow project for the video. In Flow Agent, generate only
+   the four reference images first, titled `901`–`904`, and use them as
+   references for each scene batch. Generate scenes in batches of exactly 10
+   (the last may be smaller); wait until the queue is empty and every image is
+   saved before continuing. Retry only failed slots. Generate the thumbnail
+   separately after all scenes, titled `999`. Use raw global numbers as scene
+   titles. Do not use MCP to generate, retry, or download images.
+3. After all images exist, run
+   `Generate RITZZ Images.cmd --rename-only` from the Flow MCP folder. It reads
+   saved prompts, matches and renames scene tiles, and does not generate or
+   download images. Manually download the scene images and thumbnail into a
+   clean creative-package input folder; do not include the four reference
+   images. Keep the final `_FlowReady.txt` brief with the staged inputs.
+4. Review the downloaded images and thumbnail, then run `creative_package.bat`
+   with the input folder path, for example:
 
    ```powershell
    .\creative_package.bat "projects\flow_staging\<generated-run-folder>"
@@ -61,10 +50,23 @@ Workflow file: `.github/workflows/ritzz-creative-production.yml`
    generation so you can review before packaging or publishing. The script checks the supplied
    title, description, tag character count, script duration, storyboard
    coverage/order, thumbnail, and exact scene-image count; it converts scene
-   images to 1536×864 PNG and the thumbnail to 1280×720 PNG. It writes the
+   images to 1536×864 PNG and the thumbnail to 1280×720 PNG. Timestamp suffixes
+   on Flow downloads (for example, `scene_001_YYYYMMDDhhmmss.jpg` and
+   `999_thumbnail_YYYYMMDDhhmmss.jpg`) are ignored for matching. The builder
+   maps scenes by their numeric IDs, requires a complete ordered sequence, and
+   renames files in the staging folder to `scene_NNN.jpg` and
+   `999_thumbnail.jpg` (preserving image contents and extensions). It then
+   writes renderer-ready `images/scene_NNN.png` files plus the project's named
+   thumbnail PNG. Already-normalized names are left unchanged. It writes the
    project's files, creates `creative-package.zip`, validates it with the same
    Python importer used by Actions, and creates a GitHub release whose tag is
    exactly the project ID. The asset name is `creative-package.zip`.
+
+Imported Flow scenes use a 6.6-second configured hold ceiling, plus the
+existing 0.1-second alignment tolerance. This accommodates narration-aligned
+static holds without changing scene text or image assignments; older
+creative-package checkpoints are migrated to the same ceiling when the
+storyboard stage is rerun.
 
 The Windows launchers and scripts are versioned in the repository:
 `creative_package.bat`, `creative_work.bat` / `creative_work.ps1`,
@@ -80,12 +82,14 @@ runs/artifacts, run `delete_workflow.bat <PROJECT_ID>`. The script asks for the
 exact confirmation phrase before deletion; `-WhatIf` can be passed to inspect
 the targets without deleting them.
 
-Flow MCP's Agent image-batch tool accepts up to 50 prompts per call, but Flow's
-generation UI reports a 24-image-at-a-time limit. The launcher uses the smaller
-24-scene batch size and splits larger storyboards automatically; it stages images as
-`scene_001.jpeg`, `scene_002.jpeg`, and so on, with `thumbnail.jpeg` for the
-thumbnail. Review generated assets manually. The package builder checks file
-integrity and dimensions; it does not claim visual content is correct.
+The rename-only launcher requires a final Flow-ready brief and saved prompts in
+the open Flow project. Use a dedicated project to avoid unrelated tiles.
+Download scene files with their global scene numbers in the filename and name
+the thumbnail `thumbnail` while preserving its actual extension (for example,
+`thumbnail.jpg`). The creative-package step converts them to
+`images/scene_001.png` and the required `thumbnail.png` output. The package
+builder checks file integrity and dimensions; it does not claim visual content
+is correct.
 
 ### Run, review, and upload
 

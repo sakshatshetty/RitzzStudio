@@ -10,12 +10,54 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from modules.project.config import ProductionConfig
-from modules.project.creative_package import CreativeStoryboard, _compact_text
+from modules.project.creative_package import (
+    CREATIVE_PACKAGE_SCENE_MAXIMUM_DURATION_SECONDS,
+    CreativeStoryboard,
+    _compact_text,
+)
 from modules.project.manager import ProjectManager
 from modules.storyboard.models import Storyboard, StoryboardScene
 from modules.video.sync_engine import VideoSynchronizationEngine
 
 SCENE_DURATION_MAXIMUM_TOLERANCE_SECONDS = 0.1
+
+
+def _apply_creative_package_scene_timing_policy(
+    project_directory: Path,
+    production_config: ProductionConfig,
+) -> ProductionConfig:
+    source_file = project_directory / "topic_selection.json"
+    if not source_file.is_file():
+        return production_config
+    source = json.loads(source_file.read_text(encoding="utf-8"))
+    if not isinstance(source, dict):
+        raise TypeError("The project topic selection must contain an object.")
+    if source.get("source") != "creative_package":
+        return production_config
+    if (
+        production_config.scene_maximum_duration_seconds
+        >= CREATIVE_PACKAGE_SCENE_MAXIMUM_DURATION_SECONDS
+    ):
+        return production_config
+
+    updated_config = production_config.model_copy(
+        update={
+            "scene_maximum_duration_seconds": (
+                CREATIVE_PACKAGE_SCENE_MAXIMUM_DURATION_SECONDS
+            )
+        }
+    )
+    config_file = project_directory / "production_config.json"
+    if config_file.is_file():
+        config_file.write_text(
+            updated_config.model_dump_json(indent=2) + "\n",
+            encoding="utf-8",
+        )
+    print(
+        "Updated supplied creative package scene maximum to "
+        f"{CREATIVE_PACKAGE_SCENE_MAXIMUM_DURATION_SECONDS:.3f}s."
+    )
+    return updated_config
 
 
 def build_audio_timed_storyboard(
@@ -32,6 +74,10 @@ def build_audio_timed_storyboard(
         raise FileNotFoundError(
             "The supplied storyboard or aligned narration is missing."
         )
+    production_config = _apply_creative_package_scene_timing_policy(
+        project_directory,
+        production_config,
+    )
     source = CreativeStoryboard.model_validate_json(
         source_file.read_text(encoding="utf-8")
     )
