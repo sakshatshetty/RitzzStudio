@@ -165,12 +165,36 @@ function Assert-RitzzSourceImageSize {
     }
 }
 
+function Get-RitzzSceneNumber {
+    param(
+        [Parameter(Mandatory = $true)][string]$BaseName
+    )
+
+    if ($BaseName -match '(?i)^scene_(\d+)(?:_\d{14})?$') {
+        $numberText = $Matches[1]
+    }
+    else {
+        $normalizedBaseName = $BaseName -replace '(?i)_\d{14}$', ''
+        if ($normalizedBaseName -notmatch '(\d+)$') {
+            throw "Flow scene image filename must end in its scene number: $BaseName"
+        }
+        $numberText = $Matches[1]
+    }
+
+    $sceneNumber = 0
+    if (-not [int]::TryParse($numberText, [ref]$sceneNumber) -or $sceneNumber -lt 1) {
+        throw "Flow scene image filename must end in its scene number: $BaseName"
+    }
+    return $sceneNumber
+}
+
 try {
     Write-Host 'RITZZ creative package builder' -ForegroundColor White
+    Write-Host "Builder script: $PSCommandPath"
     Write-Host "Input folder: $InputDirectory"
     Write-Host "Output root:  $OutputRoot"
 
-    Write-Stage '[1/6] Finding the creative brief, thumbnail, and Flow scene images...'
+    Write-Stage '[1/9] Finding the creative brief, thumbnail, and Flow scene images...'
     if (-not (Test-Path -LiteralPath $InputDirectory -PathType Container)) {
         throw "Input folder does not exist: $InputDirectory"
     }
@@ -191,32 +215,25 @@ try {
     }
     $thumbnailFiles = @(
         $imageFiles | Where-Object {
-            $_.BaseName -match '(?i)(^thumbnail$|_thumbnail$)'
+            ($_.BaseName -replace '(?i)_\d{14}$', '') -match '(?i)(^thumbnail$|_thumbnail$)'
         }
     )
     if ($thumbnailFiles.Count -ne 1) {
-        throw "Expected exactly one thumbnail named 'thumbnail' or ending in '_Thumbnail' in '$InputDirectory'; found $($thumbnailFiles.Count)."
+        throw "Expected exactly one thumbnail named 'thumbnail' or ending in '_Thumbnail', optionally followed by a 14-digit timestamp, in '$InputDirectory'; found $($thumbnailFiles.Count)."
     }
     $thumbnailSource = $thumbnailFiles[0]
     $sceneImageFiles = @(
         $imageFiles |
             Where-Object { $_.FullName -cne $thumbnailSource.FullName } |
-            Sort-Object {
-                if ($_.BaseName -match '(\d+)$') {
-                    [int]$Matches[1]
-                }
-                else {
-                    throw "Flow scene image filename must end in its scene number: $($_.Name)"
-                }
-            }
+            Sort-Object { Get-RitzzSceneNumber -BaseName $_.BaseName }
     )
     $sceneNumbers = @(
         $sceneImageFiles | ForEach-Object {
-            [regex]::Match($_.BaseName, '(\d+)$').Groups[1].Value
+            Get-RitzzSceneNumber -BaseName $_.BaseName
         }
     )
     if (@($sceneNumbers | Select-Object -Unique).Count -ne $sceneNumbers.Count) {
-        throw 'Scene image filenames contain duplicate trailing scene numbers.'
+        throw 'Scene image filenames contain duplicate scene numbers after removing any timestamp suffix.'
     }
 
     $utf8Strict = New-Object System.Text.UTF8Encoding($false, $true)
@@ -294,6 +311,9 @@ try {
     for ($index = 0; $index -lt $storyboard.scenes.Count; $index++) {
         $scene = $storyboard.scenes[$index]
         $expectedSceneId = 'scene_{0:D3}' -f ($index + 1)
+        if ($sceneNumbers[$index] -ne ($index + 1)) {
+            throw "Expected image for $expectedSceneId, but found scene number $($sceneNumbers[$index]); scene image numbers must be contiguous and ordered from 1."
+        }
         if ($scene.scene_id -cne $expectedSceneId) {
             throw "Storyboard scenes must be ordered and named scene_001, scene_002, and so on; expected $expectedSceneId."
         }
@@ -307,7 +327,68 @@ try {
         }
     }
 
-    Write-Stage '[2/6] Checking project metadata, script length, and tags...'
+    Write-Stage '[2/9] Renaming input images to stable scene and thumbnail names...'
+    $renamePlan = @(
+        for ($index = 0; $index -lt $sceneImageFiles.Count; $index++) {
+            [pscustomobject]@{
+                SourcePath = $sceneImageFiles[$index].FullName
+                SourceName = $sceneImageFiles[$index].Name
+                TargetName = "$($storyboard.scenes[$index].scene_id)$($sceneImageFiles[$index].Extension)"
+                IsThumbnail = $false
+            }
+        }
+    )
+    $renamePlan += [pscustomobject]@{
+        SourcePath = $thumbnailSource.FullName
+        SourceName = $thumbnailSource.Name
+        TargetName = "999_thumbnail$($thumbnailSource.Extension)"
+        IsThumbnail = $true
+    }
+    $plannedNames = @{}
+    foreach ($plan in $renamePlan) {
+        $nameKey = $plan.TargetName.ToLowerInvariant()
+        if ($plannedNames.ContainsKey($nameKey)) {
+            throw "Multiple input images would be renamed to '$($plan.TargetName)'."
+        }
+        $plannedNames[$nameKey] = $true
+        $targetPath = Join-Path $InputDirectory $plan.TargetName
+        if (
+            (Test-Path -LiteralPath $targetPath) -and
+            -not [string]::Equals(
+                $targetPath,
+                $plan.SourcePath,
+                [StringComparison]::OrdinalIgnoreCase
+            )
+        ) {
+            throw "Cannot normalize image filename because the target already exists: $targetPath"
+        }
+    }
+    foreach ($plan in $renamePlan) {
+        if ($plan.SourceName -ceq $plan.TargetName) {
+            continue
+        }
+        Write-Host "$($plan.SourceName) -> $($plan.TargetName)"
+        if ($plan.SourceName -ieq $plan.TargetName) {
+            $intermediateName = ".ritzz_rename_$([guid]::NewGuid().ToString('N'))$([IO.Path]::GetExtension($plan.SourceName))"
+            Rename-Item -LiteralPath $plan.SourcePath -NewName $intermediateName
+            Rename-Item `
+                -LiteralPath (Join-Path $InputDirectory $intermediateName) `
+                -NewName $plan.TargetName
+        }
+        else {
+            Rename-Item -LiteralPath $plan.SourcePath -NewName $plan.TargetName
+        }
+    }
+    $sceneImageFiles = @(
+        foreach ($plan in $renamePlan | Where-Object { -not $_.IsThumbnail }) {
+            Get-Item -LiteralPath (Join-Path $InputDirectory $plan.TargetName)
+        }
+    )
+    $thumbnailSource = Get-Item -LiteralPath (
+        Join-Path $InputDirectory "999_thumbnail$($thumbnailSource.Extension)"
+    )
+
+    Write-Stage '[3/9] Checking project metadata, script length, and tags...'
     if ($title.Length -gt 100) {
         throw 'The title exceeds the workflow limit of 100 characters.'
     }
@@ -426,7 +507,7 @@ try {
         'project.json' = $utf8NoBom.GetBytes($manifestText)
     }
 
-    Write-Stage '[3/7] Creating the per-project staging folder and named files...'
+    Write-Stage '[4/9] Creating the per-project staging folder and named files...'
     if (-not (Test-Path -LiteralPath $projectDirectory)) {
         New-Item -ItemType Directory -Path $projectDirectory -Force | Out-Null
     }
@@ -471,6 +552,12 @@ try {
         ("ritzz_flow_images_{0}_{1}" -f $PID, [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $temporaryImageDirectory | Out-Null
     try {
+        Write-Stage '[5/9] Converting normalized images to renderer-ready PNG files...'
+        Write-Host "Thumbnail: $($thumbnailSource.Name) -> $thumbnailName"
+        for ($index = 0; $index -lt $sceneImageFiles.Count; $index++) {
+            $sceneFileName = Split-Path -Leaf $sceneFileNames[$index]
+            Write-Host "$($sceneImageFiles[$index].Name) -> $sceneFileName"
+        }
         $thumbnailPng = Join-Path $temporaryImageDirectory $thumbnailName
         Assert-RitzzSourceImageSize `
             -Path $thumbnailSource.FullName `
@@ -527,7 +614,7 @@ try {
             [System.IO.File]::WriteAllBytes($destination, [byte[]]$entry.Value)
         }
     }
-    Write-Stage '[4/7] Validating the thumbnail and assembled project files...'
+    Write-Stage '[6/9] Validating the thumbnail and assembled project files...'
     foreach ($fileName in $expectedFiles.Keys) {
         $path = Join-Path $projectDirectory $fileName
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -572,7 +659,7 @@ print(f"Thumbnail PASS: {image.width}x{image.height} RGB/RGBA PNG")
     if (Test-Path -LiteralPath $zipPath -PathType Leaf) {
         Remove-Item -LiteralPath $zipPath -Force
     }
-    Write-Stage '[5/7] Creating and validating creative-package.zip...'
+    Write-Stage '[7/9] Creating and validating creative-package.zip...'
     Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $sourceFiles = @(
@@ -632,7 +719,7 @@ print(
         -Arguments @($zipPath) `
         -FailureMessage 'Creative package ZIP validation failed'
 
-    Write-Stage '[6/7] Replacing the output project folder from the validated staging package...'
+    Write-Stage '[8/9] Replacing the output project folder from the validated staging package...'
     if (-not (Test-Path -LiteralPath $outputRoot -PathType Container)) {
         New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
     }
@@ -685,10 +772,10 @@ print(
     $finalZipPath = Join-Path $finalProjectDirectory 'creative-package.zip'
 
     if ($SkipRelease) {
-        Write-Stage '[7/7] Release upload skipped by -SkipRelease.' -Color Yellow
+        Write-Stage '[9/9] Release upload skipped by -SkipRelease.' -Color Yellow
     }
     else {
-        Write-Stage '[7/7] Creating the GitHub release and uploading the ZIP...'
+        Write-Stage '[9/9] Creating the GitHub release and uploading the ZIP...'
         $ghCommand = Get-Command gh -ErrorAction SilentlyContinue
         if ($null -eq $ghCommand) {
             throw 'GitHub CLI (gh) was not found on PATH.'

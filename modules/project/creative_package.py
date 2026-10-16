@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import stat
 import tempfile
@@ -32,6 +33,7 @@ CREATIVE_PACKAGE_MAX_TEXT_BYTES = 5 * 1024 * 1024
 CREATIVE_PACKAGE_MAX_THUMBNAIL_BYTES = 25 * 1024 * 1024
 CREATIVE_PACKAGE_MAX_IMAGE_BYTES = 25 * 1024 * 1024
 CREATIVE_PACKAGE_MAX_MEMBERS = 256
+CREATIVE_PACKAGE_SCENE_MAXIMUM_DURATION_SECONDS = 6.6
 _PROJECT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
 _REQUIRED_FILE_FIELDS = (
     "script_file",
@@ -133,22 +135,34 @@ def materialize_creative_package(
         raise ValueError("words_per_minute must be positive.")
     duration_seconds = package.target_duration_seconds
     word_count = len(package.script.split())
-    estimated_seconds = word_count * 60 / words_per_minute
-    minimum_duration = max(
-        1,
-        duration_seconds - 60,
-    )
-    if estimated_seconds < minimum_duration:
+    minimum_word_count = math.ceil(duration_seconds * words_per_minute / 60)
+    if word_count < minimum_word_count:
+        estimated_seconds = word_count * 60 / words_per_minute
         raise CreativePackageError(
             "SCRIPT_DURATION_TOO_SHORT: supplied script estimates to "
             f"{estimated_seconds:.0f}s at {words_per_minute} words per minute; "
-            f"target is {duration_seconds}s (minimum accepted {minimum_duration}s)."
+            f"target is at least {duration_seconds}s ({minimum_word_count} words)."
         )
-    if estimated_seconds > duration_seconds + 60:
+    max_scene_words = max(1, math.floor(words_per_minute * 6 / 60))
+    minimum_scene_count = math.ceil(word_count / max_scene_words)
+    if len(package.storyboard.scenes) < minimum_scene_count:
         raise CreativePackageError(
-            "SCRIPT_DURATION_TOO_LONG: supplied script estimates to "
-            f"{estimated_seconds:.0f}s at {words_per_minute} words per minute; "
-            f"maximum accepted is {duration_seconds + 60}s."
+            "STORYBOARD_SCENE_COUNT_TOO_LOW: supplied script has "
+            f"{word_count} words and requires at least {minimum_scene_count} "
+            f"scenes at no more than {max_scene_words} words per scene; "
+            f"found {len(package.storyboard.scenes)}."
+        )
+    oversized_scenes = [
+        (scene.scene_id, len(scene.narration.split()))
+        for scene in package.storyboard.scenes
+        if len(scene.narration.split()) > max_scene_words
+    ]
+    if oversized_scenes:
+        scene_id, scene_word_count = oversized_scenes[0]
+        raise CreativePackageError(
+            f"STORYBOARD_SCENE_TOO_LONG: {scene_id} narration has "
+            f"{scene_word_count} words; maximum is {max_scene_words} at "
+            f"{words_per_minute} words per minute."
         )
 
     manager = ProjectManager(Path(projects_directory))
@@ -264,10 +278,10 @@ def materialize_creative_package(
 
     config = ProductionConfig(
         target_duration_seconds=duration_seconds,
-        minimum_duration_seconds=minimum_duration,
+        minimum_duration_seconds=duration_seconds,
         words_per_minute=words_per_minute,
         scene_minimum_duration_seconds=1.0,
-        scene_maximum_duration_seconds=6.0,
+        scene_maximum_duration_seconds=CREATIVE_PACKAGE_SCENE_MAXIMUM_DURATION_SECONDS,
     )
     (project_directory / "production_config.json").write_text(
         config.model_dump_json(indent=2) + "\n",

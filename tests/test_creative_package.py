@@ -44,11 +44,28 @@ def _write_package(
     *,
     project_id: str = "20261007_001",
     script: str | None = None,
+    max_words_per_scene: int = 14,
     overrides: dict | None = None,
     extra_files: dict[str, bytes] | None = None,
     thumbnail_size: tuple[int, int] = (1280, 720),
 ) -> dict[str, bytes]:
-    supplied_script = script or " ".join(["This is a supplied narration sentence."] * 24)
+    supplied_script = script or " ".join(["This is a supplied narration sentence."] * 28)
+    script_words = supplied_script.split()
+    narration_chunks = [
+        " ".join(script_words[start : start + max_words_per_scene])
+        for start in range(0, len(script_words), max_words_per_scene)
+    ]
+    scenes = [
+        {
+            "scene_id": f"scene_{index:03}",
+            "narration": narration,
+            "visual_description": "A supplied visual description.",
+            "image_prompt": "A supplied Flow image-generation prompt.",
+            "image_file": f"images/scene_{index:03}.png",
+        }
+        for index, narration in enumerate(narration_chunks, start=1)
+    ]
+    image_files = [scene["image_file"] for scene in scenes]
     manifest = {
         "project_id": project_id,
         "topic": "A user-selected curiosity topic",
@@ -59,7 +76,7 @@ def _write_package(
         "tags_file": "tags.txt",
         "thumbnail_file": "thumbnail.png",
         "storyboard_file": "storyboard.json",
-        "image_files": ["images/scene_001.png"],
+        "image_files": image_files,
     }
     manifest.update(overrides or {})
     files = {
@@ -72,19 +89,11 @@ def _write_package(
         manifest["storyboard_file"]: json.dumps(
             {
                 "thumbnail_prompt": "A clean Flow thumbnail prompt with no text.",
-                "scenes": [
-                    {
-                        "scene_id": "scene_001",
-                        "narration": supplied_script,
-                        "visual_description": "A supplied visual description.",
-                        "image_prompt": "A supplied Flow image-generation prompt.",
-                        "image_file": "images/scene_001.png",
-                    }
-                ]
+                "scenes": scenes,
             }
         ).encode(),
-        "images/scene_001.png": _png(1536, 864),
     }
+    files.update({image_file: _png(1536, 864) for image_file in image_files})
     files.update(extra_files or {})
     with ZipFile(path, "w") as archive:
         for name, contents in files.items():
@@ -263,6 +272,10 @@ def test_materializes_immutable_creative_assets_for_existing_engines(tmp_path):
     )
 
     assert project.project_id == package.manifest.project_id
+    production_config = json.loads(
+        (project_directory / "production_config.json").read_text(encoding="utf-8")
+    )
+    assert production_config["scene_maximum_duration_seconds"] == pytest.approx(6.6)
     assert (
         project_directory / "creative_input" / "script.txt"
     ).read_bytes() == files["script.txt"]
@@ -305,7 +318,7 @@ def test_materializes_immutable_creative_assets_for_existing_engines(tmp_path):
     loaded_assets = ImageBatchEngine.load_manifest(
         project_directory / "images" / "image_manifest.json"
     )
-    assert len(loaded_assets) == 1
+    assert len(loaded_assets) == len(package.storyboard.scenes)
     assert loaded_assets[0].provider == "flow_mcp"
 
     resumed_project, resumed_directory = materialize_creative_package(
@@ -331,6 +344,56 @@ def test_rejects_too_short_script_before_creating_project(tmp_path):
     assert not (tmp_path / "projects").exists()
 
 
+def test_rejects_insufficient_storyboard_scene_count_before_creating_project(tmp_path):
+    archive = tmp_path / "too-few-scenes.zip"
+    _write_package(archive, max_words_per_scene=140)
+    package = load_creative_package(archive)
+
+    with pytest.raises(
+        CreativePackageError,
+        match="STORYBOARD_SCENE_COUNT_TOO_LOW",
+    ):
+        materialize_creative_package(package, tmp_path / "projects")
+
+    assert not (tmp_path / "projects").exists()
+
+
+def test_rejects_storyboard_scene_excerpts_over_six_seconds(tmp_path):
+    archive = tmp_path / "overlong-scene.zip"
+    files = _write_package(archive)
+    storyboard = json.loads(files["storyboard.json"])
+    words = files["script.txt"].decode().split()
+    storyboard["scenes"][0]["narration"] = " ".join(words[:15])
+    storyboard["scenes"][1]["narration"] = " ".join(words[15:28])
+    files["storyboard.json"] = json.dumps(storyboard).encode()
+    with ZipFile(archive, "w") as output:
+        for name, contents in files.items():
+            output.writestr(name, contents)
+    package = load_creative_package(archive)
+
+    with pytest.raises(CreativePackageError, match="STORYBOARD_SCENE_TOO_LONG"):
+        materialize_creative_package(package, tmp_path / "projects")
+
+    assert not (tmp_path / "projects").exists()
+
+
+def test_accepts_script_longer_than_target_without_upper_duration_limit(tmp_path):
+    archive = tmp_path / "long-script.zip"
+    _write_package(
+        archive,
+        script=" ".join(["narration"] * 281),
+        overrides={"target_duration_minutes": 1},
+    )
+    package = load_creative_package(archive)
+
+    _, project_directory = materialize_creative_package(
+        package,
+        tmp_path / "projects",
+    )
+
+    assert project_directory.is_dir()
+
+
 def test_rejects_project_id_reuse_with_different_zip(tmp_path):
     projects = tmp_path / "projects"
     first_archive = tmp_path / "first.zip"
@@ -339,7 +402,10 @@ def test_rejects_project_id_reuse_with_different_zip(tmp_path):
     materialize_creative_package(first, projects)
 
     second_archive = tmp_path / "second.zip"
-    _write_package(second_archive, script=" ".join(["Different supplied narration."] * 24))
+    _write_package(
+        second_archive,
+        script=" ".join(["Different supplied narration."] * 47),
+    )
     second = load_creative_package(second_archive)
     with pytest.raises(CreativePackageError, match="different creative ZIP"):
         materialize_creative_package(second, projects)
