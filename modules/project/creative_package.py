@@ -33,7 +33,7 @@ CREATIVE_PACKAGE_MAX_TEXT_BYTES = 5 * 1024 * 1024
 CREATIVE_PACKAGE_MAX_THUMBNAIL_BYTES = 25 * 1024 * 1024
 CREATIVE_PACKAGE_MAX_IMAGE_BYTES = 25 * 1024 * 1024
 CREATIVE_PACKAGE_MAX_MEMBERS = 256
-CREATIVE_PACKAGE_SCENE_MAXIMUM_DURATION_SECONDS = 6.0
+CREATIVE_PACKAGE_SCENE_MAXIMUM_DURATION_SECONDS = 8.0
 _PROJECT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
 _REQUIRED_FILE_FIELDS = (
     "script_file",
@@ -143,7 +143,7 @@ def materialize_creative_package(
             f"{estimated_seconds:.0f}s at {words_per_minute} words per minute; "
             f"target is at least {duration_seconds}s ({minimum_word_count} words)."
         )
-    max_scene_words = max(1, math.floor(words_per_minute * 6 / 60))
+    max_scene_words = max(1, math.floor(words_per_minute * 8 / 60))
     minimum_scene_count = math.ceil(word_count / max_scene_words)
     if len(package.storyboard.scenes) < minimum_scene_count:
         raise CreativePackageError(

@@ -196,16 +196,16 @@ def test_enforces_the_exact_scene_maximum(
             )
 
 
-def test_caps_resumed_creative_package_at_six_second_scene_limit(
+def test_updates_resumed_creative_package_to_eight_second_scene_limit(
     tmp_path,
 ):
     project_directory = tmp_path / "project"
     _write_project(project_directory)
     _set_scene_start_times(
         project_directory,
-        second_scene_start=6.0,
-        third_scene_start=12.0,
-        audio_duration=17.5,
+        second_scene_start=8.0,
+        third_scene_start=16.0,
+        audio_duration=24.0,
     )
     (project_directory / "topic_selection.json").write_text(
         json.dumps({"source": "creative_package"}),
@@ -227,9 +227,9 @@ def test_caps_resumed_creative_package_at_six_second_scene_limit(
         config,
     )
 
-    assert storyboard.scenes[0].duration_seconds == pytest.approx(6.0)
+    assert storyboard.scenes[0].duration_seconds == pytest.approx(8.0)
     updated_config = json.loads(config_file.read_text(encoding="utf-8"))
-    assert updated_config["scene_maximum_duration_seconds"] == pytest.approx(6.0)
+    assert updated_config["scene_maximum_duration_seconds"] == pytest.approx(8.0)
 
 
 def test_accepts_absolute_manifest_image_paths_for_relative_project_directory(

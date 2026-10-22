@@ -31,7 +31,7 @@ def _apply_creative_package_scene_timing_policy(
         raise TypeError("The project topic selection must contain an object.")
     if source.get("source") != "creative_package":
         return production_config
-    if production_config.scene_maximum_duration_seconds <= (
+    if production_config.scene_maximum_duration_seconds == (
         CREATIVE_PACKAGE_SCENE_MAXIMUM_DURATION_SECONDS
     ):
         return production_config
@@ -50,7 +50,7 @@ def _apply_creative_package_scene_timing_policy(
             encoding="utf-8",
         )
     print(
-        "Capped supplied creative package scene maximum at "
+        "Set supplied creative package scene maximum to "
         f"{CREATIVE_PACKAGE_SCENE_MAXIMUM_DURATION_SECONDS:.3f}s."
     )
     return updated_config

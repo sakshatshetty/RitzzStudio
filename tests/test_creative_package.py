@@ -275,7 +275,7 @@ def test_materializes_immutable_creative_assets_for_existing_engines(tmp_path):
     production_config = json.loads(
         (project_directory / "production_config.json").read_text(encoding="utf-8")
     )
-    assert production_config["scene_maximum_duration_seconds"] == pytest.approx(6.0)
+    assert production_config["scene_maximum_duration_seconds"] == pytest.approx(8.0)
     assert production_config["words_per_minute"] == 156
     assert production_config["voice_speed"] == pytest.approx(1.0)
     assert (
@@ -360,13 +360,13 @@ def test_rejects_insufficient_storyboard_scene_count_before_creating_project(tmp
     assert not (tmp_path / "projects").exists()
 
 
-def test_rejects_storyboard_scene_excerpts_over_six_seconds(tmp_path):
+def test_rejects_storyboard_scene_excerpts_over_eight_seconds(tmp_path):
     archive = tmp_path / "overlong-scene.zip"
     files = _write_package(archive)
     storyboard = json.loads(files["storyboard.json"])
     words = files["script.txt"].decode().split()
-    storyboard["scenes"][0]["narration"] = " ".join(words[:16])
-    storyboard["scenes"][1]["narration"] = " ".join(words[16:28])
+    storyboard["scenes"][0]["narration"] = " ".join(words[:21])
+    storyboard["scenes"][1]["narration"] = " ".join(words[21:28])
     files["storyboard.json"] = json.dumps(storyboard).encode()
     with ZipFile(archive, "w") as output:
         for name, contents in files.items():

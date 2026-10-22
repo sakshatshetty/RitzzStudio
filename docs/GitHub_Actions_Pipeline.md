@@ -64,11 +64,11 @@ Workflow file: `.github/workflows/ritzz-creative-production.yml`
 
 Creative-package scripts are checked against 156 spoken words per minute
 (1,404 words for a nine-minute minimum). Imported Flow scenes use actual
-narration alignment and a strict six-second maximum hold; resumed creative
-packages with an older, higher scene ceiling are capped at six seconds when
-the storyboard stage is rerun. The master prompt targets image changes every
-two to three seconds, starts a new image at each beat, and keeps the image cut
-on a meaningful narration boundary.
+narration alignment and a strict eight-second maximum hold; longer holds should
+target about six seconds. Resumed creative packages are updated to the
+eight-second ceiling when the storyboard stage is rerun. The master prompt
+targets image changes every two to three seconds, starts a new image at each
+beat, and keeps the image cut on a meaningful narration boundary.
 
 The Windows launchers and scripts are versioned in the repository:
 `creative_package.bat`, `creative_work.bat` / `creative_work.ps1`,
