@@ -1,0 +1,41 @@
+name: Set up pinned FFmpeg
+description: Install verified FFmpeg and FFprobe binaries without apt
+runs:
+  using: composite
+  steps:
+    - name: Download and verify FFmpeg
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        archive="$RUNNER_TEMP/ritzz-ffmpeg.tar.xz"
+        install_dir="$RUNNER_TEMP/ritzz-ffmpeg"
+        archive_url="https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-21-13-06/ffmpeg-N-127900-ge2798d5cad-linux64-gpl.tar.xz"
+        archive_sha256="cf339ce89e952120f6e01e57718c1e2e3c1914107ae81649a88156caa5cd6632"
+
+        curl --fail --location --retry 2 --connect-timeout 10 --max-time 300 \
+          "$archive_url" \
+          --output "$archive"
+        if ! echo "$archive_sha256  $archive" | sha256sum --check --status; then
+          echo "Downloaded FFmpeg archive failed SHA-256 verification." >&2
+          exit 1
+        fi
+
+        mkdir -p "$install_dir"
+        tar --extract --xz --file "$archive" --directory "$install_dir" --strip-components=1
+        rm -- "$archive"
+
+        test -x "$install_dir/bin/ffmpeg" || {
+          echo "FFmpeg archive did not contain bin/ffmpeg." >&2
+          exit 1
+        }
+        test -x "$install_dir/bin/ffprobe" || {
+          echo "FFmpeg archive did not contain bin/ffprobe." >&2
+          exit 1
+        }
+
+        echo "$install_dir/bin" >> "$GITHUB_PATH"
+        echo "RITZZ_FFMPEG_PATH=$install_dir/bin/ffmpeg" >> "$GITHUB_ENV"
+        echo "RITZZ_FFPROBE_PATH=$install_dir/bin/ffprobe" >> "$GITHUB_ENV"
+        "$install_dir/bin/ffmpeg" -version
+        "$install_dir/bin/ffprobe" -version
