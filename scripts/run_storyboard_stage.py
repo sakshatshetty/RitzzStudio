@@ -19,9 +19,6 @@ from modules.project.manager import ProjectManager
 from modules.storyboard.models import Storyboard, StoryboardScene
 from modules.video.sync_engine import VideoSynchronizationEngine
 
-SCENE_DURATION_MAXIMUM_TOLERANCE_SECONDS = 0.1
-
-
 def _apply_creative_package_scene_timing_policy(
     project_directory: Path,
     production_config: ProductionConfig,
@@ -34,9 +31,8 @@ def _apply_creative_package_scene_timing_policy(
         raise TypeError("The project topic selection must contain an object.")
     if source.get("source") != "creative_package":
         return production_config
-    if (
-        production_config.scene_maximum_duration_seconds
-        >= CREATIVE_PACKAGE_SCENE_MAXIMUM_DURATION_SECONDS
+    if production_config.scene_maximum_duration_seconds <= (
+        CREATIVE_PACKAGE_SCENE_MAXIMUM_DURATION_SECONDS
     ):
         return production_config
 
@@ -54,7 +50,7 @@ def _apply_creative_package_scene_timing_policy(
             encoding="utf-8",
         )
     print(
-        "Updated supplied creative package scene maximum to "
+        "Capped supplied creative package scene maximum at "
         f"{CREATIVE_PACKAGE_SCENE_MAXIMUM_DURATION_SECONDS:.3f}s."
     )
     return updated_config
@@ -164,12 +160,10 @@ def build_audio_timed_storyboard(
         maximum_overage = (
             duration - production_config.scene_maximum_duration_seconds
         )
-        if maximum_overage > SCENE_DURATION_MAXIMUM_TOLERANCE_SECONDS:
+        if maximum_overage > 0:
             raise ValueError(
                 f"{scene.scene_id} holds for {duration:.3f}s, above the configured "
-                f"{production_config.scene_maximum_duration_seconds:.3f}s maximum "
-                f"by more than the {SCENE_DURATION_MAXIMUM_TOLERANCE_SECONDS:.3f}s "
-                "timing tolerance. "
+                f"{production_config.scene_maximum_duration_seconds:.3f}s maximum. "
                 "Split long narration across additional prepared scenes."
             )
         timed_scenes.append(

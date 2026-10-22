@@ -32,7 +32,7 @@ class ScriptEngine:
     # Script requirements
     # ---------------------------------------------------------
 
-    WORDS_PER_MINUTE = 140
+    WORDS_PER_MINUTE = 156
     MINIMUM_HOOK_SECONDS = 20
     MAXIMUM_HOOK_SECONDS = 35
 

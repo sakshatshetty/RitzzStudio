@@ -150,11 +150,11 @@ def test_times_supplied_scenes_to_character_alignment_with_static_hard_cuts(
 @pytest.mark.parametrize(
     ("second_scene_start", "third_scene_start", "accepted"),
     [
-        (6.083, 12.0, True),
-        (6.101, 12.1, False),
+        (6.0, 12.0, True),
+        (6.001, 12.1, False),
     ],
 )
-def test_allows_only_small_scene_maximum_timing_overage(
+def test_enforces_the_exact_scene_maximum(
     tmp_path,
     second_scene_start,
     third_scene_start,
@@ -182,11 +182,11 @@ def test_allows_only_small_scene_maximum_timing_overage(
             "First image. Second scene. Last image.",
             config,
         )
-        assert storyboard.scenes[0].duration_seconds == pytest.approx(6.083)
+        assert storyboard.scenes[0].duration_seconds == pytest.approx(6.0)
     else:
         with pytest.raises(
             ValueError,
-            match="above the configured 6.000s maximum by more than the 0.100s",
+            match="above the configured 6.000s maximum",
         ):
             build_audio_timed_storyboard(
                 project_directory,
@@ -196,15 +196,15 @@ def test_allows_only_small_scene_maximum_timing_overage(
             )
 
 
-def test_migrates_resumed_creative_package_to_6_6_second_scene_ceiling(
+def test_caps_resumed_creative_package_at_six_second_scene_limit(
     tmp_path,
 ):
     project_directory = tmp_path / "project"
     _write_project(project_directory)
     _set_scene_start_times(
         project_directory,
-        second_scene_start=6.582,
-        third_scene_start=12.6,
+        second_scene_start=6.0,
+        third_scene_start=12.0,
         audio_duration=17.5,
     )
     (project_directory / "topic_selection.json").write_text(
@@ -215,7 +215,7 @@ def test_migrates_resumed_creative_package_to_6_6_second_scene_ceiling(
         target_duration_seconds=60,
         minimum_duration_seconds=1,
         scene_minimum_duration_seconds=1,
-        scene_maximum_duration_seconds=6,
+        scene_maximum_duration_seconds=6.6,
     )
     config_file = project_directory / "production_config.json"
     config_file.write_text(config.model_dump_json(), encoding="utf-8")
@@ -227,9 +227,9 @@ def test_migrates_resumed_creative_package_to_6_6_second_scene_ceiling(
         config,
     )
 
-    assert storyboard.scenes[0].duration_seconds == pytest.approx(6.582)
+    assert storyboard.scenes[0].duration_seconds == pytest.approx(6.0)
     updated_config = json.loads(config_file.read_text(encoding="utf-8"))
-    assert updated_config["scene_maximum_duration_seconds"] == pytest.approx(6.6)
+    assert updated_config["scene_maximum_duration_seconds"] == pytest.approx(6.0)
 
 
 def test_accepts_absolute_manifest_image_paths_for_relative_project_directory(

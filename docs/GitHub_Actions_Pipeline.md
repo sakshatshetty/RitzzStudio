@@ -62,11 +62,13 @@ Workflow file: `.github/workflows/ritzz-creative-production.yml`
    Python importer used by Actions, and creates a GitHub release whose tag is
    exactly the project ID. The asset name is `creative-package.zip`.
 
-Imported Flow scenes use a 6.6-second configured hold ceiling, plus the
-existing 0.1-second alignment tolerance. This accommodates narration-aligned
-static holds without changing scene text or image assignments; older
-creative-package checkpoints are migrated to the same ceiling when the
-storyboard stage is rerun.
+Creative-package scripts are checked against 156 spoken words per minute
+(1,404 words for a nine-minute minimum). Imported Flow scenes use actual
+narration alignment and a strict six-second maximum hold; resumed creative
+packages with an older, higher scene ceiling are capped at six seconds when
+the storyboard stage is rerun. The master prompt targets image changes every
+two to three seconds, starts a new image at each beat, and keeps the image cut
+on a meaningful narration boundary.
 
 The Windows launchers and scripts are versioned in the repository:
 `creative_package.bat`, `creative_work.bat` / `creative_work.ps1`,
