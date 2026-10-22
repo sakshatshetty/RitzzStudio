@@ -23,6 +23,7 @@ class ProductionConfig(BaseModel):
     target_duration_seconds: int = Field(default=480, ge=1)
     minimum_duration_seconds: int = Field(default=480, ge=1)
     words_per_minute: int = Field(default=140, ge=80, le=220)
+    voice_speed: float = Field(default=0.90, ge=0.7, le=1.2)
     script_profile: str = "RITZZ_ANCIENT_HUMAN_CURIOSITY"
     scene_minimum_duration_seconds: float = Field(default=3.0, ge=1.0)
     scene_maximum_duration_seconds: float = Field(default=4.0, gt=0, le=10.0)

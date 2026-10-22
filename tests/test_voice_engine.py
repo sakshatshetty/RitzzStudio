@@ -230,6 +230,7 @@ def test_create_request():
         == "narration.mp3"
     )
     assert request.voice_settings.stability == 0.9
+    assert request.voice_settings.speed == pytest.approx(0.90)
     assert request.minimum_duration_seconds == 480
 
 
@@ -520,6 +521,29 @@ def test_generate_rejects_audio_below_requested_minimum():
 
     assert exc.value.result.actual_duration_seconds == 179.9
     assert exc.value.result.minimum_duration_seconds == 180
+    assert "approximately 1.0 words per minute" in str(exc.value)
+    assert "add approximately 1 words" in str(exc.value)
+
+
+def test_short_narration_reports_measured_rate_and_exact_word_shortfall(
+    tmp_path,
+):
+    words = 1296
+    provider = MockVoiceProvider()
+    engine = VoiceEngine(provider, duration_probe=lambda _: 507.35)
+    request = VoiceGenerationRequest(
+        voice_id="ritzz_voice",
+        text=" ".join(["word"] * words),
+        output_directory=str(tmp_path),
+        minimum_duration_seconds=540,
+    )
+
+    with pytest.raises(NarrationTooShortError) as exc:
+        engine.generate(request)
+
+    assert exc.value.result.actual_duration_seconds == 507.35
+    assert "approximately 153.3 words per minute" in str(exc.value)
+    assert "add approximately 84 words" in str(exc.value)
 
 
 def test_generate_records_duration_when_minimum_is_met(tmp_path):

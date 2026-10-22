@@ -11,6 +11,7 @@ from modules.voice.models import (
     VoiceGenerationRequest,
     VoiceGenerationResult,
     VoiceModel,
+    VoiceSettings,
 )
 from modules.voice.text import ensure_terminal_punctuation
 
@@ -103,6 +104,7 @@ class VoiceEngine:
                 else None
             ),
             minimum_duration_seconds=float(config.minimum_duration_seconds),
+            voice_settings=VoiceSettings(speed=config.voice_speed),
         )
 
     def generate(
@@ -181,12 +183,17 @@ class VoiceEngine:
             return
 
         words = len(re.findall(r"\b[\w’'-]+\b", request.text))
-        recommended_words = math.ceil(words * minimum / actual * 1.08)
-        additional_words = max(1, recommended_words - words)
+        observed_words_per_minute = words * 60 / actual
+        minimum_words_at_observed_rate = math.ceil(
+            words * minimum / actual
+        )
+        additional_words = max(1, minimum_words_at_observed_rate - words)
         message = (
             f"Generated narration measured {actual:.3f}s; the required minimum "
-            f"is {minimum:.3f}s. Add approximately {additional_words} words to "
-            "the script and regenerate. This audio cannot proceed to scene timing."
+            f"is {minimum:.3f}s. Its measured pace was approximately "
+            f"{observed_words_per_minute:.1f} words per minute; at this pace, add "
+            f"approximately {additional_words} words or reduce voice speed and "
+            "regenerate. This audio cannot proceed to scene timing."
         )
         result.status = "failed"
         result.error_message = message
