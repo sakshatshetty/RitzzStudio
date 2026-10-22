@@ -317,6 +317,13 @@ channel title and run `scripts/verify_youtube_channel.py` before storing the
 Base64 token as the matching Actions secret. Never reuse one channel's token
 secret for another selection.
 
+If channel verification fails with `invalid_grant`, Google has rejected the
+stored refresh token because it expired or was revoked. Reauthorize that
+channel with `scripts/authorize_youtube.py`, verify the new token with
+`scripts/verify_youtube_channel.py`, Base64-encode the resulting token JSON, and
+replace only that channel's Actions secret. Do not put token contents in source
+control or workflow logs.
+
 The `RITZZ_VIDEO_BITRATE` Actions variable is optional and defaults to `10M`.
 The render and upload jobs use the same value; the upload gate rejects targets
 or measured masters outside 8–12 Mbps.
