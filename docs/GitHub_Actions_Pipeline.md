@@ -100,14 +100,14 @@ Replicate, research, storyboard-planning, image-generation, or thumbnail-
 generation API is called in Actions.
 
 The supplied script is narrated with the configured RITZZ ElevenLabs voice
-(`eleven_multilingual_v2`, speed `0.90`, stability `0.90`, similarity boost
+(`eleven_multilingual_v2`, speed `0.92`, stability `0.90`, similarity boost
 `0.75`, style exaggeration `0`, speaker boost enabled). Scene starts are mapped
 to actual ElevenLabs character timestamps. The workflow validates scene/image
 coverage, uses static stills and hard cuts, then renders and runs technical
 video QA. A technical failure blocks approval. The rendered video is the human
 check for image/narration relevance and image quality.
 
-The `0.90` speed is a configurable production default calibrated against
+The `0.92` speed is a configurable production default calibrated against
 measured narration pacing; the requested minimum duration remains a hard gate.
 If narration is still short, the error reports its measured words-per-minute
 rate and the approximate word count needed at that pace. Audio is never stretched.
