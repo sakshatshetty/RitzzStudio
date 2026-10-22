@@ -52,15 +52,14 @@ def test_primary_workflow_selects_a_channel_and_uses_its_oauth_token():
     assert "python scripts/verify_youtube_channel.py" in workflow
 
 
-def test_workflow_uses_https_ubuntu_mirror_with_bounded_apt_retries():
+def test_workflow_avoids_apt_and_pins_the_rendering_font_download():
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
-    assert workflow.count(
-        "https://archive.ubuntu.com/ubuntu"
-    ) == 3
-    assert workflow.count(
-        "Acquire::Retries=1 -o Acquire::http::Timeout=15 update"
-    ) == 3
+    assert "sudo apt-get" not in workflow
+    assert workflow.count("command -v ffmpeg") == 3
+    assert "google/fonts/45e3d5269e4a17d823f6d84470bc084dc5ae46f6" in workflow
+    assert "ComicNeue-Bold.ttf" in workflow
+    assert 'RITZZ_FONT_PATH=$RUNNER_TEMP/ritzz-fonts/ComicNeue-Bold.ttf' in workflow
 
 
 def test_primary_workflow_keeps_legacy_topic_discovery_separate():

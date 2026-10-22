@@ -76,11 +76,10 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
-      - name: Install media-test tools
+      - name: Check preinstalled media-test tools
         run: |
-          sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources
-          sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=15 update
-          sudo apt-get install --yes --no-install-recommends ffmpeg fonts-comic-neue fonts-dejavu-core
+          command -v ffmpeg
+          test -f /usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf
 
       - name: Validate creative production secrets
         run: >-
@@ -132,12 +131,18 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install dependencies and FFmpeg
+      - name: Install dependencies and prepare rendering font
         run: |
           python -m pip install -r requirements.txt
-          sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources
-          sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=15 update
-          sudo apt-get install --yes --no-install-recommends ffmpeg fonts-comic-neue fonts-dejavu-core
+          command -v ffmpeg
+          mkdir -p "$RUNNER_TEMP/ritzz-fonts"
+          curl --fail --location --retry 2 --connect-timeout 10 --max-time 60 \
+            "https://raw.githubusercontent.com/google/fonts/45e3d5269e4a17d823f6d84470bc084dc5ae46f6/ofl/comicneue/ComicNeue-Bold.ttf" \
+            --output "$RUNNER_TEMP/ritzz-fonts/ComicNeue-Bold.ttf"
+          curl --fail --location --retry 2 --connect-timeout 10 --max-time 60 \
+            "https://raw.githubusercontent.com/google/fonts/45e3d5269e4a17d823f6d84470bc084dc5ae46f6/ofl/comicneue/OFL.txt" \
+            --output "$RUNNER_TEMP/ritzz-fonts/OFL.txt"
+          echo "RITZZ_FONT_PATH=$RUNNER_TEMP/ritzz-fonts/ComicNeue-Bold.ttf" >> "$GITHUB_ENV"
 
       - name: Download the user-supplied ZIP
         if: ${{ inputs.mode == 'NEW' }}
@@ -332,12 +337,10 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Install dependencies and validate upload media
+      - name: Install dependencies and check upload media tools
         run: |
           python -m pip install -r requirements.txt
-          sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list.d/ubuntu.sources
-          sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=15 update
-          sudo apt-get install --yes --no-install-recommends ffmpeg
+          command -v ffmpeg
 
       - name: Download reviewed project
         uses: actions/download-artifact@v4
