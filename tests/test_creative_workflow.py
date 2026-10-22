@@ -52,6 +52,17 @@ def test_primary_workflow_selects_a_channel_and_uses_its_oauth_token():
     assert "python scripts/verify_youtube_channel.py" in workflow
 
 
+def test_workflow_uses_https_ubuntu_mirror_with_bounded_apt_retries():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+
+    assert workflow.count(
+        "https://archive.ubuntu.com/ubuntu"
+    ) == 3
+    assert workflow.count(
+        "Acquire::Retries=1 -o Acquire::http::Timeout=15 update"
+    ) == 3
+
+
 def test_primary_workflow_keeps_legacy_topic_discovery_separate():
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
