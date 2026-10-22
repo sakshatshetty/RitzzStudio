@@ -100,12 +100,17 @@ Replicate, research, storyboard-planning, image-generation, or thumbnail-
 generation API is called in Actions.
 
 The supplied script is narrated with the configured RITZZ ElevenLabs voice
-(`eleven_multilingual_v2`, speed `1.0`, stability `0.90`, similarity boost
+(`eleven_multilingual_v2`, speed `0.92`, stability `0.90`, similarity boost
 `0.75`, style exaggeration `0`, speaker boost enabled). Scene starts are mapped
 to actual ElevenLabs character timestamps. The workflow validates scene/image
 coverage, uses static stills and hard cuts, then renders and runs technical
 video QA. A technical failure blocks approval. The rendered video is the human
 check for image/narration relevance and image quality.
+
+The `0.92` speed is a configurable production default calibrated against
+measured narration pacing; the requested minimum duration remains a hard gate.
+If narration is still short, the error reports its measured words-per-minute
+rate and the approximate word count needed at that pace. Audio is never stretched.
 
 At workflow dispatch, select `Ritzz-Explains`, `RitzzHistory`, or `RitzzTech1`.
 The selected channel is shown in the review summary and controls which
@@ -311,6 +316,13 @@ processing-status check after upload. To create a token for a channel, set
 channel title and run `scripts/verify_youtube_channel.py` before storing the
 Base64 token as the matching Actions secret. Never reuse one channel's token
 secret for another selection.
+
+If channel verification fails with `invalid_grant`, Google has rejected the
+stored refresh token because it expired or was revoked. Reauthorize that
+channel with `scripts/authorize_youtube.py`, verify the new token with
+`scripts/verify_youtube_channel.py`, Base64-encode the resulting token JSON, and
+replace only that channel's Actions secret. Do not put token contents in source
+control or workflow logs.
 
 The `RITZZ_VIDEO_BITRATE` Actions variable is optional and defaults to `10M`.
 The render and upload jobs use the same value; the upload gate rejects targets
