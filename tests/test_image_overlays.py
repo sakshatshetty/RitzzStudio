@@ -1,3 +1,4 @@
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -11,7 +12,12 @@ from modules.image.image_overlays import (
 )
 
 FFMPEG = shutil.which("ffmpeg")
-FONT = next((font for font in FONT_CANDIDATES if font.is_file()), None)
+configured_font = os.environ.get("RITZZ_FONT_PATH")
+FONT = (
+    Path(configured_font)
+    if configured_font and Path(configured_font).is_file()
+    else next((font for font in FONT_CANDIDATES if font.is_file()), None)
+)
 pytestmark = pytest.mark.skipif(
     FFMPEG is None or FONT is None,
     reason="FFmpeg and a supported font are required for image overlay tests.",
