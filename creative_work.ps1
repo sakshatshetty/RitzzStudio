@@ -299,8 +299,8 @@ try {
     catch {
         throw "The '#Storyboard' section must contain valid JSON: $($_.Exception.Message)"
     }
-    if ($null -eq $storyboard.scenes -or $storyboard.scenes.Count -lt 1 -or $storyboard.scenes.Count -gt 200) {
-        throw 'The Storyboard JSON must contain between 1 and 200 scenes.'
+    if ($null -eq $storyboard.scenes -or $storyboard.scenes.Count -lt 1 -or $storyboard.scenes.Count -gt 249) {
+        throw 'The Storyboard JSON must contain between 1 and 249 scenes (the ZIP supports up to 256 members).'
     }
     if ([string]::IsNullOrWhiteSpace([string]$storyboard.thumbnail_prompt)) {
         throw 'The Storyboard JSON must include a Flow-ready thumbnail_prompt.'
@@ -321,6 +321,10 @@ try {
             if ([string]::IsNullOrWhiteSpace([string]$scene.$field)) {
                 throw "$expectedSceneId is missing the '$field' value."
             }
+        }
+        $sceneWordCount = [regex]::Matches([string]$scene.narration, '\S+').Count
+        if ($sceneWordCount -gt 22) {
+            throw "$expectedSceneId narration has $sceneWordCount words; the maximum is 22 words (about eight seconds at 170 words per minute). Split the scene at a natural clause boundary."
         }
         if ($scene.image_file -cne "images/$expectedSceneId.png") {
             throw "$expectedSceneId image_file must be 'images/$expectedSceneId.png'."
@@ -411,16 +415,23 @@ try {
         throw "Word count mismatch: header says $claimedWordCount; script contains $actualWordCount."
     }
     $targetMinutes = [int]$durationText
-    $estimatedSeconds = $actualWordCount * 60 / 140
+    $estimatedSeconds = $actualWordCount * 60 / 170
     $targetSeconds = $targetMinutes * 60
     if (
         $estimatedSeconds -lt [Math]::Max(1, $targetSeconds - 60) -or
         $estimatedSeconds -gt ($targetSeconds + 60)
     ) {
         throw (
-            "Script estimates to $([Math]::Round($estimatedSeconds)) seconds at 140 words per minute; " +
+            "Script estimates to $([Math]::Round($estimatedSeconds)) seconds at 170 words per minute; " +
             "the accepted range for $targetMinutes minute(s) is " +
             "$([Math]::Max(1, $targetSeconds - 60))-$($targetSeconds + 60) seconds."
+        )
+    }
+    $minimumSceneCount = [int][Math]::Ceiling($actualWordCount / 22.0)
+    if ($storyboard.scenes.Count -lt $minimumSceneCount) {
+        throw (
+            "Storyboard has $($storyboard.scenes.Count) scenes for $actualWordCount script words; " +
+            "at least $minimumSceneCount scenes are required at a maximum of 22 narration words per scene."
         )
     }
 

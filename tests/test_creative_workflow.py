@@ -30,6 +30,17 @@ def test_primary_workflow_uses_supplied_creative_and_gates_private_upload():
     assert "run_creative_research.py" not in workflow
 
 
+def test_windows_creative_builder_matches_current_wpm_and_scene_limits():
+    builder = Path("creative_work.ps1").read_text(encoding="utf-8")
+
+    assert "$storyboard.scenes.Count -gt 249" in builder
+    assert "$sceneWordCount -gt 22" in builder
+    assert "170 words per minute" in builder
+    assert "$actualWordCount / 22.0" in builder
+    assert "between 1 and 200 scenes" not in builder
+    assert "140 words per minute" not in builder
+
+
 def test_primary_workflow_selects_a_channel_and_uses_its_oauth_token():
     workflow = WORKFLOW.read_text(encoding="utf-8")
     dispatch_inputs = workflow.split("  creative_package_release_tag:", 1)[0]
