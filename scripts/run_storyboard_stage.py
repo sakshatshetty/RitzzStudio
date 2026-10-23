@@ -11,10 +11,12 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from modules.project.config import ProductionConfig
 from modules.project.creative_package import (
+    CREATIVE_PACKAGE_MAX_SCENE_WORDS,
     CREATIVE_PACKAGE_SCENE_MINIMUM_DURATION_SECONDS,
     CREATIVE_PACKAGE_SCENE_MAXIMUM_DURATION_SECONDS,
     CreativeStoryboard,
     _compact_text,
+    split_narration_sentences,
 )
 from modules.project.manager import ProjectManager
 from modules.storyboard.models import Storyboard, StoryboardScene
@@ -30,9 +32,73 @@ def _scene_ending_boundary(narration: str) -> str | None:
         ending = ending[:-1].rstrip()
     if ending and ending[-1] in ".!?…":
         return "sentence"
-    if ending and ending[-1] in ",;:—–":
-        return "clause"
     return None
+
+
+def _is_one_word_sentence_pair(narration: str) -> bool:
+    sentences = split_narration_sentences(narration)
+    return len(sentences) == 2 and all(
+        len(sentence.split()) == 1 for sentence in sentences
+    )
+
+
+def _first_grouping_failure(
+    scenes: list[StoryboardScene],
+    scene_matches: list[dict[str, float]],
+    audio_duration_seconds: float,
+    *,
+    minimum_duration_seconds: float,
+    maximum_duration_seconds: float,
+) -> str:
+    sentence_start_index = 0
+    for end_index, scene in enumerate(scenes):
+        is_final_scene = end_index == len(scenes) - 1
+        if not is_final_scene and _scene_ending_boundary(scene.narration) != "sentence":
+            continue
+        narration = " ".join(
+            item.narration.strip()
+            for item in scenes[sentence_start_index : end_index + 1]
+        )
+        sentences = split_narration_sentences(narration)
+        start_seconds = (
+            0.0
+            if sentence_start_index == 0
+            else scene_matches[sentence_start_index]["start_seconds"]
+        )
+        end_seconds = (
+            scene_matches[end_index + 1]["start_seconds"]
+            if end_index + 1 < len(scenes)
+            else audio_duration_seconds
+        )
+        duration = end_seconds - start_seconds
+        word_count = len(narration.split())
+        if word_count > CREATIVE_PACKAGE_MAX_SCENE_WORDS:
+            return (
+                f"{scene.scene_id} sentence has {word_count} words; "
+                f"the maximum is {CREATIVE_PACKAGE_MAX_SCENE_WORDS}."
+            )
+        if len(sentences) != 1 and not _is_one_word_sentence_pair(narration):
+            return (
+                f"{scene.scene_id} groups {len(sentences)} complete sentences; "
+                "use one sentence per scene, or pair exactly two one-word sentences."
+            )
+        if duration < minimum_duration_seconds and not _is_one_word_sentence_pair(
+            narration
+        ):
+            return (
+                f"{scene.scene_id} sentence holds for {duration:.3f}s, below "
+                f"the configured {minimum_duration_seconds:.3f}s minimum."
+            )
+        if duration > maximum_duration_seconds:
+            return (
+                f"{scene.scene_id} sentence holds for {duration:.3f}s, above "
+                f"the configured {maximum_duration_seconds:.3f}s maximum."
+            )
+        sentence_start_index = end_index + 1
+    return (
+        "The supplied scene boundaries do not map to one complete sentence per "
+        "scene, or a permitted pair of one-word sentences."
+    )
 
 
 def _group_source_scenes(
@@ -50,12 +116,12 @@ def _group_source_scenes(
     count = len(scenes)
     best: list[
         tuple[
-            tuple[int, float, int],
+            tuple[float, int],
             list[tuple[int, int, str]],
         ]
         | None
     ] = [None] * (count + 1)
-    best[count] = ((0, 0.0, 0), [])
+    best[count] = ((0.0, 0), [])
 
     for start_index in range(count - 1, -1, -1):
         start_seconds = (
@@ -73,7 +139,7 @@ def _group_source_scenes(
             if duration > maximum_duration_seconds:
                 break
             suffix = best[end_index + 1]
-            if duration < minimum_duration_seconds or suffix is None:
+            if suffix is None:
                 continue
 
             boundary = (
@@ -81,14 +147,26 @@ def _group_source_scenes(
                 if end_index + 1 < count
                 else "sentence"
             )
-            if boundary is None:
+            if boundary != "sentence":
+                continue
+
+            narration = " ".join(
+                scene.narration.strip()
+                for scene in scenes[start_index : end_index + 1]
+            )
+            sentence_count = len(split_narration_sentences(narration))
+            short_sentence_pair = _is_one_word_sentence_pair(narration)
+            if sentence_count != 1 and not short_sentence_pair:
+                continue
+            if len(narration.split()) > CREATIVE_PACKAGE_MAX_SCENE_WORDS:
+                continue
+            if duration < minimum_duration_seconds and not short_sentence_pair:
                 continue
 
             suffix_cost, suffix_groups = suffix
             cost = (
-                suffix_cost[0] + (boundary == "clause"),
-                suffix_cost[1] + abs(duration - target_duration_seconds),
-                suffix_cost[2] + 1,
+                suffix_cost[0] + abs(duration - target_duration_seconds),
+                suffix_cost[1] + 1,
             )
             current = best[start_index]
             if current is None or cost < current[0]:
@@ -99,33 +177,20 @@ def _group_source_scenes(
 
     result = best[0]
     if result is None:
-        scene_id = scenes[0].scene_id
-        duration = (
-            scene_matches[1]["start_seconds"]
-            if count > 1
-            else audio_duration_seconds
-        )
-        if duration < minimum_duration_seconds:
-            detail = (
-                f"{scene_id} holds for {duration:.3f}s, below the configured "
-                f"{minimum_duration_seconds:.3f}s minimum."
+            detail = _first_grouping_failure(
+                scenes,
+                scene_matches,
+                audio_duration_seconds,
+                minimum_duration_seconds=minimum_duration_seconds,
+                maximum_duration_seconds=maximum_duration_seconds,
             )
-        elif duration > maximum_duration_seconds:
-            detail = (
-                f"{scene_id} holds for {duration:.3f}s, above the configured "
-                f"{maximum_duration_seconds:.3f}s maximum."
+            raise ValueError(
+                "Could not map the supplied storyboard to one sentence per visual "
+                "scene (except a pair of one-word sentences) "
+                f"with holds from {minimum_duration_seconds:.3f}s to "
+                f"{maximum_duration_seconds:.3f}s. {detail} Revise the storyboard "
+                "so every scene ends at a complete sentence boundary."
             )
-        else:
-            detail = (
-                "The supplied scene boundaries do not provide a complete "
-                "sentence or natural clause within the allowed hold times."
-            )
-        raise ValueError(
-            "Could not group the supplied storyboard into complete visual beats "
-            f"with holds from {minimum_duration_seconds:.3f}s to "
-            f"{maximum_duration_seconds:.3f}s. {detail} Revise the storyboard "
-            "so scene boundaries follow complete thoughts or natural clauses."
-        )
 
     grouped_scenes: list[tuple[StoryboardScene, str]] = []
     for start_index, end_index, boundary in result[1]:
@@ -296,7 +361,10 @@ def build_audio_timed_storyboard(
             else alignment.audio_duration_seconds
         )
         duration = end - start
-        if duration < production_config.scene_minimum_duration_seconds:
+        if (
+            duration < production_config.scene_minimum_duration_seconds
+            and not _is_one_word_sentence_pair(scene.narration)
+        ):
             raise ValueError(
                 f"{scene.scene_id} holds for {duration:.3f}s, below the configured "
                 f"{production_config.scene_minimum_duration_seconds:.3f}s minimum."

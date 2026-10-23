@@ -63,16 +63,16 @@ Workflow file: `.github/workflows/ritzz-creative-production.yml`
    exactly the project ID. The asset name is `creative-package.zip`.
 
 Creative-package scripts are checked against 170 spoken words per minute
-(1,530 words for a nine-minute minimum). Imported Flow fragments are grouped
-at complete-sentence boundaries, or natural clause boundaries when needed,
-using actual narration alignment. Each resulting image hold must be at least
-three seconds and no more than eight seconds; aim for four to six seconds, with
-a five-second planning target. When the supplied scene boundaries cannot form
-valid groups under those limits, the storyboard stage stops and asks for the
-storyboard to be revised rather than cutting through an unfinished thought.
-Resumed creative packages are updated to the three-to-eight-second hold policy
-when the storyboard stage is rerun. The master prompt plans images around
-complete meaningful thoughts and uses actual audio timestamps for hard cuts.
+(1,530 words for a nine-minute minimum). Each scene maps to one complete
+sentence, with only a pair of adjacent one-word sentences allowed to share a
+scene. Sentences are limited to 15 words. The storyboard stage uses actual
+narration alignment for a hard cut at the beginning of each next sentence.
+Normal holds must be at least three seconds and no more than eight; a paired
+one-word sentence scene may be shorter than three seconds. When the supplied
+storyboard cannot follow these boundaries within the timing limits, the stage
+stops and asks for revision instead of cutting through a sentence. Resumed
+creative packages are updated to the same timing policy when the storyboard
+stage is rerun.
 The former
 200-scene limit is removed; package imports still allow at most 249 scene images
 because the ZIP is limited to 256 members and seven members are required for

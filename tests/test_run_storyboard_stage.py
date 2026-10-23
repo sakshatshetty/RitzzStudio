@@ -202,11 +202,14 @@ def test_times_supplied_scenes_to_character_alignment_with_static_hard_cuts(
 
 def test_groups_phrase_fragments_until_the_sentence_is_complete(tmp_path):
     project_directory = tmp_path / "project"
-    _write_project(project_directory)
+    _write_project(
+        project_directory,
+        narration="First image continues clearly. Last image.",
+    )
     source_file = project_directory / "storyboard" / "storyboard_source.json"
     source = json.loads(source_file.read_text(encoding="utf-8"))
-    source["scenes"][0]["narration"] = "First image. Second"
-    source["scenes"][1]["narration"] = " scene."
+    source["scenes"][0]["narration"] = "First image continues"
+    source["scenes"][1]["narration"] = " clearly."
     source["scenes"][2]["narration"] = " Last image."
     source_file.write_text(json.dumps(source), encoding="utf-8")
     _set_fragment_start_times(
@@ -218,7 +221,7 @@ def test_groups_phrase_fragments_until_the_sentence_is_complete(tmp_path):
     storyboard = build_audio_timed_storyboard(
         project_directory,
         "Supplied topic",
-        "First image. Second scene. Last image.",
+        "First image continues clearly. Last image.",
         ProductionConfig(
             target_duration_seconds=60,
             minimum_duration_seconds=1,
@@ -232,7 +235,7 @@ def test_groups_phrase_fragments_until_the_sentence_is_complete(tmp_path):
         "scene_003",
     ]
     assert [scene.narration for scene in storyboard.scenes] == [
-        "First image. Second scene.",
+        "First image continues clearly.",
         "Last image.",
     ]
     assert [scene.duration_seconds for scene in storyboard.scenes] == pytest.approx(
@@ -242,6 +245,103 @@ def test_groups_phrase_fragments_until_the_sentence_is_complete(tmp_path):
         "audio_start",
         "sentence",
     ]
+
+
+def test_rejects_a_sentence_over_15_words_when_grouping_fragments(tmp_path):
+    project_directory = tmp_path / "project"
+    sentence = " ".join(f"word{index}" for index in range(1, 17)) + "."
+    narration = f"{sentence} Final sentence."
+    _write_project(project_directory, narration=narration)
+    source_file = project_directory / "storyboard" / "storyboard_source.json"
+    source = json.loads(source_file.read_text(encoding="utf-8"))
+    source["scenes"][0]["narration"] = " ".join(
+        f"word{index}" for index in range(1, 9)
+    )
+    source["scenes"][1]["narration"] = " " + " ".join(
+        f"word{index}" for index in range(9, 17)
+    ) + "."
+    source["scenes"][2]["narration"] = " Final sentence."
+    source_file.write_text(json.dumps(source), encoding="utf-8")
+    _set_fragment_start_times(project_directory, [0.0, 3.0, 6.0], 9.0)
+
+    with pytest.raises(
+        ValueError,
+        match="sentence has 16 words; the maximum is 15",
+    ):
+        build_audio_timed_storyboard(
+            project_directory,
+            "Supplied topic",
+            narration,
+            ProductionConfig(
+                target_duration_seconds=60,
+                minimum_duration_seconds=1,
+                scene_minimum_duration_seconds=3,
+                scene_maximum_duration_seconds=8,
+            ),
+        )
+
+
+def test_combines_only_a_pair_of_one_word_sentences_for_a_short_hold(tmp_path):
+    project_directory = tmp_path / "project"
+    _write_project(project_directory, narration="Go. Now. Last image.")
+    source_file = project_directory / "storyboard" / "storyboard_source.json"
+    source = json.loads(source_file.read_text(encoding="utf-8"))
+    source["scenes"][0]["narration"] = "Go."
+    source["scenes"][1]["narration"] = " Now."
+    source["scenes"][2]["narration"] = " Last image."
+    source_file.write_text(json.dumps(source), encoding="utf-8")
+    _set_fragment_start_times(
+        project_directory,
+        [0.0, 0.2, 2.5],
+        audio_duration=5.5,
+    )
+
+    storyboard = build_audio_timed_storyboard(
+        project_directory,
+        "Supplied topic",
+        "Go. Now. Last image.",
+        ProductionConfig(
+            target_duration_seconds=60,
+            minimum_duration_seconds=1,
+            scene_minimum_duration_seconds=3,
+            scene_maximum_duration_seconds=8,
+        ),
+    )
+
+    assert [scene.narration for scene in storyboard.scenes] == [
+        "Go. Now.",
+        "Last image.",
+    ]
+    assert [scene.duration_seconds for scene in storyboard.scenes] == pytest.approx(
+        [2.5, 3.0]
+    )
+
+
+def test_does_not_merge_normal_short_sentences_to_reach_minimum(tmp_path):
+    project_directory = tmp_path / "project"
+    _write_project(project_directory)
+    _set_scene_start_times(
+        project_directory,
+        second_scene_start=2.0,
+        third_scene_start=4.0,
+        audio_duration=7.5,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="one sentence per visual scene",
+    ):
+        build_audio_timed_storyboard(
+            project_directory,
+            "Supplied topic",
+            "First image. Second scene. Last image.",
+            ProductionConfig(
+                target_duration_seconds=60,
+                minimum_duration_seconds=1,
+                scene_minimum_duration_seconds=3,
+                scene_maximum_duration_seconds=8,
+            ),
+        )
 
 
 @pytest.mark.parametrize(
@@ -337,6 +437,12 @@ def test_accepts_absolute_manifest_image_paths_for_relative_project_directory(
     monkeypatch.chdir(tmp_path)
     project_directory = Path("projects") / "project"
     _write_project(project_directory)
+    _set_scene_start_times(
+        project_directory,
+        second_scene_start=6.0,
+        third_scene_start=12.0,
+        audio_duration=17.5,
+    )
     manifest_file = project_directory / "images" / "image_manifest.json"
     manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
     for asset in manifest:
@@ -357,10 +463,12 @@ def test_accepts_absolute_manifest_image_paths_for_relative_project_directory(
         ),
     )
 
-    assert len(storyboard.scenes) == 1
-    assert storyboard.scenes[0].narration == (
-        "First image. Second scene. Last image."
-    )
+    assert len(storyboard.scenes) == 3
+    assert [scene.narration for scene in storyboard.scenes] == [
+        "First image.",
+        "Second scene.",
+        "Last image.",
+    ]
 
 
 def test_rejects_missing_or_mismatched_flow_image_manifest(tmp_path):
