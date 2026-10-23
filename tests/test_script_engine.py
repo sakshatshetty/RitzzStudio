@@ -502,11 +502,11 @@ def test_hook_quality_rejects_a_weak_hook_without_supported_replacement(tmp_path
     assert report["status"] == "FAIL"
     assert report["iterations"][0]["alternatives"][0]["eligible"] is False
     assert any(
-        "minimum is 52" in reason
+        "minimum is 57" in reason
         for reason in report["blocking_reasons"]
     )
     retry_prompt = str(captured_inputs[1])
-    assert "Hook has 34 words; minimum is 52." in retry_prompt
+    assert "Hook has 34 words; minimum is 57." in retry_prompt
     assert "target approximately" in retry_prompt
 
 
@@ -1275,9 +1275,9 @@ def test_script_prompt_targets_configured_two_minute_length():
         config,
     )
 
-    assert "Aim for about 312 spoken words" in prompt
-    assert "do not exceed 468 words" in prompt
-    assert "468 words (180 seconds)" in user_prompt
+    assert "Aim for about 340 spoken words" in prompt
+    assert "do not exceed 510 words" in prompt
+    assert "510 words (180 seconds)" in user_prompt
 
 
 def test_script_profile_and_duration_pacing_are_configurable():
@@ -1443,6 +1443,7 @@ def test_script_prompts_require_a_twenty_to_thirty_five_second_spoken_hook():
 def test_hook_word_bounds_scale_to_twenty_thirty_five_seconds():
     assert ScriptEngine._hook_word_bounds(80) == (27, 46)
     assert ScriptEngine._hook_word_bounds(140) == (47, 81)
+    assert ScriptEngine._hook_word_bounds(170) == (57, 99)
     assert ScriptEngine._hook_word_bounds(220) == (74, 128)
 
 
@@ -1462,5 +1463,5 @@ def test_script_retry_prompts_preserve_the_twenty_to_thirty_five_second_hook():
         config=ProductionConfig(),
     )
 
-    assert "opening hook of 52–91 words (about 20–35 seconds)" in expansion_prompt
-    assert "opening hook of 52–91 words (about 20–35 seconds)" in contraction_prompt
+    assert "opening hook of 57–99 words (about 20–35 seconds)" in expansion_prompt
+    assert "opening hook of 57–99 words (about 20–35 seconds)" in contraction_prompt

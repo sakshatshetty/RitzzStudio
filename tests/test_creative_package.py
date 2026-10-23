@@ -49,7 +49,7 @@ def _write_package(
     extra_files: dict[str, bytes] | None = None,
     thumbnail_size: tuple[int, int] = (1280, 720),
 ) -> dict[str, bytes]:
-    supplied_script = script or " ".join(["This is a supplied narration sentence."] * 28)
+    supplied_script = script or " ".join(["This is a supplied narration sentence."] * 30)
     script_words = supplied_script.split()
     narration_chunks = [
         " ".join(script_words[start : start + max_words_per_scene])
@@ -276,7 +276,7 @@ def test_materializes_immutable_creative_assets_for_existing_engines(tmp_path):
         (project_directory / "production_config.json").read_text(encoding="utf-8")
     )
     assert production_config["scene_maximum_duration_seconds"] == pytest.approx(8.0)
-    assert production_config["words_per_minute"] == 156
+    assert production_config["words_per_minute"] == 170
     assert production_config["voice_speed"] == pytest.approx(1.0)
     assert (
         project_directory / "creative_input" / "script.txt"
@@ -360,13 +360,26 @@ def test_rejects_insufficient_storyboard_scene_count_before_creating_project(tmp
     assert not (tmp_path / "projects").exists()
 
 
+def test_accepts_more_than_200_scenes_within_archive_member_limit(tmp_path):
+    archive = tmp_path / "more-than-200-scenes.zip"
+    _write_package(
+        archive,
+        script=" ".join(["Narration."] * 210),
+        max_words_per_scene=1,
+    )
+
+    package = load_creative_package(archive)
+
+    assert len(package.storyboard.scenes) == 210
+
+
 def test_rejects_storyboard_scene_excerpts_over_eight_seconds(tmp_path):
     archive = tmp_path / "overlong-scene.zip"
     files = _write_package(archive)
     storyboard = json.loads(files["storyboard.json"])
     words = files["script.txt"].decode().split()
-    storyboard["scenes"][0]["narration"] = " ".join(words[:21])
-    storyboard["scenes"][1]["narration"] = " ".join(words[21:28])
+    storyboard["scenes"][0]["narration"] = " ".join(words[:23])
+    storyboard["scenes"][1]["narration"] = " ".join(words[23:28])
     files["storyboard.json"] = json.dumps(storyboard).encode()
     with ZipFile(archive, "w") as output:
         for name, contents in files.items():
@@ -406,7 +419,7 @@ def test_rejects_project_id_reuse_with_different_zip(tmp_path):
     second_archive = tmp_path / "second.zip"
     _write_package(
         second_archive,
-        script=" ".join(["Different supplied narration."] * 52),
+        script=" ".join(["Different supplied narration."] * 57),
     )
     second = load_creative_package(second_archive)
     with pytest.raises(CreativePackageError, match="different creative ZIP"):

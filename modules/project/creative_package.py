@@ -43,6 +43,9 @@ _REQUIRED_FILE_FIELDS = (
     "thumbnail_file",
     "storyboard_file",
 )
+CREATIVE_PACKAGE_MAX_SCENES = (
+    CREATIVE_PACKAGE_MAX_MEMBERS - len(_REQUIRED_FILE_FIELDS) - 1
+)
 _SCENE_ID_PATTERN = re.compile(r"^scene_[0-9]{3,}$")
 
 
@@ -62,7 +65,10 @@ class CreativePackageManifest(BaseModel):
     tags_file: str = Field(min_length=1)
     thumbnail_file: str = Field(min_length=1)
     storyboard_file: str = Field(min_length=1)
-    image_files: list[str] = Field(min_length=1, max_length=200)
+    image_files: list[str] = Field(
+        min_length=1,
+        max_length=CREATIVE_PACKAGE_MAX_SCENES,
+    )
 
     @field_validator("project_id")
     @classmethod
@@ -102,7 +108,10 @@ class CreativeStoryboard(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     thumbnail_prompt: str = Field(min_length=10)
-    scenes: list[CreativeStoryboardScene] = Field(min_length=1, max_length=200)
+    scenes: list[CreativeStoryboardScene] = Field(
+        min_length=1,
+        max_length=CREATIVE_PACKAGE_MAX_SCENES,
+    )
 
 
 class CreativePackage(BaseModel):
@@ -128,7 +137,7 @@ def materialize_creative_package(
     package: CreativePackage,
     projects_directory: str | Path,
     *,
-    words_per_minute: int = 156,
+    words_per_minute: int = 170,
 ) -> tuple[Project, Path]:
     """Create an idempotent project from validated, immutable user files."""
     if words_per_minute < 1:

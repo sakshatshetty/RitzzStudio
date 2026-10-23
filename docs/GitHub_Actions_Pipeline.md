@@ -62,13 +62,16 @@ Workflow file: `.github/workflows/ritzz-creative-production.yml`
    Python importer used by Actions, and creates a GitHub release whose tag is
    exactly the project ID. The asset name is `creative-package.zip`.
 
-Creative-package scripts are checked against 156 spoken words per minute
-(1,404 words for a nine-minute minimum). Imported Flow scenes use actual
+Creative-package scripts are checked against 170 spoken words per minute
+(1,530 words for a nine-minute minimum). Imported Flow scenes use actual
 narration alignment and a strict eight-second maximum hold; longer holds should
 target about six seconds. Resumed creative packages are updated to the
 eight-second ceiling when the storyboard stage is rerun. The master prompt
 targets image changes every two to three seconds, starts a new image at each
-beat, and keeps the image cut on a meaningful narration boundary.
+beat, and keeps the image cut on a meaningful narration boundary. The former
+200-scene limit is removed; package imports still allow at most 249 scene images
+because the ZIP is limited to 256 members and seven members are required for
+the project manifest and creative inputs.
 
 The Windows launchers and scripts are versioned in the repository:
 `creative_package.bat`, `creative_work.bat` / `creative_work.ps1`,
@@ -167,7 +170,8 @@ Storyboard scene excerpts must reproduce the supplied script exactly in order
 when normalized for whitespace and punctuation. Each image is a readable
 RGB/RGBA 1536×864 PNG named for its scene ID. The thumbnail must be a readable
 RGB/RGBA PNG, at least 1280×720 and 16:9 (allowing one-pixel rounding). The
-storyboard supports at most 200 scenes, and the release ZIP is limited to
+storyboard supports up to 249 scene images within the 256-member ZIP limit, and
+the release ZIP is limited to
 250 MiB. Image semantic relevance remains a human-review responsibility.
 
 ### Resume a production
