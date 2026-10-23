@@ -152,7 +152,7 @@ def test_generate_with_mocked_request(
             == "eleven_multilingual_v2"
         )
         assert json["voice_settings"] == {
-            "stability": 0.9,
+            "stability": 0.75,
             "similarity_boost": 0.75,
             "style": 0.0,
             "use_speaker_boost": True,

@@ -33,7 +33,9 @@ CREATIVE_PACKAGE_MAX_TEXT_BYTES = 5 * 1024 * 1024
 CREATIVE_PACKAGE_MAX_THUMBNAIL_BYTES = 25 * 1024 * 1024
 CREATIVE_PACKAGE_MAX_IMAGE_BYTES = 25 * 1024 * 1024
 CREATIVE_PACKAGE_MAX_MEMBERS = 256
+CREATIVE_PACKAGE_MAX_SCENE_WORDS = 15
 CREATIVE_PACKAGE_SCENE_MAXIMUM_DURATION_SECONDS = 8.0
+CREATIVE_PACKAGE_SCENE_MINIMUM_DURATION_SECONDS = 3.0
 _PROJECT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
 _REQUIRED_FILE_FIELDS = (
     "script_file",
@@ -152,7 +154,21 @@ def materialize_creative_package(
             f"{estimated_seconds:.0f}s at {words_per_minute} words per minute; "
             f"target is at least {duration_seconds}s ({minimum_word_count} words)."
         )
-    max_scene_words = max(1, math.floor(words_per_minute * 8 / 60))
+    max_scene_words = CREATIVE_PACKAGE_MAX_SCENE_WORDS
+    oversized_sentences = [
+        (index, len(sentence.split()))
+        for index, sentence in enumerate(
+            split_narration_sentences(package.script),
+            start=1,
+        )
+        if len(sentence.split()) > max_scene_words
+    ]
+    if oversized_sentences:
+        sentence_number, sentence_word_count = oversized_sentences[0]
+        raise CreativePackageError(
+            f"SCRIPT_SENTENCE_TOO_LONG: sentence {sentence_number} has "
+            f"{sentence_word_count} words; maximum is {max_scene_words}."
+        )
     minimum_scene_count = math.ceil(word_count / max_scene_words)
     if len(package.storyboard.scenes) < minimum_scene_count:
         raise CreativePackageError(
@@ -289,7 +305,7 @@ def materialize_creative_package(
         target_duration_seconds=duration_seconds,
         minimum_duration_seconds=duration_seconds,
         words_per_minute=words_per_minute,
-        scene_minimum_duration_seconds=1.0,
+        scene_minimum_duration_seconds=CREATIVE_PACKAGE_SCENE_MINIMUM_DURATION_SECONDS,
         scene_maximum_duration_seconds=CREATIVE_PACKAGE_SCENE_MAXIMUM_DURATION_SECONDS,
     )
     (project_directory / "production_config.json").write_text(
@@ -570,6 +586,14 @@ def load_creative_package(archive_path: str | Path) -> CreativePackage:
 
 def _compact_text(value: str) -> str:
     return "".join(character.lower() for character in value if character.isalnum())
+
+
+def split_narration_sentences(narration: str) -> list[str]:
+    return [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[.!?])\s+", narration.strip())
+        if sentence.strip()
+    ]
 
 
 def _validate_zip_members(members: list[zipfile.ZipInfo]) -> None:

@@ -19,7 +19,7 @@ Workflow file: `.github/workflows/ritzz-creative-production.yml`
 ### Prepare and release the input
 
 1. Use the current master prompt at
-   `D:\AIStudio\Projects\Ritzz\Default\Ritzz_4_Master_Prompts\Ritzz_Single_Topic_Content_Master_Prompt.txt`.
+   `D:\AIStudio\Projects\Ritzz\Default\Ritzz_4_Master_Prompts\Ritzz_Single_Topic_Content_Master_Prompt_v2.txt`.
    Claude creates the script and storyboard handoff; Gemini returns the
    complete final brief with four character references and every scene prompt.
    Do not use the legacy one-stage prompt in `prompts/flow` for new projects.
@@ -63,12 +63,17 @@ Workflow file: `.github/workflows/ritzz-creative-production.yml`
    exactly the project ID. The asset name is `creative-package.zip`.
 
 Creative-package scripts are checked against 170 spoken words per minute
-(1,530 words for a nine-minute minimum). Imported Flow scenes use actual
-narration alignment and a strict eight-second maximum hold; longer holds should
-target about six seconds. Resumed creative packages are updated to the
-eight-second ceiling when the storyboard stage is rerun. The master prompt
-targets image changes every two to three seconds, starts a new image at each
-beat, and keeps the image cut on a meaningful narration boundary. The former
+(1,530 words for a nine-minute minimum). Each scene maps to one complete
+sentence, with only a pair of adjacent one-word sentences allowed to share a
+scene. Sentences are limited to 15 words. The storyboard stage uses actual
+narration alignment for a hard cut at the beginning of each next sentence.
+Normal holds must be at least three seconds and no more than eight; a paired
+one-word sentence scene may be shorter than three seconds. When the supplied
+storyboard cannot follow these boundaries within the timing limits, the stage
+stops and asks for revision instead of cutting through a sentence. Resumed
+creative packages are updated to the same timing policy when the storyboard
+stage is rerun.
+The former
 200-scene limit is removed; package imports still allow at most 249 scene images
 because the ZIP is limited to 256 members and seven members are required for
 the project manifest and creative inputs.
@@ -105,7 +110,7 @@ Replicate, research, storyboard-planning, image-generation, or thumbnail-
 generation API is called in Actions.
 
 The supplied script is narrated with the configured RITZZ ElevenLabs voice
-(`eleven_multilingual_v2`, speed `0.92`, stability `0.90`, similarity boost
+(`eleven_multilingual_v2`, speed `0.92`, stability `0.75`, similarity boost
 `0.75`, style exaggeration `0`, speaker boost enabled). Scene starts are mapped
 to actual ElevenLabs character timestamps. The workflow validates scene/image
 coverage, uses static stills and hard cuts, then renders and runs technical

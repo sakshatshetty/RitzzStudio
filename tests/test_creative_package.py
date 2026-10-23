@@ -275,6 +275,7 @@ def test_materializes_immutable_creative_assets_for_existing_engines(tmp_path):
     production_config = json.loads(
         (project_directory / "production_config.json").read_text(encoding="utf-8")
     )
+    assert production_config["scene_minimum_duration_seconds"] == pytest.approx(3.0)
     assert production_config["scene_maximum_duration_seconds"] == pytest.approx(8.0)
     assert production_config["words_per_minute"] == 170
     assert production_config["voice_speed"] == pytest.approx(1.0)
@@ -346,6 +347,22 @@ def test_rejects_too_short_script_before_creating_project(tmp_path):
     assert not (tmp_path / "projects").exists()
 
 
+def test_rejects_script_sentences_over_15_words_before_creating_project(tmp_path):
+    archive = tmp_path / "overlong-sentence.zip"
+    long_sentence = " ".join(f"word{index}" for index in range(1, 17)) + "."
+    script = f"{long_sentence} " + " ".join(["Brief."] * 154)
+    _write_package(archive, script=script)
+    package = load_creative_package(archive)
+
+    with pytest.raises(
+        CreativePackageError,
+        match="SCRIPT_SENTENCE_TOO_LONG: sentence 1 has 16 words",
+    ):
+        materialize_creative_package(package, tmp_path / "projects")
+
+    assert not (tmp_path / "projects").exists()
+
+
 def test_rejects_insufficient_storyboard_scene_count_before_creating_project(tmp_path):
     archive = tmp_path / "too-few-scenes.zip"
     _write_package(archive, max_words_per_scene=140)
@@ -373,13 +390,13 @@ def test_accepts_more_than_200_scenes_within_archive_member_limit(tmp_path):
     assert len(package.storyboard.scenes) == 210
 
 
-def test_rejects_storyboard_scene_excerpts_over_eight_seconds(tmp_path):
+def test_rejects_storyboard_scene_excerpts_over_15_words(tmp_path):
     archive = tmp_path / "overlong-scene.zip"
     files = _write_package(archive)
     storyboard = json.loads(files["storyboard.json"])
     words = files["script.txt"].decode().split()
-    storyboard["scenes"][0]["narration"] = " ".join(words[:23])
-    storyboard["scenes"][1]["narration"] = " ".join(words[23:28])
+    storyboard["scenes"][0]["narration"] = " ".join(words[:16])
+    storyboard["scenes"][1]["narration"] = " ".join(words[16:28])
     files["storyboard.json"] = json.dumps(storyboard).encode()
     with ZipFile(archive, "w") as output:
         for name, contents in files.items():
@@ -394,9 +411,14 @@ def test_rejects_storyboard_scene_excerpts_over_eight_seconds(tmp_path):
 
 def test_accepts_script_longer_than_target_without_upper_duration_limit(tmp_path):
     archive = tmp_path / "long-script.zip"
+    script_words = ["narration"] * 281
+    script = " ".join(
+        " ".join(script_words[start : start + 15]) + "."
+        for start in range(0, len(script_words), 15)
+    )
     _write_package(
         archive,
-        script=" ".join(["narration"] * 281),
+        script=script,
         overrides={"target_duration_minutes": 1},
     )
     package = load_creative_package(archive)

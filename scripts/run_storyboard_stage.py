@@ -11,13 +11,199 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from modules.project.config import ProductionConfig
 from modules.project.creative_package import (
+    CREATIVE_PACKAGE_MAX_SCENE_WORDS,
+    CREATIVE_PACKAGE_SCENE_MINIMUM_DURATION_SECONDS,
     CREATIVE_PACKAGE_SCENE_MAXIMUM_DURATION_SECONDS,
     CreativeStoryboard,
     _compact_text,
+    split_narration_sentences,
 )
 from modules.project.manager import ProjectManager
 from modules.storyboard.models import Storyboard, StoryboardScene
 from modules.video.sync_engine import VideoSynchronizationEngine
+
+
+TARGET_SCENE_DURATION_SECONDS = 5.0
+
+
+def _scene_ending_boundary(narration: str) -> str | None:
+    ending = narration.rstrip()
+    while ending and ending[-1] in "\"'”’)]}":
+        ending = ending[:-1].rstrip()
+    if ending and ending[-1] in ".!?…":
+        return "sentence"
+    return None
+
+
+def _is_one_word_sentence_pair(narration: str) -> bool:
+    sentences = split_narration_sentences(narration)
+    return len(sentences) == 2 and all(
+        len(sentence.split()) == 1 for sentence in sentences
+    )
+
+
+def _first_grouping_failure(
+    scenes: list[StoryboardScene],
+    scene_matches: list[dict[str, float]],
+    audio_duration_seconds: float,
+    *,
+    minimum_duration_seconds: float,
+    maximum_duration_seconds: float,
+) -> str:
+    sentence_start_index = 0
+    for end_index, scene in enumerate(scenes):
+        is_final_scene = end_index == len(scenes) - 1
+        if not is_final_scene and _scene_ending_boundary(scene.narration) != "sentence":
+            continue
+        narration = " ".join(
+            item.narration.strip()
+            for item in scenes[sentence_start_index : end_index + 1]
+        )
+        sentences = split_narration_sentences(narration)
+        start_seconds = (
+            0.0
+            if sentence_start_index == 0
+            else scene_matches[sentence_start_index]["start_seconds"]
+        )
+        end_seconds = (
+            scene_matches[end_index + 1]["start_seconds"]
+            if end_index + 1 < len(scenes)
+            else audio_duration_seconds
+        )
+        duration = end_seconds - start_seconds
+        word_count = len(narration.split())
+        if word_count > CREATIVE_PACKAGE_MAX_SCENE_WORDS:
+            return (
+                f"{scene.scene_id} sentence has {word_count} words; "
+                f"the maximum is {CREATIVE_PACKAGE_MAX_SCENE_WORDS}."
+            )
+        if len(sentences) != 1 and not _is_one_word_sentence_pair(narration):
+            return (
+                f"{scene.scene_id} groups {len(sentences)} complete sentences; "
+                "use one sentence per scene, or pair exactly two one-word sentences."
+            )
+        if duration < minimum_duration_seconds and not _is_one_word_sentence_pair(
+            narration
+        ):
+            return (
+                f"{scene.scene_id} sentence holds for {duration:.3f}s, below "
+                f"the configured {minimum_duration_seconds:.3f}s minimum."
+            )
+        if duration > maximum_duration_seconds:
+            return (
+                f"{scene.scene_id} sentence holds for {duration:.3f}s, above "
+                f"the configured {maximum_duration_seconds:.3f}s maximum."
+            )
+        sentence_start_index = end_index + 1
+    return (
+        "The supplied scene boundaries do not map to one complete sentence per "
+        "scene, or a permitted pair of one-word sentences."
+    )
+
+
+def _group_source_scenes(
+    scenes: list[StoryboardScene],
+    scene_matches: list[dict[str, float]],
+    audio_duration_seconds: float,
+    *,
+    minimum_duration_seconds: float,
+    maximum_duration_seconds: float,
+    target_duration_seconds: float,
+) -> list[tuple[StoryboardScene, str]]:
+    if len(scenes) != len(scene_matches):
+        raise ValueError("Source scene matches do not cover the complete storyboard.")
+
+    count = len(scenes)
+    best: list[
+        tuple[
+            tuple[float, int],
+            list[tuple[int, int, str]],
+        ]
+        | None
+    ] = [None] * (count + 1)
+    best[count] = ((0.0, 0), [])
+
+    for start_index in range(count - 1, -1, -1):
+        start_seconds = (
+            0.0
+            if start_index == 0
+            else scene_matches[start_index]["start_seconds"]
+        )
+        for end_index in range(start_index, count):
+            end_seconds = (
+                scene_matches[end_index + 1]["start_seconds"]
+                if end_index + 1 < count
+                else audio_duration_seconds
+            )
+            duration = end_seconds - start_seconds
+            if duration > maximum_duration_seconds:
+                break
+            suffix = best[end_index + 1]
+            if suffix is None:
+                continue
+
+            boundary = (
+                _scene_ending_boundary(scenes[end_index].narration)
+                if end_index + 1 < count
+                else "sentence"
+            )
+            if boundary != "sentence":
+                continue
+
+            narration = " ".join(
+                scene.narration.strip()
+                for scene in scenes[start_index : end_index + 1]
+            )
+            sentence_count = len(split_narration_sentences(narration))
+            short_sentence_pair = _is_one_word_sentence_pair(narration)
+            if sentence_count != 1 and not short_sentence_pair:
+                continue
+            if len(narration.split()) > CREATIVE_PACKAGE_MAX_SCENE_WORDS:
+                continue
+            if duration < minimum_duration_seconds and not short_sentence_pair:
+                continue
+
+            suffix_cost, suffix_groups = suffix
+            cost = (
+                suffix_cost[0] + abs(duration - target_duration_seconds),
+                suffix_cost[1] + 1,
+            )
+            current = best[start_index]
+            if current is None or cost < current[0]:
+                best[start_index] = (
+                    cost,
+                    [(start_index, end_index, boundary), *suffix_groups],
+                )
+
+    result = best[0]
+    if result is None:
+            detail = _first_grouping_failure(
+                scenes,
+                scene_matches,
+                audio_duration_seconds,
+                minimum_duration_seconds=minimum_duration_seconds,
+                maximum_duration_seconds=maximum_duration_seconds,
+            )
+            raise ValueError(
+                "Could not map the supplied storyboard to one sentence per visual "
+                "scene (except a pair of one-word sentences) "
+                f"with holds from {minimum_duration_seconds:.3f}s to "
+                f"{maximum_duration_seconds:.3f}s. {detail} Revise the storyboard "
+                "so every scene ends at a complete sentence boundary."
+            )
+
+    grouped_scenes: list[tuple[StoryboardScene, str]] = []
+    for start_index, end_index, boundary in result[1]:
+        narration = " ".join(
+            scene.narration.strip()
+            for scene in scenes[start_index : end_index + 1]
+        )
+        representative_scene = scenes[start_index].model_copy(
+            update={"narration": narration}
+        )
+        grouped_scenes.append((representative_scene, boundary))
+    return grouped_scenes
+
 
 def _apply_creative_package_scene_timing_policy(
     project_directory: Path,
@@ -31,13 +217,19 @@ def _apply_creative_package_scene_timing_policy(
         raise TypeError("The project topic selection must contain an object.")
     if source.get("source") != "creative_package":
         return production_config
-    if production_config.scene_maximum_duration_seconds == (
-        CREATIVE_PACKAGE_SCENE_MAXIMUM_DURATION_SECONDS
+    if (
+        production_config.scene_minimum_duration_seconds
+        == CREATIVE_PACKAGE_SCENE_MINIMUM_DURATION_SECONDS
+        and production_config.scene_maximum_duration_seconds
+        == CREATIVE_PACKAGE_SCENE_MAXIMUM_DURATION_SECONDS
     ):
         return production_config
 
     updated_config = production_config.model_copy(
         update={
+            "scene_minimum_duration_seconds": (
+                CREATIVE_PACKAGE_SCENE_MINIMUM_DURATION_SECONDS
+            ),
             "scene_maximum_duration_seconds": (
                 CREATIVE_PACKAGE_SCENE_MAXIMUM_DURATION_SECONDS
             )
@@ -50,7 +242,8 @@ def _apply_creative_package_scene_timing_policy(
             encoding="utf-8",
         )
     print(
-        "Set supplied creative package scene maximum to "
+        "Set supplied creative package scene holds to "
+        f"{CREATIVE_PACKAGE_SCENE_MINIMUM_DURATION_SECONDS:.3f}-"
         f"{CREATIVE_PACKAGE_SCENE_MAXIMUM_DURATION_SECONDS:.3f}s."
     )
     return updated_config
@@ -135,24 +328,43 @@ def build_audio_timed_storyboard(
         target_duration_seconds=production_config.target_duration_seconds,
         scenes=source_scenes,
         total_scene_duration_seconds=production_config.target_duration_seconds,
-        target_scene_duration_seconds=3.0,
+        target_scene_duration_seconds=TARGET_SCENE_DURATION_SECONDS,
     )
-    matches = VideoSynchronizationEngine()._match_scene_narration(
+    synchronization_engine = VideoSynchronizationEngine()
+    matches = synchronization_engine._match_scene_narration(
         source_storyboard,
         alignment,
     )
+    grouped_scenes = _group_source_scenes(
+        source_scenes,
+        matches,
+        alignment.audio_duration_seconds,
+        minimum_duration_seconds=production_config.scene_minimum_duration_seconds,
+        maximum_duration_seconds=production_config.scene_maximum_duration_seconds,
+        target_duration_seconds=TARGET_SCENE_DURATION_SECONDS,
+    )
+    grouped_storyboard = source_storyboard.model_copy(
+        update={"scenes": [scene for scene, _ in grouped_scenes]}
+    )
+    grouped_matches = synchronization_engine._match_scene_narration(
+        grouped_storyboard,
+        alignment,
+    )
     timed_scenes: list[StoryboardScene] = []
-    for index, (scene, match) in enumerate(
-        zip(source_scenes, matches, strict=True)
+    for index, ((scene, _), match) in enumerate(
+        zip(grouped_scenes, grouped_matches, strict=True)
     ):
         start = 0.0 if index == 0 else match["start_seconds"]
         end = (
-            matches[index + 1]["start_seconds"]
-            if index + 1 < len(matches)
+            grouped_matches[index + 1]["start_seconds"]
+            if index + 1 < len(grouped_matches)
             else alignment.audio_duration_seconds
         )
         duration = end - start
-        if duration < production_config.scene_minimum_duration_seconds:
+        if (
+            duration < production_config.scene_minimum_duration_seconds
+            and not _is_one_word_sentence_pair(scene.narration)
+        ):
             raise ValueError(
                 f"{scene.scene_id} holds for {duration:.3f}s, below the configured "
                 f"{production_config.scene_minimum_duration_seconds:.3f}s minimum."
@@ -176,14 +388,18 @@ def build_audio_timed_storyboard(
                     "start_seconds": start,
                     "duration_seconds": duration,
                     "previous_sentence": (
-                        source_scenes[index - 1].narration if index else ""
+                        grouped_scenes[index - 1][0].narration if index else ""
                     ),
                     "next_sentence": (
-                        source_scenes[index + 1].narration
-                        if index + 1 < len(source_scenes)
+                        grouped_scenes[index + 1][0].narration
+                        if index + 1 < len(grouped_scenes)
                         else ""
                     ),
-                    "timing_boundary": "audio_start" if index == 0 else "sentence",
+                    "timing_boundary": (
+                        "audio_start"
+                        if index == 0
+                        else grouped_scenes[index - 1][1]
+                    ),
                     "camera_motion": "static",
                     "transition": "cut",
                 }
@@ -194,7 +410,7 @@ def build_audio_timed_storyboard(
         target_duration_seconds=round(alignment.audio_duration_seconds),
         scenes=timed_scenes,
         total_scene_duration_seconds=alignment.audio_duration_seconds,
-        target_scene_duration_seconds=3.0,
+        target_scene_duration_seconds=TARGET_SCENE_DURATION_SECONDS,
     )
     output_file = project_directory / "storyboard" / "storyboard_audio_timed.json"
     output_file.write_text(result.model_dump_json(indent=2) + "\n", encoding="utf-8")
