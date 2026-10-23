@@ -113,11 +113,62 @@ def _set_scene_start_times(
     narration_file.write_text(json.dumps(result), encoding="utf-8")
 
 
+def _set_fragment_start_times(
+    project_directory: Path,
+    scene_start_times: list[float],
+    audio_duration: float,
+) -> None:
+    source_file = project_directory / "storyboard" / "storyboard_source.json"
+    source = json.loads(source_file.read_text(encoding="utf-8"))
+    narration_file = project_directory / "voice" / "narration_result.json"
+    result = json.loads(narration_file.read_text(encoding="utf-8"))
+    alignment = result["alignment"]
+    text = "".join(alignment["characters"])
+    anchors = [(0, 0.0)]
+    for scene, start_seconds in zip(
+        source["scenes"], scene_start_times, strict=True
+    ):
+        anchors.append((text.index(scene["narration"].strip()), start_seconds))
+    anchors.append((len(text) - 1, audio_duration - 0.25))
+    anchors.sort()
+    starts = []
+    for character_index in range(len(text)):
+        right_index = next(
+            (
+                index
+                for index, (anchor_index, _) in enumerate(anchors)
+                if anchor_index >= character_index
+            ),
+            len(anchors) - 1,
+        )
+        left_index, left_time = anchors[max(0, right_index - 1)]
+        right_char_index, right_time = anchors[right_index]
+        fraction = (
+            0.0
+            if right_char_index == left_index
+            else (character_index - left_index)
+            / (right_char_index - left_index)
+        )
+        starts.append(left_time + fraction * (right_time - left_time))
+    alignment["character_start_times_seconds"] = starts
+    alignment["character_end_times_seconds"] = [
+        start + 0.001 for start in starts
+    ]
+    result["actual_duration_seconds"] = audio_duration
+    narration_file.write_text(json.dumps(result), encoding="utf-8")
+
+
 def test_times_supplied_scenes_to_character_alignment_with_static_hard_cuts(
     tmp_path,
 ):
     project_directory = tmp_path / "project"
     _write_project(project_directory)
+    _set_scene_start_times(
+        project_directory,
+        second_scene_start=6.0,
+        third_scene_start=12.0,
+        audio_duration=17.5,
+    )
     config = ProductionConfig(
         target_duration_seconds=60,
         minimum_duration_seconds=1,
@@ -135,16 +186,62 @@ def test_times_supplied_scenes_to_character_alignment_with_static_hard_cuts(
     assert len(storyboard.scenes) == 3
     assert storyboard.scenes[0].start_seconds == 0
     assert storyboard.scenes[1].start_seconds > 0
-    assert storyboard.scenes[-1].start_seconds + storyboard.scenes[-1].duration_seconds == 5
+    assert storyboard.scenes[-1].start_seconds + storyboard.scenes[-1].duration_seconds == 17.5
     assert all(scene.camera_motion == "static" for scene in storyboard.scenes)
     assert all(scene.transition == "cut" for scene in storyboard.scenes)
     assert all(scene.image_prompt.startswith("Static image prompt") for scene in storyboard.scenes)
+    assert all(scene.duration_seconds >= 3.0 for scene in storyboard.scenes)
+    assert all(scene.duration_seconds <= 6.0 for scene in storyboard.scenes)
     saved = json.loads(
         (project_directory / "storyboard" / "storyboard_audio_timed.json").read_text(
             encoding="utf-8"
         )
     )
     assert len(saved["scenes"]) == 3
+
+
+def test_groups_phrase_fragments_until_the_sentence_is_complete(tmp_path):
+    project_directory = tmp_path / "project"
+    _write_project(project_directory)
+    source_file = project_directory / "storyboard" / "storyboard_source.json"
+    source = json.loads(source_file.read_text(encoding="utf-8"))
+    source["scenes"][0]["narration"] = "First image. Second"
+    source["scenes"][1]["narration"] = " scene."
+    source["scenes"][2]["narration"] = " Last image."
+    source_file.write_text(json.dumps(source), encoding="utf-8")
+    _set_fragment_start_times(
+        project_directory,
+        [0.0, 3.0, 6.0],
+        audio_duration=9.0,
+    )
+
+    storyboard = build_audio_timed_storyboard(
+        project_directory,
+        "Supplied topic",
+        "First image. Second scene. Last image.",
+        ProductionConfig(
+            target_duration_seconds=60,
+            minimum_duration_seconds=1,
+            scene_minimum_duration_seconds=3,
+            scene_maximum_duration_seconds=8,
+        ),
+    )
+
+    assert [scene.scene_id for scene in storyboard.scenes] == [
+        "scene_001",
+        "scene_003",
+    ]
+    assert [scene.narration for scene in storyboard.scenes] == [
+        "First image. Second scene.",
+        "Last image.",
+    ]
+    assert [scene.duration_seconds for scene in storyboard.scenes] == pytest.approx(
+        [6.0, 3.0]
+    )
+    assert [scene.timing_boundary for scene in storyboard.scenes] == [
+        "audio_start",
+        "sentence",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -230,6 +327,7 @@ def test_updates_resumed_creative_package_to_eight_second_scene_limit(
     assert storyboard.scenes[0].duration_seconds == pytest.approx(8.0)
     updated_config = json.loads(config_file.read_text(encoding="utf-8"))
     assert updated_config["scene_maximum_duration_seconds"] == pytest.approx(8.0)
+    assert updated_config["scene_minimum_duration_seconds"] == pytest.approx(3.0)
 
 
 def test_accepts_absolute_manifest_image_paths_for_relative_project_directory(
@@ -259,7 +357,10 @@ def test_accepts_absolute_manifest_image_paths_for_relative_project_directory(
         ),
     )
 
-    assert len(storyboard.scenes) == 3
+    assert len(storyboard.scenes) == 1
+    assert storyboard.scenes[0].narration == (
+        "First image. Second scene. Last image."
+    )
 
 
 def test_rejects_missing_or_mismatched_flow_image_manifest(tmp_path):

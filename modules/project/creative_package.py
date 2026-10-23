@@ -34,6 +34,7 @@ CREATIVE_PACKAGE_MAX_THUMBNAIL_BYTES = 25 * 1024 * 1024
 CREATIVE_PACKAGE_MAX_IMAGE_BYTES = 25 * 1024 * 1024
 CREATIVE_PACKAGE_MAX_MEMBERS = 256
 CREATIVE_PACKAGE_SCENE_MAXIMUM_DURATION_SECONDS = 8.0
+CREATIVE_PACKAGE_SCENE_MINIMUM_DURATION_SECONDS = 3.0
 _PROJECT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
 _REQUIRED_FILE_FIELDS = (
     "script_file",
@@ -289,7 +290,7 @@ def materialize_creative_package(
         target_duration_seconds=duration_seconds,
         minimum_duration_seconds=duration_seconds,
         words_per_minute=words_per_minute,
-        scene_minimum_duration_seconds=1.0,
+        scene_minimum_duration_seconds=CREATIVE_PACKAGE_SCENE_MINIMUM_DURATION_SECONDS,
         scene_maximum_duration_seconds=CREATIVE_PACKAGE_SCENE_MAXIMUM_DURATION_SECONDS,
     )
     (project_directory / "production_config.json").write_text(

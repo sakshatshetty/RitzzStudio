@@ -38,7 +38,7 @@ class VoiceAlignment(BaseModel):
 class VoiceSettings(BaseModel):
     """Consistent ElevenLabs delivery controls for narration generation."""
 
-    stability: float = Field(default=0.9, ge=0, le=1)
+    stability: float = Field(default=0.75, ge=0, le=1)
     similarity_boost: float = Field(default=0.75, ge=0, le=1)
     style: float = Field(default=0, ge=0, le=1)
     use_speaker_boost: bool = True

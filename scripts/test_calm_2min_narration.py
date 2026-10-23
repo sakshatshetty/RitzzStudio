@@ -57,8 +57,8 @@ def main() -> int:
     parser.add_argument(
         "--stability",
         type=float,
-        default=0.9,
-        help="Voice stability from 0 to 1 (default: 0.9)",
+        default=0.75,
+        help="Voice stability from 0 to 1 (default: 0.75)",
     )
     args = parser.parse_args()
     if not args.take_name.replace("_", "").replace("-", "").isalnum():

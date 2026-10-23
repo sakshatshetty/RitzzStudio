@@ -275,6 +275,7 @@ def test_materializes_immutable_creative_assets_for_existing_engines(tmp_path):
     production_config = json.loads(
         (project_directory / "production_config.json").read_text(encoding="utf-8")
     )
+    assert production_config["scene_minimum_duration_seconds"] == pytest.approx(3.0)
     assert production_config["scene_maximum_duration_seconds"] == pytest.approx(8.0)
     assert production_config["words_per_minute"] == 170
     assert production_config["voice_speed"] == pytest.approx(1.0)
