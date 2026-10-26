@@ -49,7 +49,11 @@ def _write_package(
     extra_files: dict[str, bytes] | None = None,
     thumbnail_size: tuple[int, int] = (1280, 720),
 ) -> dict[str, bytes]:
-    supplied_script = script or " ".join(["This is a supplied narration sentence."] * 30)
+    default_sentence = (
+        "Supplied narration uses clear complete sentences with timed spoken lines "
+        "for each visual scene."
+    )
+    supplied_script = script or " ".join([default_sentence] * 30)
     script_words = supplied_script.split()
     narration_chunks = [
         " ".join(script_words[start : start + max_words_per_scene])
@@ -363,6 +367,38 @@ def test_rejects_script_sentences_over_15_words_before_creating_project(tmp_path
     assert not (tmp_path / "projects").exists()
 
 
+def test_rejects_short_script_sentence_before_creating_project(tmp_path):
+    archive = tmp_path / "short-sentence.zip"
+    short_sentence = "This sentence has eleven words and should fail early timing checks."
+    remaining_sentences = [
+        " ".join(f"word{index}" for index in range(start, start + 14)) + "."
+        for start in range(1, 169, 14)
+    ]
+    script = " ".join([short_sentence, *remaining_sentences])
+    _write_package(archive, script=script)
+    package = load_creative_package(archive)
+
+    with pytest.raises(
+        CreativePackageError,
+        match="SCRIPT_SENTENCE_TOO_SHORT: sentence 1 has 11 words",
+    ):
+        materialize_creative_package(package, tmp_path / "projects")
+
+    assert not (tmp_path / "projects").exists()
+
+
+def test_allows_only_the_one_word_sentence_pair_below_the_early_floor(tmp_path):
+    archive = tmp_path / "paired-short-sentences.zip"
+    normal_sentence = " ".join(f"spoken{index}" for index in range(14)) + "."
+    script = "Go. Now. " + " ".join([normal_sentence] * 12)
+    _write_package(archive, script=script)
+    package = load_creative_package(archive)
+
+    project, _ = materialize_creative_package(package, tmp_path / "projects")
+
+    assert project.project_id == package.manifest.project_id
+
+
 def test_rejects_insufficient_storyboard_scene_count_before_creating_project(tmp_path):
     archive = tmp_path / "too-few-scenes.zip"
     _write_package(archive, max_words_per_scene=140)
@@ -412,10 +448,15 @@ def test_rejects_storyboard_scene_excerpts_over_15_words(tmp_path):
 def test_accepts_script_longer_than_target_without_upper_duration_limit(tmp_path):
     archive = tmp_path / "long-script.zip"
     script_words = ["narration"] * 281
-    script = " ".join(
-        " ".join(script_words[start : start + 15]) + "."
-        for start in range(0, len(script_words), 15)
-    )
+    sentence_sizes = [14] * 19 + [15]
+    sentences = []
+    word_index = 0
+    for sentence_size in sentence_sizes:
+        sentences.append(
+            " ".join(script_words[word_index : word_index + sentence_size]) + "."
+        )
+        word_index += sentence_size
+    script = " ".join(sentences)
     _write_package(
         archive,
         script=script,
@@ -441,7 +482,13 @@ def test_rejects_project_id_reuse_with_different_zip(tmp_path):
     second_archive = tmp_path / "second.zip"
     _write_package(
         second_archive,
-        script=" ".join(["Different supplied narration."] * 57),
+        script=" ".join(
+            [
+                "Different supplied narration includes added words to satisfy "
+                "script validation before project identity is checked."
+            ]
+            * 20
+        ),
     )
     second = load_creative_package(second_archive)
     with pytest.raises(CreativePackageError, match="different creative ZIP"):

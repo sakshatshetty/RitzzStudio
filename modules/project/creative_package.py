@@ -34,6 +34,7 @@ CREATIVE_PACKAGE_MAX_THUMBNAIL_BYTES = 25 * 1024 * 1024
 CREATIVE_PACKAGE_MAX_IMAGE_BYTES = 25 * 1024 * 1024
 CREATIVE_PACKAGE_MAX_MEMBERS = 256
 CREATIVE_PACKAGE_MAX_SCENE_WORDS = 15
+CREATIVE_PACKAGE_MIN_NORMAL_SENTENCE_WORDS = 14
 CREATIVE_PACKAGE_SCENE_MAXIMUM_DURATION_SECONDS = 8.0
 CREATIVE_PACKAGE_SCENE_MINIMUM_DURATION_SECONDS = 2.9
 _PROJECT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
@@ -155,12 +156,10 @@ def materialize_creative_package(
             f"target is at least {duration_seconds}s ({minimum_word_count} words)."
         )
     max_scene_words = CREATIVE_PACKAGE_MAX_SCENE_WORDS
+    script_sentences = split_narration_sentences(package.script)
     oversized_sentences = [
         (index, len(sentence.split()))
-        for index, sentence in enumerate(
-            split_narration_sentences(package.script),
-            start=1,
-        )
+        for index, sentence in enumerate(script_sentences, start=1)
         if len(sentence.split()) > max_scene_words
     ]
     if oversized_sentences:
@@ -168,6 +167,27 @@ def materialize_creative_package(
         raise CreativePackageError(
             f"SCRIPT_SENTENCE_TOO_LONG: sentence {sentence_number} has "
             f"{sentence_word_count} words; maximum is {max_scene_words}."
+        )
+    sentence_word_counts = [len(sentence.split()) for sentence in script_sentences]
+    sentence_index = 0
+    while sentence_index < len(sentence_word_counts):
+        sentence_word_count = sentence_word_counts[sentence_index]
+        if sentence_word_count >= CREATIVE_PACKAGE_MIN_NORMAL_SENTENCE_WORDS:
+            sentence_index += 1
+            continue
+        if (
+            sentence_word_count == 1
+            and sentence_index + 1 < len(sentence_word_counts)
+            and sentence_word_counts[sentence_index + 1] == 1
+        ):
+            sentence_index += 2
+            continue
+        raise CreativePackageError(
+            f"SCRIPT_SENTENCE_TOO_SHORT: sentence {sentence_index + 1} has "
+            f"{sentence_word_count} words; normal sentences need at least "
+            f"{CREATIVE_PACKAGE_MIN_NORMAL_SENTENCE_WORDS} words to target a "
+            "3-second hold at a conservative 280 words per minute. Only an "
+            "adjacent pair of one-word sentences is exempt."
         )
     minimum_scene_count = math.ceil(word_count / max_scene_words)
     if len(package.storyboard.scenes) < minimum_scene_count:
