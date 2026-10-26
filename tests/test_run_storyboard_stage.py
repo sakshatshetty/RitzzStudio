@@ -393,16 +393,16 @@ def test_enforces_the_exact_scene_maximum(
             )
 
 
-def test_updates_resumed_creative_package_to_eight_second_scene_limit(
+def test_updates_resumed_creative_package_to_ten_second_scene_limit(
     tmp_path,
 ):
     project_directory = tmp_path / "project"
     _write_project(project_directory)
     _set_scene_start_times(
         project_directory,
-        second_scene_start=8.0,
-        third_scene_start=16.0,
-        audio_duration=24.0,
+        second_scene_start=9.091,
+        third_scene_start=18.2,
+        audio_duration=27.5,
     )
     (project_directory / "topic_selection.json").write_text(
         json.dumps({"source": "creative_package"}),
@@ -424,18 +424,72 @@ def test_updates_resumed_creative_package_to_eight_second_scene_limit(
         config,
     )
 
-    assert storyboard.scenes[0].duration_seconds == pytest.approx(8.0)
+    assert storyboard.scenes[0].duration_seconds == pytest.approx(9.091)
     updated_config = json.loads(config_file.read_text(encoding="utf-8"))
-    assert updated_config["scene_maximum_duration_seconds"] == pytest.approx(8.0)
-    assert updated_config["scene_minimum_duration_seconds"] == pytest.approx(2.9)
+    assert updated_config["scene_maximum_duration_seconds"] == pytest.approx(10.0)
+    assert updated_config["scene_minimum_duration_seconds"] == pytest.approx(2.0)
+
+
+@pytest.mark.parametrize(
+    ("second_scene_start", "third_scene_start", "audio_duration", "accepted"),
+    [
+        (10.0, 20.0, 30.0, True),
+        (10.001, 20.1, 30.0, False),
+    ],
+)
+def test_enforces_ten_second_limit_for_resumed_creative_package(
+    tmp_path,
+    second_scene_start,
+    third_scene_start,
+    audio_duration,
+    accepted,
+):
+    project_directory = tmp_path / "project"
+    _write_project(project_directory)
+    _set_scene_start_times(
+        project_directory,
+        second_scene_start=second_scene_start,
+        third_scene_start=third_scene_start,
+        audio_duration=audio_duration,
+    )
+    (project_directory / "topic_selection.json").write_text(
+        json.dumps({"source": "creative_package"}),
+        encoding="utf-8",
+    )
+    config = ProductionConfig(
+        target_duration_seconds=60,
+        minimum_duration_seconds=1,
+        scene_minimum_duration_seconds=1,
+        scene_maximum_duration_seconds=6.6,
+    )
+
+    if accepted:
+        storyboard = build_audio_timed_storyboard(
+            project_directory,
+            "Supplied topic",
+            "First image. Second scene. Last image.",
+            config,
+        )
+        assert storyboard.scenes[0].duration_seconds == pytest.approx(10.0)
+    else:
+        with pytest.raises(
+            ValueError,
+            match="above the configured 10.000s maximum",
+        ):
+            build_audio_timed_storyboard(
+                project_directory,
+                "Supplied topic",
+                "First image. Second scene. Last image.",
+                config,
+            )
 
 
 @pytest.mark.parametrize(
     ("first_scene_duration", "accepted"),
     [
-        (2.9, True),
-        (2.972, True),
-        (2.899, False),
+        (2.0, True),
+        (2.072, True),
+        (1.999, False),
     ],
 )
 def test_applies_audio_alignment_tolerance_to_creative_package_minimum(
@@ -475,7 +529,7 @@ def test_applies_audio_alignment_tolerance_to_creative_package_minimum(
     else:
         with pytest.raises(
             ValueError,
-            match="below the configured 2.900s minimum",
+            match="below the configured 2.000s minimum",
         ):
             build_audio_timed_storyboard(
                 project_directory,
