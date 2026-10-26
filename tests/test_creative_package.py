@@ -279,8 +279,8 @@ def test_materializes_immutable_creative_assets_for_existing_engines(tmp_path):
     production_config = json.loads(
         (project_directory / "production_config.json").read_text(encoding="utf-8")
     )
-    assert production_config["scene_minimum_duration_seconds"] == pytest.approx(2.9)
-    assert production_config["scene_maximum_duration_seconds"] == pytest.approx(8.0)
+    assert production_config["scene_minimum_duration_seconds"] == pytest.approx(2.0)
+    assert production_config["scene_maximum_duration_seconds"] == pytest.approx(10.0)
     assert production_config["words_per_minute"] == 170
     assert production_config["voice_speed"] == pytest.approx(1.0)
     assert (
@@ -369,7 +369,7 @@ def test_rejects_script_sentences_over_15_words_before_creating_project(tmp_path
 
 def test_rejects_short_script_sentence_before_creating_project(tmp_path):
     archive = tmp_path / "short-sentence.zip"
-    short_sentence = "This sentence has eleven words and should fail early timing checks."
+    short_sentence = "This short sentence has only nine spoken words today."
     remaining_sentences = [
         " ".join(f"word{index}" for index in range(start, start + 14)) + "."
         for start in range(1, 169, 14)
@@ -380,7 +380,7 @@ def test_rejects_short_script_sentence_before_creating_project(tmp_path):
 
     with pytest.raises(
         CreativePackageError,
-        match="SCRIPT_SENTENCE_TOO_SHORT: sentence 1 has 11 words",
+        match="SCRIPT_SENTENCE_TOO_SHORT: sentence 1 has 9 words",
     ):
         materialize_creative_package(package, tmp_path / "projects")
 
@@ -389,8 +389,8 @@ def test_rejects_short_script_sentence_before_creating_project(tmp_path):
 
 def test_allows_only_the_one_word_sentence_pair_below_the_early_floor(tmp_path):
     archive = tmp_path / "paired-short-sentences.zip"
-    normal_sentence = " ".join(f"spoken{index}" for index in range(14)) + "."
-    script = "Go. Now. " + " ".join([normal_sentence] * 12)
+    normal_sentence = " ".join(f"spoken{index}" for index in range(10)) + "."
+    script = "Go. Now. " + " ".join([normal_sentence] * 17)
     _write_package(archive, script=script)
     package = load_creative_package(archive)
 

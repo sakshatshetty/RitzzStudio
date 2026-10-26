@@ -34,9 +34,9 @@ CREATIVE_PACKAGE_MAX_THUMBNAIL_BYTES = 25 * 1024 * 1024
 CREATIVE_PACKAGE_MAX_IMAGE_BYTES = 25 * 1024 * 1024
 CREATIVE_PACKAGE_MAX_MEMBERS = 256
 CREATIVE_PACKAGE_MAX_SCENE_WORDS = 15
-CREATIVE_PACKAGE_MIN_NORMAL_SENTENCE_WORDS = 14
-CREATIVE_PACKAGE_SCENE_MAXIMUM_DURATION_SECONDS = 8.0
-CREATIVE_PACKAGE_SCENE_MINIMUM_DURATION_SECONDS = 2.9
+CREATIVE_PACKAGE_MIN_NORMAL_SENTENCE_WORDS = 10
+CREATIVE_PACKAGE_SCENE_MAXIMUM_DURATION_SECONDS = 10.0
+CREATIVE_PACKAGE_SCENE_MINIMUM_DURATION_SECONDS = 2.0
 _PROJECT_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
 _REQUIRED_FILE_FIELDS = (
     "script_file",
@@ -186,7 +186,7 @@ def materialize_creative_package(
             f"SCRIPT_SENTENCE_TOO_SHORT: sentence {sentence_index + 1} has "
             f"{sentence_word_count} words; normal sentences need at least "
             f"{CREATIVE_PACKAGE_MIN_NORMAL_SENTENCE_WORDS} words to target a "
-            "3-second hold at a conservative 280 words per minute. Only an "
+            "2-second hold at a conservative 280 words per minute. Only an "
             "adjacent pair of one-word sentences is exempt."
         )
     minimum_scene_count = math.ceil(word_count / max_scene_words)
