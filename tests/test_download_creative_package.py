@@ -80,19 +80,21 @@ def test_rejects_oversized_release_asset(
     monkeypatch: pytest.MonkeyPatch,
 ):
     monkeypatch.setenv("GH_TOKEN", "github-token")
+    monkeypatch.setattr(
+        download_creative_package,
+        "CREATIVE_PACKAGE_MAX_ARCHIVE_BYTES",
+        8,
+    )
 
     def fake_run(arguments, **_kwargs):
         output_directory = Path(arguments[arguments.index("--dir") + 1])
         downloaded = output_directory / "creative-package.zip"
-        with downloaded.open("wb") as package:
-            package.truncate(
-                download_creative_package.CREATIVE_PACKAGE_MAX_ARCHIVE_BYTES + 1
-            )
+        downloaded.write_bytes(b"123456789")
         return subprocess.CompletedProcess(arguments, 0, "", "")
 
     monkeypatch.setattr(download_creative_package.subprocess, "run", fake_run)
 
-    with pytest.raises(ValueError, match="250 MiB limit"):
+    with pytest.raises(ValueError, match="1 GiB archive-size limit"):
         download_creative_package.download_creative_package(
             "pilot-v1",
             "sakshatshetty/RitzzStudio",

@@ -27,8 +27,8 @@ from modules.script.models import Script, ScriptSection
 from modules.video.image_asset_qa import inspect_image_asset
 
 CREATIVE_PACKAGE_WORKFLOW_VERSION = "creative_flow_zip_v3"
-CREATIVE_PACKAGE_MAX_ARCHIVE_BYTES = 250 * 1024 * 1024
-CREATIVE_PACKAGE_MAX_UNCOMPRESSED_BYTES = 300 * 1024 * 1024
+CREATIVE_PACKAGE_MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024
+CREATIVE_PACKAGE_MAX_UNCOMPRESSED_BYTES = 1024 * 1024 * 1024
 CREATIVE_PACKAGE_MAX_TEXT_BYTES = 5 * 1024 * 1024
 CREATIVE_PACKAGE_MAX_THUMBNAIL_BYTES = 25 * 1024 * 1024
 CREATIVE_PACKAGE_MAX_IMAGE_BYTES = 25 * 1024 * 1024
@@ -389,7 +389,9 @@ def load_creative_package(archive_path: str | Path) -> CreativePackage:
     if not path.is_file():
         raise CreativePackageError(f"Creative package ZIP does not exist: {path}")
     if path.stat().st_size > CREATIVE_PACKAGE_MAX_ARCHIVE_BYTES:
-        raise CreativePackageError("Creative package ZIP exceeds the 250 MiB limit.")
+        raise CreativePackageError(
+            "Creative package ZIP exceeds the 1 GiB archive-size limit."
+        )
 
     digest = hashlib.sha256()
     with path.open("rb") as archive_file:
@@ -624,7 +626,7 @@ def _validate_zip_members(members: list[zipfile.ZipInfo]) -> None:
         expanded_size += item.file_size
         if expanded_size > CREATIVE_PACKAGE_MAX_UNCOMPRESSED_BYTES:
             raise CreativePackageError(
-                "Creative package expands beyond the 300 MiB limit."
+                "Creative package expands beyond the 1 GiB uncompressed-size limit."
             )
         if item.file_size and (
             item.compress_size == 0 or item.file_size > item.compress_size * 1000
