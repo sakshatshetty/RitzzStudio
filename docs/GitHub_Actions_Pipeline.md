@@ -174,9 +174,11 @@ Storyboard scene excerpts must reproduce the supplied script exactly in order
 when normalized for whitespace and punctuation. Each image is a readable
 RGB/RGBA 1536×864 PNG named for its scene ID. The thumbnail must be a readable
 RGB/RGBA PNG, at least 1280×720 and 16:9 (allowing one-pixel rounding). The
-storyboard supports up to 249 scene images within the 256-member ZIP limit, and
-the release ZIP is limited to
-250 MiB. Image semantic relevance remains a human-review responsibility.
+storyboard supports up to 249 scene images within the 256-member ZIP limit.
+The release ZIP and its total expanded contents are each limited to 1 GiB.
+This keeps packages below GitHub's 2 GiB per-release-asset limit while
+accommodating full-resolution scene images. Image semantic relevance remains
+a human-review responsibility.
 
 ### Resume a production
 

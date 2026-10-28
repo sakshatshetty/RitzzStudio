@@ -121,6 +121,36 @@ def test_loads_manifest_associated_files_and_preserves_exact_values(tmp_path):
     assert package.storyboard.scenes[0].scene_id == "scene_001"
 
 
+def test_rejects_archive_above_configured_size_limit(tmp_path, monkeypatch):
+    archive = tmp_path / "oversized.zip"
+    _write_package(archive)
+    monkeypatch.setattr(
+        "modules.project.creative_package.CREATIVE_PACKAGE_MAX_ARCHIVE_BYTES",
+        archive.stat().st_size - 1,
+    )
+
+    with pytest.raises(CreativePackageError, match="1 GiB archive-size limit"):
+        load_creative_package(archive)
+
+
+def test_rejects_expanded_contents_above_configured_size_limit(
+    tmp_path,
+    monkeypatch,
+):
+    archive = tmp_path / "oversized-expanded.zip"
+    _write_package(archive)
+    monkeypatch.setattr(
+        "modules.project.creative_package.CREATIVE_PACKAGE_MAX_UNCOMPRESSED_BYTES",
+        1,
+    )
+
+    with pytest.raises(
+        CreativePackageError,
+        match="1 GiB uncompressed-size limit",
+    ):
+        load_creative_package(archive)
+
+
 def test_rejects_missing_required_member_before_ingestion(tmp_path):
     archive = tmp_path / "missing.zip"
     files = _write_package(archive)

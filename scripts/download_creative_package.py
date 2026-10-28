@@ -70,7 +70,9 @@ def download_creative_package(
                 f"{CREATIVE_PACKAGE_ASSET}."
             )
         if downloaded.stat().st_size > CREATIVE_PACKAGE_MAX_ARCHIVE_BYTES:
-            raise ValueError("Creative package ZIP exceeds the 250 MiB limit.")
+            raise ValueError(
+                "Creative package ZIP exceeds the 1 GiB archive-size limit."
+            )
         downloaded.replace(target)
 
     return target
