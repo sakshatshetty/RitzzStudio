@@ -19,6 +19,12 @@ def test_production_config_rejects_invalid_duration_order():
         ProductionConfig(target_duration_seconds=300, minimum_duration_seconds=360)
 
 
+def test_production_config_allows_no_minimum_scene_hold():
+    config = ProductionConfig(scene_minimum_duration_seconds=0.0)
+
+    assert config.scene_minimum_duration_seconds == 0.0
+
+
 def test_production_config_exposes_validatable_hook_quality_weights():
     config = ProductionConfig(
         hook_quality_weights={"curiosity": 0.7, "open_loop": 0.3}

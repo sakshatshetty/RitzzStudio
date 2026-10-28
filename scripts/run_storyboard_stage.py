@@ -47,7 +47,6 @@ def _first_grouping_failure(
     scene_matches: list[dict[str, float]],
     audio_duration_seconds: float,
     *,
-    minimum_duration_seconds: float,
     maximum_duration_seconds: float,
 ) -> str:
     sentence_start_index = 0
@@ -82,12 +81,10 @@ def _first_grouping_failure(
                 f"{scene.scene_id} groups {len(sentences)} complete sentences; "
                 "use one sentence per scene, or pair exactly two one-word sentences."
             )
-        if duration < minimum_duration_seconds and not _is_one_word_sentence_pair(
-            narration
-        ):
+        if duration <= 0:
             return (
-                f"{scene.scene_id} sentence holds for {duration:.3f}s, below "
-                f"the configured {minimum_duration_seconds:.3f}s minimum."
+                f"{scene.scene_id} has a non-positive hold of {duration:.3f}s; "
+                "every scene must have positive duration."
             )
         if duration > maximum_duration_seconds:
             return (
@@ -106,7 +103,6 @@ def _group_source_scenes(
     scene_matches: list[dict[str, float]],
     audio_duration_seconds: float,
     *,
-    minimum_duration_seconds: float,
     maximum_duration_seconds: float,
     target_duration_seconds: float,
 ) -> list[tuple[StoryboardScene, str]]:
@@ -136,6 +132,8 @@ def _group_source_scenes(
                 else audio_duration_seconds
             )
             duration = end_seconds - start_seconds
+            if duration <= 0:
+                continue
             if duration > maximum_duration_seconds:
                 break
             suffix = best[end_index + 1]
@@ -160,8 +158,6 @@ def _group_source_scenes(
                 continue
             if len(narration.split()) > CREATIVE_PACKAGE_MAX_SCENE_WORDS:
                 continue
-            if duration < minimum_duration_seconds and not short_sentence_pair:
-                continue
 
             suffix_cost, suffix_groups = suffix
             cost = (
@@ -181,13 +177,12 @@ def _group_source_scenes(
                 scenes,
                 scene_matches,
                 audio_duration_seconds,
-                minimum_duration_seconds=minimum_duration_seconds,
                 maximum_duration_seconds=maximum_duration_seconds,
             )
             raise ValueError(
                 "Could not map the supplied storyboard to one sentence per visual "
                 "scene (except a pair of one-word sentences) "
-                f"with holds from {minimum_duration_seconds:.3f}s to "
+                f"with positive holds no longer than "
                 f"{maximum_duration_seconds:.3f}s. {detail} Revise the storyboard "
                 "so every scene ends at a complete sentence boundary."
             )
@@ -242,9 +237,8 @@ def _apply_creative_package_scene_timing_policy(
             encoding="utf-8",
         )
     print(
-        "Set supplied creative package scene holds to "
-        f"{CREATIVE_PACKAGE_SCENE_MINIMUM_DURATION_SECONDS:.3f}-"
-        f"{CREATIVE_PACKAGE_SCENE_MAXIMUM_DURATION_SECONDS:.3f}s."
+        "Set supplied creative package scene holds to any positive duration "
+        f"up to {CREATIVE_PACKAGE_SCENE_MAXIMUM_DURATION_SECONDS:.3f}s."
     )
     return updated_config
 
@@ -339,7 +333,6 @@ def build_audio_timed_storyboard(
         source_scenes,
         matches,
         alignment.audio_duration_seconds,
-        minimum_duration_seconds=production_config.scene_minimum_duration_seconds,
         maximum_duration_seconds=production_config.scene_maximum_duration_seconds,
         target_duration_seconds=TARGET_SCENE_DURATION_SECONDS,
     )
@@ -361,13 +354,10 @@ def build_audio_timed_storyboard(
             else alignment.audio_duration_seconds
         )
         duration = end - start
-        if (
-            duration < production_config.scene_minimum_duration_seconds
-            and not _is_one_word_sentence_pair(scene.narration)
-        ):
+        if duration <= 0:
             raise ValueError(
-                f"{scene.scene_id} holds for {duration:.3f}s, below the configured "
-                f"{production_config.scene_minimum_duration_seconds:.3f}s minimum."
+                f"{scene.scene_id} has a non-positive hold of {duration:.3f}s; "
+                "every scene must have positive duration."
             )
         maximum_overage = (
             duration - production_config.scene_maximum_duration_seconds

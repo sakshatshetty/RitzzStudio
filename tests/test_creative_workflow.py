@@ -41,6 +41,16 @@ def test_windows_creative_builder_matches_current_wpm_and_scene_limits():
     assert "140 words per minute" not in builder
 
 
+def test_windows_creative_builder_stops_tags_at_sources_heading():
+    builder = Path("creative_work.ps1").read_text(encoding="utf-8")
+
+    assert "'sources' = 'Sources'" in builder
+    assert (
+        "(Project ID|Title|Word|Expected minutes|Script|Description|Tags|Sources|Storyboard)"
+        in builder
+    )
+
+
 def test_primary_workflow_selects_a_channel_and_uses_its_oauth_token():
     workflow = WORKFLOW.read_text(encoding="utf-8")
     dispatch_inputs = workflow.split("  creative_package_release_tag:", 1)[0]

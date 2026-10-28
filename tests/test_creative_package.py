@@ -279,7 +279,7 @@ def test_materializes_immutable_creative_assets_for_existing_engines(tmp_path):
     production_config = json.loads(
         (project_directory / "production_config.json").read_text(encoding="utf-8")
     )
-    assert production_config["scene_minimum_duration_seconds"] == pytest.approx(2.0)
+    assert production_config["scene_minimum_duration_seconds"] == pytest.approx(0.0)
     assert production_config["scene_maximum_duration_seconds"] == pytest.approx(10.0)
     assert production_config["words_per_minute"] == 170
     assert production_config["voice_speed"] == pytest.approx(1.0)
@@ -367,7 +367,7 @@ def test_rejects_script_sentences_over_15_words_before_creating_project(tmp_path
     assert not (tmp_path / "projects").exists()
 
 
-def test_rejects_short_script_sentence_before_creating_project(tmp_path):
+def test_accepts_short_script_sentence_before_creating_project(tmp_path):
     archive = tmp_path / "short-sentence.zip"
     short_sentence = "This short sentence has only nine spoken words today."
     remaining_sentences = [
@@ -378,16 +378,12 @@ def test_rejects_short_script_sentence_before_creating_project(tmp_path):
     _write_package(archive, script=script)
     package = load_creative_package(archive)
 
-    with pytest.raises(
-        CreativePackageError,
-        match="SCRIPT_SENTENCE_TOO_SHORT: sentence 1 has 9 words",
-    ):
-        materialize_creative_package(package, tmp_path / "projects")
+    project, _ = materialize_creative_package(package, tmp_path / "projects")
 
-    assert not (tmp_path / "projects").exists()
+    assert project.project_id == package.manifest.project_id
 
 
-def test_allows_only_the_one_word_sentence_pair_below_the_early_floor(tmp_path):
+def test_allows_one_word_sentence_pair_in_creative_script(tmp_path):
     archive = tmp_path / "paired-short-sentences.zip"
     normal_sentence = " ".join(f"spoken{index}" for index in range(10)) + "."
     script = "Go. Now. " + " ".join([normal_sentence] * 17)

@@ -246,6 +246,7 @@ try {
         'script' = 'script'
         'description' = 'Description'
         'tags' = 'Tags'
+        'sources' = 'Sources'
         'storyboard' = 'Storyboard'
     }
     $sections = @{}
@@ -253,7 +254,7 @@ try {
     foreach ($line in ($sourceText -split "\r?\n")) {
         $heading = [regex]::Match(
             $line,
-            '^\s*#\s*(Project ID|Title|Word|Expected minutes|Script|Description|Tags|Storyboard)\s*$',
+            '^\s*#\s*(Project ID|Title|Word|Expected minutes|Script|Description|Tags|Sources|Storyboard)\s*$',
             [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
         )
         if ($heading.Success) {

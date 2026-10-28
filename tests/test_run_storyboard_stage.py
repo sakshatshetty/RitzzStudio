@@ -317,7 +317,7 @@ def test_combines_only_a_pair_of_one_word_sentences_for_a_short_hold(tmp_path):
     )
 
 
-def test_does_not_merge_normal_short_sentences_to_reach_minimum(tmp_path):
+def test_keeps_short_positive_sentence_holds_separate(tmp_path):
     project_directory = tmp_path / "project"
     _write_project(project_directory)
     _set_scene_start_times(
@@ -327,21 +327,26 @@ def test_does_not_merge_normal_short_sentences_to_reach_minimum(tmp_path):
         audio_duration=7.5,
     )
 
-    with pytest.raises(
-        ValueError,
-        match="one sentence per visual scene",
-    ):
-        build_audio_timed_storyboard(
-            project_directory,
-            "Supplied topic",
-            "First image. Second scene. Last image.",
-            ProductionConfig(
-                target_duration_seconds=60,
-                minimum_duration_seconds=1,
-                scene_minimum_duration_seconds=3,
-                scene_maximum_duration_seconds=8,
-            ),
+    storyboard = build_audio_timed_storyboard(
+        project_directory,
+        "Supplied topic",
+        "First image. Second scene. Last image.",
+        ProductionConfig(
+            target_duration_seconds=60,
+            minimum_duration_seconds=1,
+            scene_minimum_duration_seconds=3,
+            scene_maximum_duration_seconds=8,
         )
+    )
+
+    assert [scene.narration for scene in storyboard.scenes] == [
+        "First image.",
+        "Second scene.",
+        "Last image.",
+    ]
+    assert [scene.duration_seconds for scene in storyboard.scenes] == pytest.approx(
+        [2.0, 2.0, 3.5]
+    )
 
 
 @pytest.mark.parametrize(
@@ -393,7 +398,7 @@ def test_enforces_the_exact_scene_maximum(
             )
 
 
-def test_updates_resumed_creative_package_to_ten_second_scene_limit(
+def test_updates_resumed_creative_package_to_positive_hold_and_ten_second_maximum(
     tmp_path,
 ):
     project_directory = tmp_path / "project"
@@ -427,7 +432,7 @@ def test_updates_resumed_creative_package_to_ten_second_scene_limit(
     assert storyboard.scenes[0].duration_seconds == pytest.approx(9.091)
     updated_config = json.loads(config_file.read_text(encoding="utf-8"))
     assert updated_config["scene_maximum_duration_seconds"] == pytest.approx(10.0)
-    assert updated_config["scene_minimum_duration_seconds"] == pytest.approx(2.0)
+    assert updated_config["scene_minimum_duration_seconds"] == pytest.approx(0.0)
 
 
 @pytest.mark.parametrize(
@@ -487,12 +492,12 @@ def test_enforces_ten_second_limit_for_resumed_creative_package(
 @pytest.mark.parametrize(
     ("first_scene_duration", "accepted"),
     [
-        (2.0, True),
-        (2.072, True),
-        (1.999, False),
+        (1.999, True),
+        (0.25, True),
+        (0.0, False),
     ],
 )
-def test_applies_audio_alignment_tolerance_to_creative_package_minimum(
+def test_creative_package_allows_any_positive_audio_aligned_scene_hold(
     tmp_path,
     first_scene_duration,
     accepted,
@@ -529,7 +534,7 @@ def test_applies_audio_alignment_tolerance_to_creative_package_minimum(
     else:
         with pytest.raises(
             ValueError,
-            match="below the configured 2.000s minimum",
+            match="non-positive hold",
         ):
             build_audio_timed_storyboard(
                 project_directory,
