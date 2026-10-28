@@ -65,20 +65,13 @@ Workflow file: `.github/workflows/ritzz-creative-production.yml`
 Creative-package scripts are checked against 170 spoken words per minute
 (1,530 words for a nine-minute minimum). Each scene maps to one complete
 sentence, with only a pair of adjacent one-word sentences allowed to share a
-scene. Normal sentences must contain 14-15 words; package preflight rejects
-shorter normal sentences before narration generation. This uses a conservative
-280-word-per-minute planning check to reduce the chance of a short actual hold;
-the adjacent one-word pair remains the only short-sentence exception. The
-storyboard stage still validates real narration timestamps. Sentences are
-limited to 15 words. The storyboard stage uses actual
-narration alignment for a hard cut at the beginning of each next sentence.
-Plan normal holds for at least three seconds and no more than eight. Actual
-audio-aligned holds may be as short as 2.90 seconds to account for timestamp
-alignment; anything shorter is rejected. A paired one-word sentence scene may
-be shorter than 2.90 seconds. When the supplied storyboard cannot follow these
-boundaries within the timing limits, the stage stops and asks for revision
-instead of cutting through a sentence. Resumed creative packages are updated
-to the same timing policy when the storyboard stage is rerun.
+scene. Sentences may be shorter than 10 words but may not exceed 15 words.
+The storyboard stage aligns cuts to actual narration timestamps. There is no
+minimum image hold duration: every audio-aligned hold must be positive and no
+longer than 10 seconds. When the supplied storyboard cannot follow sentence
+boundaries within the maximum timing limit, the stage stops and asks for
+revision instead of cutting through a sentence. Resumed creative packages are
+updated to the same timing policy when the storyboard stage is rerun.
 The former
 200-scene limit is removed; package imports still allow at most 249 scene images
 because the ZIP is limited to 256 members and seven members are required for
