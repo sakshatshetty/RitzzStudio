@@ -24,6 +24,14 @@ on:
         description: Published GitHub release tag with creative-package.zip (NEW only)
         required: false
         type: string
+      image_override_release_tag:
+        description: Optional replacement creative-package release tag (RESUME + RENDER only)
+        required: false
+        type: string
+      image_override_scene_ids:
+        description: Comma-separated scene IDs to replace, e.g. scene_041,scene_042
+        required: false
+        type: string
       project_id:
         description: Existing project ID (RESUME only)
         required: false
@@ -75,6 +83,15 @@ jobs:
 
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
+
+      - name: Validate optional image override inputs
+        env:
+          MODE: ${{ inputs.mode }}
+          RERUN_FROM_STAGE: ${{ inputs.rerun_from_stage }}
+          IMAGE_OVERRIDE_RELEASE_TAG: ${{ inputs.image_override_release_tag }}
+          IMAGE_OVERRIDE_SCENE_IDS: ${{ inputs.image_override_scene_ids }}
+        run: |
+          python -c "import os; from scripts.apply_creative_image_overrides import validate_image_override_inputs; validate_image_override_inputs(mode=os.environ['MODE'], rerun_from_stage=os.environ['RERUN_FROM_STAGE'], release_tag=os.environ['IMAGE_OVERRIDE_RELEASE_TAG'], scene_ids=os.environ['IMAGE_OVERRIDE_SCENE_IDS'])"
 
       - name: Set up FFmpeg and FFprobe
         uses: ./.github/actions/setup-ffmpeg
@@ -217,6 +234,27 @@ jobs:
           tar -xzf .pipeline-artifacts/project.tar.gz -C projects
           python -c "import os; from modules.project.manager import ProjectManager; ProjectManager('projects').load_project(os.environ['PROJECT_ID'])"
           echo "project_id=$PROJECT_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Download image override package
+        if: ${{ inputs.mode == 'RESUME' && inputs.rerun_from_stage == 'RENDER' && inputs.image_override_release_tag != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE_OVERRIDE_RELEASE_TAG: ${{ inputs.image_override_release_tag }}
+        run: |
+          python scripts/download_creative_package.py \
+            --release-tag "$IMAGE_OVERRIDE_RELEASE_TAG" \
+            --output .pipeline-artifacts/image-override.zip
+
+      - name: Apply selected image-only overrides
+        if: ${{ inputs.mode == 'RESUME' && inputs.rerun_from_stage == 'RENDER' && inputs.image_override_release_tag != '' }}
+        env:
+          PROJECT_ID: ${{ inputs.project_id }}
+          IMAGE_OVERRIDE_SCENE_IDS: ${{ inputs.image_override_scene_ids }}
+        run: |
+          python scripts/apply_creative_image_overrides.py \
+            --zip .pipeline-artifacts/image-override.zip \
+            --project-id "$PROJECT_ID" \
+            --scene-ids "$IMAGE_OVERRIDE_SCENE_IDS"
 
       - name: Generate or reuse supplied-script narration
         if: ${{ inputs.mode == 'NEW' || inputs.rerun_from_stage != 'FINAL_PACKAGE' }}

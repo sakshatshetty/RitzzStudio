@@ -15,11 +15,21 @@ from modules.project.creative_package import (
 )
 from modules.qa.engine import record_stage_qa
 from modules.qa.models import QAStageResult
+from modules.storyboard.models import Storyboard, StoryboardScene
+from scripts.apply_creative_image_overrides import (
+    apply_creative_image_overrides,
+    parse_scene_ids,
+    validate_image_override_inputs,
+)
 from scripts.package_creative_production import build_final_package
 
 
-def _png(width: int = 1280, height: int = 720) -> bytes:
-    row = b"\x00" + b"\x18\x76\xaa" * width
+def _png(
+    width: int = 1280,
+    height: int = 720,
+    color: tuple[int, int, int] = (24, 118, 170),
+) -> bytes:
+    row = b"\x00" + bytes(color) * width
     raw = row * height
 
     def chunk(kind: bytes, data: bytes) -> bytes:
@@ -119,6 +129,201 @@ def test_loads_manifest_associated_files_and_preserves_exact_values(tmp_path):
     assert package.tags == ["tag one", "tag two"]
     assert package.thumbnail == files["thumbnail.png"]
     assert package.storyboard.scenes[0].scene_id == "scene_001"
+
+
+def _materialize_project_with_timed_storyboard(tmp_path):
+    archive = tmp_path / "original.zip"
+    files = _write_package(archive)
+    package = load_creative_package(archive)
+    project, project_directory = materialize_creative_package(
+        package,
+        tmp_path / "projects",
+    )
+    timed_storyboard = Storyboard(
+        topic=package.manifest.topic,
+        target_duration_seconds=60,
+        scenes=[
+            StoryboardScene(
+                scene_id=scene.scene_id,
+                section_id="supplied_script",
+                start_seconds=index * 2.0,
+                duration_seconds=2.0,
+                narration=scene.narration,
+                visual_description=scene.visual_description,
+                image_prompt=scene.image_prompt,
+            )
+            for index, scene in enumerate(package.storyboard.scenes)
+        ],
+        total_scene_duration_seconds=2.0 * len(package.storyboard.scenes),
+    )
+    (project_directory / "storyboard" / "storyboard_audio_timed.json").write_text(
+        timed_storyboard.model_dump_json(indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return project, project_directory, files, package
+
+
+def _write_override_package(path, original_files, replacements):
+    files = dict(original_files)
+    files.update(replacements)
+    with ZipFile(path, "w") as archive:
+        for name, contents in files.items():
+            archive.writestr(name, contents)
+    return path
+
+
+def test_image_override_replaces_multiple_images_without_changing_storyboard(
+    tmp_path,
+):
+    project, project_directory, original_files, package = (
+        _materialize_project_with_timed_storyboard(tmp_path)
+    )
+    original_timed_storyboard = (
+        project_directory / "storyboard" / "storyboard_audio_timed.json"
+    ).read_bytes()
+    original_source_storyboard = (
+        project_directory / "storyboard" / "storyboard_source.json"
+    ).read_bytes()
+    replacement_images = {
+        "images/scene_001.png": _png(1536, 864, color=(200, 30, 40)),
+        "images/scene_002.png": _png(1536, 864, color=(30, 180, 60)),
+    }
+    override_zip = _write_override_package(
+        tmp_path / "override.zip",
+        original_files,
+        replacement_images,
+    )
+
+    result = apply_creative_image_overrides(
+        project.project_id,
+        project_directory,
+        override_zip,
+        ["scene_001", "scene_002"],
+    )
+
+    assert [item["scene_id"] for item in result["replaced_scenes"]] == [
+        "scene_001",
+        "scene_002",
+    ]
+    assert (
+        project_directory / "images" / "scene_001.png"
+    ).read_bytes() == replacement_images["images/scene_001.png"]
+    assert (
+        project_directory / "images" / "scene_002.png"
+    ).read_bytes() == replacement_images["images/scene_002.png"]
+    assert (
+        project_directory / "images" / "scene_003.png"
+    ).read_bytes() == original_files["images/scene_003.png"]
+    assert (
+        project_directory / "storyboard" / "storyboard_audio_timed.json"
+    ).read_bytes() == original_timed_storyboard
+    assert (
+        project_directory / "storyboard" / "storyboard_source.json"
+    ).read_bytes() == original_source_storyboard
+    assert package.script == (
+        project_directory / "creative_input" / "script.txt"
+    ).read_text(encoding="utf-8")
+
+
+def test_image_override_rejects_changed_script_before_replacing_images(
+    tmp_path,
+):
+    project, project_directory, original_files, _package = (
+        _materialize_project_with_timed_storyboard(tmp_path)
+    )
+    original_image = (
+        project_directory / "images" / "scene_001.png"
+    ).read_bytes()
+    override_zip = tmp_path / "changed-script.zip"
+    _write_package(
+        override_zip,
+        project_id=project.project_id,
+        script=original_files["script.txt"].decode("utf-8") + " Extra line.",
+    )
+
+    with pytest.raises(CreativePackageError, match="script differs"):
+        apply_creative_image_overrides(
+            project.project_id,
+            project_directory,
+            override_zip,
+            ["scene_001"],
+        )
+
+    assert (
+        project_directory / "images" / "scene_001.png"
+    ).read_bytes() == original_image
+
+
+def test_image_override_rejects_unknown_scene_ids_without_replacing_images(
+    tmp_path,
+):
+    project, project_directory, original_files, _package = (
+        _materialize_project_with_timed_storyboard(tmp_path)
+    )
+    override_zip = _write_override_package(
+        tmp_path / "override.zip",
+        original_files,
+        {"images/scene_001.png": _png(1536, 864, color=(200, 30, 40))},
+    )
+    original_image = (
+        project_directory / "images" / "scene_001.png"
+    ).read_bytes()
+
+    with pytest.raises(CreativePackageError, match="not present"):
+        apply_creative_image_overrides(
+            project.project_id,
+            project_directory,
+            override_zip,
+            ["scene_999"],
+        )
+
+    assert (
+        project_directory / "images" / "scene_001.png"
+    ).read_bytes() == original_image
+
+
+@pytest.mark.parametrize(
+    ("mode", "stage", "release_tag", "scene_ids", "error"),
+    [
+        ("RESUME", "RENDER", "", "", None),
+        ("RESUME", "RENDER", "fixed-images-v2", "scene_041,scene_042", None),
+        ("NEW", "RENDER", "fixed-images-v2", "scene_041", "RESUME"),
+        ("RESUME", "CONTINUE", "fixed-images-v2", "scene_041", "RENDER"),
+        ("RESUME", "RENDER", "fixed-images-v2", "", "both"),
+        ("RESUME", "RENDER", "", "scene_041", "both"),
+    ],
+)
+def test_validates_optional_image_override_workflow_inputs(
+    mode,
+    stage,
+    release_tag,
+    scene_ids,
+    error,
+):
+    if error is None:
+        parsed = validate_image_override_inputs(
+            mode=mode,
+            rerun_from_stage=stage,
+            release_tag=release_tag,
+            scene_ids=scene_ids,
+        )
+        assert parsed == ([] if not scene_ids else ["scene_041", "scene_042"])
+    else:
+        with pytest.raises(ValueError, match=error):
+            validate_image_override_inputs(
+                mode=mode,
+                rerun_from_stage=stage,
+                release_tag=release_tag,
+                scene_ids=scene_ids,
+            )
+
+
+def test_rejects_duplicate_or_malformed_image_override_scene_ids():
+    with pytest.raises(ValueError, match="duplicates"):
+        parse_scene_ids("scene_041,scene_041")
+
+    with pytest.raises(ValueError, match="scene_NNN"):
+        parse_scene_ids("41,scene_042")
 
 
 def test_rejects_archive_above_configured_size_limit(tmp_path, monkeypatch):
