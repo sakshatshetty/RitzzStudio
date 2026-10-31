@@ -192,10 +192,19 @@ an unexpired checkpoint:
 - `RENDER` reuses the voice and timed storyboard and rerenders.
 - `FINAL_PACKAGE` reuses the saved render and recreates the final review ZIP.
 
-Changing the creative files requires creating a new project ID and release.
-Reruns preserve the accepted input package and do not regenerate Flow images.
-The protected approval environment remains in force for runs that proceed to
-upload.
+For an image-only correction during a `RENDER` resume, optionally provide both
+`image_override_release_tag` and `image_override_scene_ids`. The release must
+contain a valid `creative-package.zip` for the same project ID and unchanged
+script. List one or more comma-separated scene IDs, such as
+`scene_041,scene_042`. Only those image files are copied into the restored
+project; the original voice, narration, timed storyboard, and other scene
+images remain unchanged. The workflow rejects unknown IDs, changed narration,
+or mismatched project/script inputs. Leave both fields empty for the normal
+render-resume behavior. Overrides are not supported for other resume stages.
+
+Changing the script or scene narration requires a new project ID and release.
+Reruns do not regenerate Flow images. The protected approval environment
+remains in force for runs that proceed to upload.
 
 ## Legacy generated-creative workflow
 

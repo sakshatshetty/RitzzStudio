@@ -205,6 +205,33 @@ def test_resume_workflow_exposes_only_remaining_local_production_stages():
     assert workflow.count("inputs.rerun_from_stage != 'FINAL_PACKAGE'") == 2
 
 
+def test_optional_image_override_supports_multiple_scenes_only_for_render_resume():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+
+    assert "image_override_release_tag:" in workflow
+    assert "image_override_scene_ids:" in workflow
+    assert "scene_041,scene_042" in workflow
+    assert "Validate optional image override inputs" in workflow
+    assert "Download image override package" in workflow
+    assert "Apply selected image-only overrides" in workflow
+    assert "scripts/apply_creative_image_overrides.py" in workflow
+    override_condition = (
+        "inputs.mode == 'RESUME' && inputs.rerun_from_stage == 'RENDER' && "
+        "inputs.image_override_release_tag != ''"
+    )
+    assert workflow.count(override_condition) == 2
+    assert workflow.index("Restore saved project") < workflow.index(
+        "Download image override package"
+    )
+    assert workflow.index("Download image override package") < workflow.index(
+        "Apply selected image-only overrides"
+    )
+    assert workflow.index("Apply selected image-only overrides") < workflow.index(
+        "Generate or reuse supplied-script narration"
+    )
+    assert "inputs.rerun_from_stage == 'STORYBOARD'" in workflow
+
+
 def test_workflow_does_not_select_or_generate_image_backend():
     workflow = WORKFLOW.read_text(encoding="utf-8")
     render_stage = Path("scripts/run_render_stage.py").read_text(encoding="utf-8")
