@@ -82,7 +82,7 @@ class PilotNarrationEngine:
         return sum(words for words, _ in totals) * 60 / sum(seconds for _, seconds in totals)
 
     def generate(self, storyboard_file: str | Path, output_directory: str | Path,
-                 voice_id: str, model_id: VoiceModel = "eleven_multilingual_v2",
+                 voice_id: str, model_id: VoiceModel = "eleven_v4_turbo",
                  minimum_duration_seconds: float | None = 180.0) -> VoiceGenerationResult:
         if minimum_duration_seconds is not None and (
             not math.isfinite(minimum_duration_seconds) or minimum_duration_seconds <= 0

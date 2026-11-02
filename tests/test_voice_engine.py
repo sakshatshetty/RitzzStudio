@@ -212,7 +212,7 @@ def test_create_request():
 
     assert (
         request.model_id
-        == "eleven_multilingual_v2"
+        == "eleven_v4_turbo"
     )
 
     assert (

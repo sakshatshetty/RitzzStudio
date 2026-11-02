@@ -18,7 +18,7 @@ def test_voice_generation_request():
     )
 
     assert request.voice_id == "test_voice"
-    assert request.model_id == "eleven_multilingual_v2"
+    assert request.model_id == "eleven_v4_turbo"
     assert request.output_format == "mp3_44100_128"
     assert request.voice_settings.stability == 0.75
     assert request.voice_settings.similarity_boost == 0.75
@@ -37,6 +37,17 @@ def test_voice_generation_request_custom_model():
     )
 
     assert request.model_id == "eleven_v3"
+
+
+def test_voice_generation_request_accepts_v4_turbo():
+    request = VoiceGenerationRequest(
+        voice_id="test_voice",
+        model_id="eleven_v4_turbo",
+        text="Test narration.",
+        output_directory="output/voice",
+    )
+
+    assert request.model_id == "eleven_v4_turbo"
 
 
 def test_voice_generation_request_adds_final_punctuation():
