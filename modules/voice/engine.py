@@ -103,9 +103,7 @@ class VoiceEngine:
                 if script.script_profile and script.hook.strip()
                 else None
             ),
-            minimum_duration_seconds=float(
-                config.minimum_acceptable_voice_duration_seconds
-            ),
+            minimum_duration_seconds=None,
             voice_settings=VoiceSettings(speed=config.voice_speed),
         )
 
@@ -136,25 +134,11 @@ class VoiceEngine:
             ) = self._measure_opening_hook(request, result)
 
         minimum = request.minimum_duration_seconds
-        if minimum is None:
-            if request.opening_hook is not None:
-                self._record_project_voice_qa(
-                    request,
-                    result,
-                    True,
-                    hook_error,
-                )
-                if hook_error:
-                    result.status = "failed"
-                    result.error_message = hook_error
-                    raise OpeningHookValidationError(hook_error)
-            return
-
         audio_path = Path(result.file_path or "")
         if not audio_path.is_file() or audio_path.stat().st_size == 0:
             raise ValueError(
                 "Generated narration audio is missing or empty; "
-                "its minimum duration cannot be verified."
+                "its duration cannot be measured."
             )
 
         actual = float(self.duration_probe(audio_path))
@@ -165,17 +149,18 @@ class VoiceEngine:
 
         result.actual_duration_seconds = actual
         result.minimum_duration_seconds = minimum
+        duration_passed = minimum is None or actual >= minimum
         alignment_valid = self._record_project_voice_qa(
             request,
             result,
-            actual >= minimum,
+            duration_passed,
             hook_error,
         )
         if hook_error:
             result.status = "failed"
             result.error_message = hook_error
             raise OpeningHookValidationError(hook_error)
-        if actual >= minimum:
+        if duration_passed:
             if not alignment_valid:
                 result.status = "failed"
                 result.error_message = (
@@ -184,6 +169,7 @@ class VoiceEngine:
                 raise VoiceAlignmentError(result.error_message)
             return
 
+        assert minimum is not None
         words = len(re.findall(r"\b[\w’'-]+\b", request.text))
         observed_words_per_minute = words * 60 / actual
         minimum_words_at_observed_rate = math.ceil(
@@ -192,7 +178,7 @@ class VoiceEngine:
         additional_words = max(1, minimum_words_at_observed_rate - words)
         message = (
             f"Generated narration measured {actual:.3f}s; the required minimum "
-            f"acceptable minimum duration is {minimum:.3f}s. "
+            f"duration is {minimum:.3f}s. "
             f"Its measured pace was approximately "
             f"{observed_words_per_minute:.1f} words per minute; at this pace, add "
             f"approximately {additional_words} words or reduce voice speed and "
@@ -340,19 +326,24 @@ class VoiceEngine:
             if duration_passed and timestamps_valid and opening_hook_passed
             else "FAIL"
         )
+        checks = {
+            "duration_measurement": "PASS",
+            "character_alignment": "PASS" if alignment_complete else "FAIL",
+            "timestamp_order": "PASS" if timestamps_valid else "FAIL",
+            "opening_hook_20_to_35_seconds": (
+                "PASS" if opening_hook_passed else "FAIL"
+            ),
+        }
+        if request.minimum_duration_seconds is not None:
+            checks["minimum_duration"] = (
+                "PASS" if duration_passed else "FAIL"
+            )
         record_stage_qa(
             project_directory,
             QAStageResult(
                 stage="voice",
                 status=status,
-                checks={
-                    "minimum_duration": "PASS" if duration_passed else "FAIL",
-                    "character_alignment": "PASS" if alignment_complete else "FAIL",
-                    "timestamp_order": "PASS" if timestamps_valid else "FAIL",
-                    "opening_hook_20_to_35_seconds": (
-                        "PASS" if opening_hook_passed else "FAIL"
-                    ),
-                },
+                checks=checks,
                 findings=findings,
                 recommendations=recommendations,
                 metrics={

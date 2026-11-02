@@ -213,7 +213,7 @@ def test_actual_audio_duration_takes_precedence_over_alignment_estimate(
     assert loaded.audio_duration_seconds == 32.5
 
 
-def test_rejects_audio_below_recorded_minimum(tmp_path: Path) -> None:
+def test_accepts_audio_below_legacy_recorded_minimum(tmp_path: Path) -> None:
     alignment = create_alignment()
     result_file = tmp_path / "short_result.json"
     write_alignment_file(result_file, alignment)
@@ -222,8 +222,9 @@ def test_rejects_audio_below_recorded_minimum(tmp_path: Path) -> None:
     data["minimum_duration_seconds"] = 32.0
     result_file.write_text(json.dumps(data), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="shorter than its required minimum"):
-        VideoSynchronizationEngine.load_narration_alignment(result_file)
+    loaded = VideoSynchronizationEngine.load_narration_alignment(result_file)
+
+    assert loaded.audio_duration_seconds == 31.0
 
 
 def test_mismatched_alignment_lengths_fail() -> None:

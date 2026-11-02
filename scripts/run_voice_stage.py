@@ -1,6 +1,7 @@
 """Generate and validate narration for the approved project."""
 
 import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -67,14 +68,14 @@ def main() -> int:
                 "Saved narration alignment does not match the immutable supplied script."
             )
         engine._validate_result(result)
-        duration = result.actual_duration_seconds or result.duration_seconds
-        if (
-            duration is None
-            or duration < config.minimum_acceptable_voice_duration_seconds
-        ):
+        duration = (
+            result.actual_duration_seconds
+            if result.actual_duration_seconds is not None
+            else result.duration_seconds
+        )
+        if duration is None or not math.isfinite(duration) or duration <= 0:
             raise RuntimeError(
-                "Saved narration does not meet the configured minimum acceptable "
-                "duration (including the 30-second voice-duration tolerance)."
+                "Saved narration does not have a positive, finite duration."
             )
         print(
             f"Reusing saved narration and alignment ({duration:.3f}s); "

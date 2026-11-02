@@ -3,7 +3,6 @@
 from pydantic import BaseModel, Field, model_validator
 
 DURATION_TOLERANCE_SECONDS = 60
-VOICE_DURATION_TOLERANCE_SECONDS = 30
 DEFAULT_HOOK_QUALITY_WEIGHTS = {
     "curiosity": 0.12,
     "problem_clarity": 0.12,
@@ -68,13 +67,6 @@ class ProductionConfig(BaseModel):
         return max(
             self.minimum_duration_seconds,
             self.target_duration_seconds - DURATION_TOLERANCE_SECONDS,
-        )
-
-    @property
-    def minimum_acceptable_voice_duration_seconds(self) -> int:
-        return max(
-            1,
-            self.minimum_duration_seconds - VOICE_DURATION_TOLERANCE_SECONDS,
         )
 
     @property
