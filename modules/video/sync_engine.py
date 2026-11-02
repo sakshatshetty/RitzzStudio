@@ -289,15 +289,6 @@ class VideoSynchronizationEngine:
                 "an object."
             )
 
-        minimum_duration = data.get("minimum_duration_seconds")
-        actual_duration = data.get("actual_duration_seconds")
-        if minimum_duration is not None and actual_duration is not None:
-            if float(actual_duration) < float(minimum_duration):
-                raise ValueError(
-                    "Narration audio is shorter than its required minimum; "
-                    "it cannot be synchronized."
-                )
-
         alignment_data = data.get(
             "alignment"
         )

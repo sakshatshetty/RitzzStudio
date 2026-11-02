@@ -119,10 +119,11 @@ video QA. A technical failure blocks approval. The rendered video is the human
 check for image/narration relevance and image quality.
 
 The `0.92` speed is a configurable production default calibrated against
-measured narration pacing. Narration QA allows up to 30 seconds below the
-configured minimum duration; for a nine-minute target, audio of at least 8:30
-is acceptable. If it is shorter, the error reports its measured words-per-minute
-rate and the approximate word count needed at that pace. Audio is never stretched.
+measured narration pacing. The configured duration remains a script-planning
+target, not a hard minimum for generated audio. Narration must have a positive,
+finite measured duration and valid character alignment; scene timing uses its
+actual timestamps, so shorter narration can produce a shorter video. Audio is
+never stretched.
 
 At workflow dispatch, select `Ritzz-Explains`, `RitzzHistory`, or `RitzzTech1`.
 The selected channel is shown in the review summary and controls which
