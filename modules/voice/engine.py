@@ -103,7 +103,9 @@ class VoiceEngine:
                 if script.script_profile and script.hook.strip()
                 else None
             ),
-            minimum_duration_seconds=float(config.minimum_duration_seconds),
+            minimum_duration_seconds=float(
+                config.minimum_acceptable_voice_duration_seconds
+            ),
             voice_settings=VoiceSettings(speed=config.voice_speed),
         )
 
@@ -190,7 +192,8 @@ class VoiceEngine:
         additional_words = max(1, minimum_words_at_observed_rate - words)
         message = (
             f"Generated narration measured {actual:.3f}s; the required minimum "
-            f"is {minimum:.3f}s. Its measured pace was approximately "
+            f"acceptable minimum duration is {minimum:.3f}s. "
+            f"Its measured pace was approximately "
             f"{observed_words_per_minute:.1f} words per minute; at this pace, add "
             f"approximately {additional_words} words or reduce voice speed and "
             "regenerate. This audio cannot proceed to scene timing."

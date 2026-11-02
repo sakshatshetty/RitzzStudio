@@ -12,6 +12,7 @@ def test_production_config_derives_minimum_words_from_duration():
         minimum_duration_seconds=540,
     )
     assert nine_minute_config.minimum_word_count == 1530
+    assert nine_minute_config.minimum_acceptable_voice_duration_seconds == 510
 
 
 def test_production_config_rejects_invalid_duration_order():

@@ -68,9 +68,13 @@ def main() -> int:
             )
         engine._validate_result(result)
         duration = result.actual_duration_seconds or result.duration_seconds
-        if duration is None or duration < config.minimum_duration_seconds:
+        if (
+            duration is None
+            or duration < config.minimum_acceptable_voice_duration_seconds
+        ):
             raise RuntimeError(
-                "Saved narration does not meet the configured minimum duration."
+                "Saved narration does not meet the configured minimum acceptable "
+                "duration (including the 30-second voice-duration tolerance)."
             )
         print(
             f"Reusing saved narration and alignment ({duration:.3f}s); "

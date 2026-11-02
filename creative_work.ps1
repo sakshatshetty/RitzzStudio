@@ -170,11 +170,11 @@ function Get-RitzzSceneNumber {
         [Parameter(Mandatory = $true)][string]$BaseName
     )
 
-    if ($BaseName -match '(?i)^scene_(\d+)(?:_\d{14})?$') {
+    if ($BaseName -match '(?i)^scene_(\d+)(?:_\d{14}|_[a-f0-9]{8})?$') {
         $numberText = $Matches[1]
     }
     else {
-        $normalizedBaseName = $BaseName -replace '(?i)_\d{14}$', ''
+        $normalizedBaseName = $BaseName -replace '(?i)(?:_\d{14}|_[a-f0-9]{8})$', ''
         if ($normalizedBaseName -notmatch '(\d+)$') {
             throw "Flow scene image filename must end in its scene number: $BaseName"
         }
