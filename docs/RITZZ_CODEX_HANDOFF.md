@@ -74,7 +74,7 @@ Root `.env` contains configuration such as:
 ```env
 OPENAI_API_KEY=...
 RITZZ_VOICE_ID=...
-RITZZ_VOICE_MODEL=eleven_multilingual_v2
+RITZZ_VOICE_MODEL=eleven_v4_turbo
 RITZZ_EDITORIAL_MODEL=gpt-5.4-mini
 ```
 
@@ -258,7 +258,7 @@ The immediate next step is to review the audio-timed storyboard and then generat
 Use:
 - existing RITZZ professional ElevenLabs voice
 - `RITZZ_VOICE_ID`
-- `RITZZ_VOICE_MODEL=eleven_multilingual_v2`
+- `RITZZ_VOICE_MODEL=eleven_v4_turbo`
 
 Dedicated pilot audio and character timestamps/alignment already exist in `pilot_3min`.
 

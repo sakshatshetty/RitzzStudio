@@ -96,9 +96,11 @@ the open Flow project. Use a dedicated project to avoid unrelated tiles.
 Download scene files with their global scene numbers in the filename and name
 the thumbnail `thumbnail` while preserving its actual extension (for example,
 `thumbnail.jpg`). The creative-package step converts them to
-`images/scene_001.png` and the required `thumbnail.png` output. The package
-builder checks file integrity and dimensions; it does not claim visual content
-is correct.
+`images/scene_001.png` and the required `thumbnail.png` output. Scene filenames
+may include a trailing 14-digit timestamp or an 8-character hexadecimal Flow
+image ID (for example, `scene_001_2b39ea0e.jpg`); the package builder
+normalizes them to the storyboard scene IDs. It checks file integrity and
+dimensions but does not claim visual content is correct.
 
 ### Run, review, and upload
 
@@ -109,7 +111,7 @@ Replicate, research, storyboard-planning, image-generation, or thumbnail-
 generation API is called in Actions.
 
 The supplied script is narrated with the configured RITZZ ElevenLabs voice
-(`eleven_multilingual_v2`, speed `0.92`, stability `0.75`, similarity boost
+(`eleven_v4_turbo`, speed `0.92`, stability `0.75`, similarity boost
 `0.75`, style exaggeration `0`, speaker boost enabled). Scene starts are mapped
 to actual ElevenLabs character timestamps. The workflow validates scene/image
 coverage, uses static stills and hard cuts, then renders and runs technical
@@ -117,8 +119,9 @@ video QA. A technical failure blocks approval. The rendered video is the human
 check for image/narration relevance and image quality.
 
 The `0.92` speed is a configurable production default calibrated against
-measured narration pacing; the requested minimum duration remains a hard gate.
-If narration is still short, the error reports its measured words-per-minute
+measured narration pacing. Narration QA allows up to 30 seconds below the
+configured minimum duration; for a nine-minute target, audio of at least 8:30
+is acceptable. If it is shorter, the error reports its measured words-per-minute
 rate and the approximate word count needed at that pace. Audio is never stretched.
 
 At workflow dispatch, select `Ritzz-Explains`, `RitzzHistory`, or `RitzzTech1`.

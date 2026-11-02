@@ -212,7 +212,7 @@ def test_create_request():
 
     assert (
         request.model_id
-        == "eleven_multilingual_v2"
+        == "eleven_v4_turbo"
     )
 
     assert (
@@ -231,7 +231,7 @@ def test_create_request():
     )
     assert request.voice_settings.stability == 0.75
     assert request.voice_settings.speed == pytest.approx(1.0)
-    assert request.minimum_duration_seconds == 480
+    assert request.minimum_duration_seconds == 450
 
 
 def test_profiled_script_request_carries_the_spoken_opening_hook():
@@ -429,7 +429,7 @@ def test_create_voice_regenerates_a_hook_that_is_short_in_actual_audio(
     ] == ["FAIL", "PASS"]
 
 
-def test_create_request_uses_configured_minimum_duration():
+def test_create_request_applies_tolerance_to_configured_minimum_duration():
     script = make_script()
     request = VoiceEngine(provider=MockVoiceProvider()).create_request(
         script=script,
@@ -440,7 +440,7 @@ def test_create_request_uses_configured_minimum_duration():
             minimum_duration_seconds=300,
         ),
     )
-    assert request.minimum_duration_seconds == 300
+    assert request.minimum_duration_seconds == 270
 
 
 def test_generate():
@@ -500,7 +500,50 @@ def test_create_voice(tmp_path):
         / "narration.mp3"
     )
     assert result.actual_duration_seconds == 480.5
-    assert result.minimum_duration_seconds == 480
+    assert result.minimum_duration_seconds == 450
+
+
+@pytest.mark.parametrize("measured_duration", [510.0, 528.997])
+def test_generate_accepts_thirty_second_shortfall_from_configured_minimum(
+    measured_duration,
+):
+    provider = MockVoiceProvider()
+    engine = VoiceEngine(provider, duration_probe=lambda _: measured_duration)
+    config = ProductionConfig(
+        target_duration_seconds=540,
+        minimum_duration_seconds=540,
+    )
+    request = engine.create_request(
+        script=make_script(),
+        voice_id="ritzz_voice",
+        output_directory="output/voice",
+        production_config=config,
+    )
+
+    assert request.minimum_duration_seconds == 510
+    result = engine.generate(request)
+
+    assert result.status == "completed"
+    assert result.actual_duration_seconds == measured_duration
+    assert result.minimum_duration_seconds == 510
+
+
+def test_generate_rejects_audio_below_buffered_duration_minimum():
+    provider = MockVoiceProvider()
+    engine = VoiceEngine(provider, duration_probe=lambda _: 509.999)
+    config = ProductionConfig(
+        target_duration_seconds=540,
+        minimum_duration_seconds=540,
+    )
+    request = engine.create_request(
+        script=make_script(),
+        voice_id="ritzz_voice",
+        output_directory="output/voice",
+        production_config=config,
+    )
+
+    with pytest.raises(NarrationTooShortError, match="acceptable minimum duration"):
+        engine.generate(request)
 
 
 def test_generate_rejects_audio_below_requested_minimum():

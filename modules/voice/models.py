@@ -8,6 +8,7 @@ VoiceModel = Literal[
     "eleven_v3",
     "eleven_multilingual_v2",
     "eleven_flash_v2_5",
+    "eleven_v4_turbo",
 ]
 
 
@@ -51,7 +52,7 @@ class VoiceGenerationRequest(BaseModel):
     voice_id: str
 
     model_id: VoiceModel = (
-        "eleven_multilingual_v2"
+        "eleven_v4_turbo"
     )
 
     preserve_text: bool = False

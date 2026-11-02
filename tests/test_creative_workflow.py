@@ -51,6 +51,13 @@ def test_windows_creative_builder_stops_tags_at_sources_heading():
     )
 
 
+def test_windows_creative_builder_accepts_flow_image_id_suffixes():
+    builder = Path("creative_work.ps1").read_text(encoding="utf-8")
+
+    assert r"(?:_\d{14}|_[a-f0-9]{8})?" in builder
+    assert r"(?:_\d{14}|_[a-f0-9]{8})$" in builder
+
+
 def test_primary_workflow_selects_a_channel_and_uses_its_oauth_token():
     workflow = WORKFLOW.read_text(encoding="utf-8")
     dispatch_inputs = workflow.split("  creative_package_release_tag:", 1)[0]
