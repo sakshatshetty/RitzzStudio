@@ -29,6 +29,7 @@ class VideoSynchronizationEngine:
     """
 
     TIMING_TOLERANCE_SECONDS = 0.01
+    ALIGNMENT_AUDIO_OVERRUN_TOLERANCE_SECONDS = 0.5
 
     def create_request(
         self,
@@ -383,19 +384,43 @@ class VideoSynchronizationEngine:
                 "Invalid narration audio duration."
             ) from exc
 
+        if not math.isfinite(audio_duration) or audio_duration <= 0:
+            raise ValueError(
+                "Narration audio duration must be positive and finite."
+            )
+
+        start_times_seconds = [float(value) for value in start_times]
+        end_times_seconds = [float(value) for value in end_times]
+        if end_times_seconds:
+            final_end = max(end_times_seconds)
+            overrun = final_end - audio_duration
+            maximum_overrun = (
+                VideoSynchronizationEngine.ALIGNMENT_AUDIO_OVERRUN_TOLERANCE_SECONDS
+            )
+            if overrun > maximum_overrun:
+                raise ValueError(
+                    f"Final alignment timestamp {final_end:.3f}s exceeds "
+                    f"measured narration audio duration {audio_duration:.3f}s "
+                    f"by {overrun:.3f}s; the maximum tolerated overrun is "
+                    f"{maximum_overrun:.3f}s."
+                )
+            if overrun > 0:
+                start_times_seconds = [
+                    min(value, audio_duration)
+                    for value in start_times_seconds
+                ]
+                end_times_seconds = [
+                    min(value, audio_duration)
+                    for value in end_times_seconds
+                ]
+
         alignment = NarrationAlignment(
             characters=[
                 str(character)
                 for character in characters
             ],
-            character_start_times_seconds=[
-                float(value)
-                for value in start_times
-            ],
-            character_end_times_seconds=[
-                float(value)
-                for value in end_times
-            ],
+            character_start_times_seconds=start_times_seconds,
+            character_end_times_seconds=end_times_seconds,
             audio_duration_seconds=audio_duration,
         )
 
