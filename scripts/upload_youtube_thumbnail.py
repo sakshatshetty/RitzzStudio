@@ -53,17 +53,22 @@ def main() -> int:
     if marker_file.is_file():
         marker = json.loads(marker_file.read_text(encoding="utf-8"))
         if marker.get("status") == "completed":
-            if marker.get("video_id") != publish_result.video_id:
-                raise RuntimeError(
-                    "Saved thumbnail upload marker belongs to a different video ID."
-                )
-            if marker.get("thumbnail_sha256") == thumbnail_hash:
+            if marker.get("video_id") == publish_result.video_id and marker.get(
+                "thumbnail_sha256"
+            ) == thumbnail_hash:
                 print(f"Thumbnail already uploaded for video {publish_result.video_id}.")
                 return 0
-            print(
-                "The selected thumbnail differs from the completed upload marker; "
-                "updating the thumbnail on the existing video."
-            )
+            if marker.get("video_id") != publish_result.video_id:
+                print(
+                    "The completed thumbnail marker is for a previous video "
+                    f"({marker.get('video_id')}); applying the thumbnail to the "
+                    f"current saved upload ({publish_result.video_id})."
+                )
+            else:
+                print(
+                    "The selected thumbnail differs from the completed upload marker; "
+                    "updating the thumbnail on the existing video."
+                )
 
     provider = YouTubeProvider(
         Path(os.environ["GOOGLE_CLIENT_SECRETS_FILE"]),

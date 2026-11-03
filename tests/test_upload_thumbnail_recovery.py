@@ -189,7 +189,7 @@ def test_completed_thumbnail_marker_without_hash_reuploads_processed_thumbnail(
     assert marker["thumbnail_sha256"] == hashlib.sha256(processed.read_bytes()).hexdigest()
 
 
-def test_completed_thumbnail_marker_must_match_saved_video_id(
+def test_stale_completed_thumbnail_marker_updates_current_saved_video(
     tmp_path: Path,
     monkeypatch,
 ):
@@ -206,6 +206,24 @@ def test_completed_thumbnail_marker_must_match_saved_video_id(
         encoding="utf-8",
     )
     monkeypatch.setenv("RITZZ_PROJECT_ID", project.project_id)
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRETS_FILE", str(tmp_path / "client.json"))
+    monkeypatch.setenv("GOOGLE_TOKEN_FILE", str(tmp_path / "token.json"))
+    uploaded_video_ids = []
 
-    with pytest.raises(RuntimeError, match="different video ID"):
-        upload_youtube_thumbnail.main()
+    class Provider:
+        def __init__(self, *_args):
+            pass
+
+        def set_thumbnail(self, *, video_id, thumbnail_file):
+            assert Path(thumbnail_file).is_file()
+            uploaded_video_ids.append(video_id)
+            return {"kind": "thumbnail"}
+
+    monkeypatch.setattr(upload_youtube_thumbnail, "YouTubeProvider", Provider)
+
+    assert upload_youtube_thumbnail.main() == 0
+
+    assert uploaded_video_ids == ["existing-video"]
+    marker = json.loads((publishing / "thumbnail_upload.json").read_text(encoding="utf-8"))
+    assert marker["status"] == "completed"
+    assert marker["video_id"] == "existing-video"
