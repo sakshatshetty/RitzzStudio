@@ -191,6 +191,8 @@ jobs:
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           RITZZ_YOUTUBE_CATEGORY: Education
+          GOOGLE_CLIENT_SECRETS_FILE: ${{ runner.temp }}/youtube-client-secrets.json
+          GOOGLE_TOKEN_FILE: ${{ runner.temp }}/youtube-token.json
         run: python scripts/run_private_upload_stage.py
 
       - name: Record private upload completion marker
@@ -236,6 +238,9 @@ jobs:
           retention-days: 30
 
       - name: Set the supplied thumbnail on the private video
+        env:
+          GOOGLE_CLIENT_SECRETS_FILE: ${{ runner.temp }}/youtube-client-secrets.json
+          GOOGLE_TOKEN_FILE: ${{ runner.temp }}/youtube-token.json
         run: python scripts/upload_youtube_thumbnail.py
 
       - name: Upload final approved production artifacts

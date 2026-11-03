@@ -212,6 +212,24 @@ def test_private_upload_requires_owner_dispatch_and_explicit_review_approval():
     assert "upload_youtube_thumbnail.py" not in production
 
 
+def test_approval_upload_provides_oauth_file_paths_to_upload_steps():
+    workflow = Path(
+        ".github/workflows/ritzz-creative-approval-upload.yml"
+    ).read_text(encoding="utf-8")
+    upload_step = workflow.split(
+        "      - name: Upload the approved metadata and final video privately\n",
+        1,
+    )[1].split("\n      - name:", 1)[0]
+    thumbnail_step = workflow.split(
+        "      - name: Set the supplied thumbnail on the private video\n",
+        1,
+    )[1].split("\n      - name:", 1)[0]
+
+    for step in (upload_step, thumbnail_step):
+        assert "GOOGLE_CLIENT_SECRETS_FILE: ${{ runner.temp }}/youtube-client-secrets.json" in step
+        assert "GOOGLE_TOKEN_FILE: ${{ runner.temp }}/youtube-token.json" in step
+
+
 def test_private_upload_records_a_completion_marker_to_prevent_duplicate_uploads():
     workflow = Path(
         ".github/workflows/ritzz-creative-approval-upload.yml"
