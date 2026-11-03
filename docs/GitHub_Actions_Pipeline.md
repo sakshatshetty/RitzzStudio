@@ -9,8 +9,9 @@ to match saved prompts and rename scene tiles; images are downloaded manually.
 The PowerShell package builder validates and releases the approved assets.
 GitHub Actions then generates only the narration, aligns the supplied
 storyboard to the real narration timestamps, renders and technically checks
-the video, waits for human approval, packages the approved inputs, and uploads
-privately to YouTube.
+the video, and publishes review artifacts. After the repository owner reviews
+the video and manually dispatches the approval workflow, it packages the
+approved inputs and uploads privately to YouTube.
 
 ## Primary workflow: Flow creative package
 
@@ -131,9 +132,14 @@ channel-specific OAuth token is used for upload. The upload stage verifies the
 token's authenticated channel title before it creates approval state or uploads
 anything; it also checks YouTube's returned channel ID after upload.
 
-Before pausing at the protected `ritzz-packaging-approval` environment, the
-production job publishes a separate `ritzz-review-video-<project-id>` artifact
-containing only the rendered MP4, in addition to the complete final review ZIP.
+The production job publishes a separate `ritzz-review-video-<project-id>`
+artifact containing only the rendered MP4, in addition to the complete final
+review ZIP. Production does not upload to YouTube. After reviewing the MP4,
+the repository owner must dispatch
+`.github/workflows/ritzz-creative-approval-upload.yml` from `main`, provide the
+source run ID, project ID, and selected channel, and confirm the explicit
+approval checkbox. The approval workflow validates the source run and limits
+dispatch to the repository owner.
 Download the MP4-only artifact and extract its MP4 into your local Downloads
 folder for review. GitHub Actions artifacts are delivered as ZIP files; the
 cloud runner cannot write directly to a reviewer's PC. To download and extract
@@ -144,10 +150,10 @@ workflow summary (GitHub CLI must be authenticated):
 gh run download <run-id> --repo sakshatshetty/RitzzStudio --name "ritzz-review-video-<project-id>" --dir "$env:USERPROFILE\Downloads"
 ```
 
-A trusted reviewer watches the video and approves or rejects the job. After
-approval, the workflow revalidates the exact supplied title, description, tags,
-and thumbnail, builds the approved final package, and uploads the video
-privately with the supplied metadata. It creates a separate
+The repository owner watches the video and explicitly dispatches the private
+upload approval workflow only after review. That workflow revalidates the exact
+supplied title, description, tags, and thumbnail, builds the approved final
+package, and uploads the video privately with the supplied metadata. It creates a separate
 `thumbnail/processed_thumbnail.png` using the same Gemini spot-reduction mask
 as the renderer and uploads that copy as the YouTube thumbnail; the supplied
 source image remains unchanged. Public visibility is not enabled.
@@ -207,8 +213,8 @@ or mismatched project/script inputs. Leave both fields empty for the normal
 render-resume behavior. Overrides are not supported for other resume stages.
 
 Changing the script or scene narration requires a new project ID and release.
-Reruns do not regenerate Flow images. The protected approval environment
-remains in force for runs that proceed to upload.
+Reruns do not regenerate Flow images. Runs that proceed to upload require the
+repository owner's separate manual dispatch of the approval workflow.
 
 ## Legacy generated-creative workflow
 
@@ -353,10 +359,9 @@ The `RITZZ_VIDEO_BITRATE` Actions variable is optional and defaults to `10M`.
 The render and upload jobs use the same value; the upload gate rejects targets
 or measured masters outside 8–12 Mbps.
 
-Create the protected environment for the primary Flow-package workflow and
-require trusted reviewers:
-
-- `ritzz-packaging-approval`
+Native required-reviewer environment rules are unavailable for this private
+repository on its current GitHub plan. The primary Flow-package workflow uses
+the separate owner-dispatched approval workflow described above instead.
 
 The legacy generated-creative workflow uses these additional environments:
 

@@ -1,0 +1,250 @@
+name: RITZZ Private Upload Approval
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Successful production run containing the reviewed video
+        required: true
+        type: string
+      project_id:
+        description: Project ID shown in the production run summary
+        required: true
+        type: string
+      youtube_channel:
+        description: YouTube channel selected for the production
+        required: true
+        type: choice
+        options:
+          - Ritzz-Explains
+          - RitzzHistory
+          - RitzzTech1
+      approve_private_upload:
+        description: Confirm that you reviewed the rendered video and approve its private upload
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: ritzz-private-upload-${{ inputs.project_id }}
+  cancel-in-progress: false
+
+jobs:
+  validate-approval:
+    name: Validate owner approval and production artifact
+    if: ${{ github.ref == 'refs/heads/main' && github.actor == github.repository_owner }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require explicit owner approval and validate source run
+        env:
+          APPROVE_PRIVATE_UPLOAD: ${{ inputs.approve_private_upload }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          PROJECT_ID: ${{ inputs.project_id }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$APPROVE_PRIVATE_UPLOAD" != "true" ]]; then
+            echo "Private upload requires explicit approval after video review." >&2
+            exit 1
+          fi
+          if [[ ! "$SOURCE_RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "source_run_id must be a numeric GitHub Actions run ID." >&2
+            exit 1
+          fi
+          if [[ ! "$PROJECT_ID" =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$ ]]; then
+            echo "project_id contains unsupported characters." >&2
+            exit 1
+          fi
+
+          run_json=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}")
+          if ! jq -e \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg production_workflow ".github/workflows/ritzz-creative-production.yml" \
+            --arg approval_workflow ".github/workflows/ritzz-creative-approval-upload.yml" \
+            '.head_repository.full_name == $repository
+             and .head_branch == "main"
+             and (
+               (.path == $production_workflow and .event == "workflow_dispatch" and .conclusion == "success")
+               or (.path == $approval_workflow and (.conclusion == "success" or .conclusion == "failure"))
+             )' <<< "$run_json" >/dev/null; then
+            echo "Source must be a successful main-branch production run or a prior upload run." >&2
+            exit 1
+          fi
+
+          artifact_name="ritzz-creative-production-${PROJECT_ID}-checkpoint"
+          artifacts_json=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/artifacts?per_page=100")
+          if ! jq -e --arg name "$artifact_name" \
+            'any(.artifacts[]; .name == $name and .expired == false)' \
+            <<< "$artifacts_json" >/dev/null; then
+            echo "The source run has no unexpired checkpoint for project $PROJECT_ID." >&2
+            exit 1
+          fi
+
+          marker_name="ritzz-private-upload-complete-${PROJECT_ID}"
+          repository_artifacts=$(gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/actions/artifacts?per_page=100")
+          previous_marker_run=$(jq -r \
+            --arg name "$marker_name" \
+            --arg source "$SOURCE_RUN_ID" \
+            '[.[] | .artifacts[]? | select(.name == $name and .expired == false)
+              | ((.workflow_run.id // 0) | tostring)]
+             | unique | map(select(. != $source)) | .[0] // empty' \
+            <<< "$repository_artifacts")
+          if [[ -n "$previous_marker_run" ]]; then
+            echo "A private upload was already recorded in run $previous_marker_run. Use that run's checkpoint to resume instead of the original production run." >&2
+            exit 1
+          fi
+
+          {
+            echo "## Private upload approval"
+            echo
+            echo "Approved by @${GITHUB_ACTOR} for project \`${PROJECT_ID}\`."
+            echo "Source production run: ${SOURCE_RUN_ID}"
+            echo "Selected YouTube channel: \`${{ inputs.youtube_channel }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  upload:
+    name: Upload reviewed video privately
+    needs: validate-approval
+    if: ${{ needs.validate-approval.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      RITZZ_PROJECT_ID: ${{ inputs.project_id }}
+      GOOGLE_CLIENT_SECRETS_B64: ${{ secrets.GOOGLE_CLIENT_SECRETS_B64 }}
+      GOOGLE_TOKEN_B64: ${{ inputs.youtube_channel == 'Ritzz-Explains' && secrets.GOOGLE_TOKEN_B64 || inputs.youtube_channel == 'RitzzHistory' && secrets.GOOGLE_TOKEN_RITZZ_HISTORY_B64 || inputs.youtube_channel == 'RitzzTech1' && secrets.GOOGLE_TOKEN_RITZZ_TECH_B64 || '' }}
+      RITZZ_YOUTUBE_CHANNEL: ${{ inputs.youtube_channel }}
+      RITZZ_YOUTUBE_CHANNEL_TITLE: ${{ inputs.youtube_channel == 'Ritzz-Explains' && 'Ritzz' || inputs.youtube_channel == 'RitzzHistory' && 'Ritzz History' || inputs.youtube_channel == 'RitzzTech1' && 'Ritzz Tech' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies and check upload media tools
+        run: python -m pip install -r requirements.txt
+
+      - name: Set up FFmpeg and FFprobe
+        uses: ./.github/actions/setup-ffmpeg
+
+      - name: Validate YouTube credentials and selected channel
+        env:
+          GOOGLE_CLIENT_SECRETS_FILE: ${{ runner.temp }}/youtube-client-secrets.json
+          GOOGLE_TOKEN_FILE: ${{ runner.temp }}/youtube-token.json
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP"
+          printf '%s' "$GOOGLE_CLIENT_SECRETS_B64" | base64 --decode > "$GOOGLE_CLIENT_SECRETS_FILE"
+          printf '%s' "$GOOGLE_TOKEN_B64" | base64 --decode > "$GOOGLE_TOKEN_FILE"
+          python scripts/validate_pipeline_prerequisites.py --creative-package
+          python scripts/verify_youtube_channel.py
+
+      - name: Download approved production checkpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: ritzz-creative-production-${{ inputs.project_id }}-checkpoint
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+          path: .pipeline-artifacts
+
+      - name: Restore reviewed project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p projects .pipeline-artifacts
+          if [[ ! -s .pipeline-artifacts/project.tar.gz ]]; then
+            echo "The source checkpoint archive is missing or empty." >&2
+            exit 1
+          fi
+          mapfile -t project_roots < <(
+            tar -tzf .pipeline-artifacts/project.tar.gz | cut -d/ -f1 | sort -u
+          )
+          if [[ "${#project_roots[@]}" -ne 1 ]]; then
+            echo "Expected exactly one project directory in the checkpoint archive." >&2
+            exit 1
+          fi
+          case "${project_roots[0]}" in
+            "${RITZZ_PROJECT_ID}"_*) ;;
+            *)
+              echo "The checkpoint archive does not match project $RITZZ_PROJECT_ID." >&2
+              exit 1
+              ;;
+          esac
+          tar -xzf .pipeline-artifacts/project.tar.gz -C projects
+
+      - name: Finalize the human-approved exact-input package
+        env:
+          RITZZ_HUMAN_APPROVED: "true"
+        run: python scripts/package_creative_production.py
+
+      - name: Upload the approved metadata and final video privately
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          RITZZ_YOUTUBE_CATEGORY: Education
+        run: python scripts/run_private_upload_stage.py
+
+      - name: Record private upload completion marker
+        run: |
+          set -euo pipefail
+          mkdir -p .pipeline-artifacts
+          printf 'project_id=%s\nsource_run_id=%s\n' \
+            "$RITZZ_PROJECT_ID" "${{ inputs.source_run_id }}" \
+            > .pipeline-artifacts/private-upload-complete.txt
+
+      - name: Upload private-upload completion marker
+        if: ${{ success() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ritzz-private-upload-complete-${{ inputs.project_id }}
+          path: .pipeline-artifacts/private-upload-complete.txt
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Save resumable approved checkpoint
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          mkdir -p .pipeline-artifacts
+          project_name=$(find projects -mindepth 1 -maxdepth 1 -type d -name "${RITZZ_PROJECT_ID}_*" -printf "%f\n" | head -n 1)
+          if [[ -z "$project_name" ]]; then
+            echo "Could not find the project directory for $RITZZ_PROJECT_ID." >&2
+            exit 1
+          fi
+          tar -czf .pipeline-artifacts/project.tar.gz -C projects "$project_name"
+
+      - name: Upload resumable approved checkpoint
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ritzz-creative-production-${{ inputs.project_id }}-checkpoint
+          path: |
+            .pipeline-artifacts/project.tar.gz
+            .pipeline-artifacts/final-package-*.zip
+            .pipeline-artifacts/private-upload-complete.txt
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 30
+
+      - name: Set the supplied thumbnail on the private video
+        run: python scripts/upload_youtube_thumbnail.py
+
+      - name: Upload final approved production artifacts
+        if: ${{ success() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ritzz-creative-production-${{ inputs.project_id }}-approved
+          path: |
+            .pipeline-artifacts/project.tar.gz
+            .pipeline-artifacts/final-package-*.zip
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 90

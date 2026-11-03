@@ -15,14 +15,14 @@ def test_primary_workflow_uses_supplied_creative_and_gates_private_upload():
         "Create exact-input final review package",
         "Prepare MP4-only review download",
         "Upload MP4-only review video",
-        "Human review and private YouTube upload",
+        "Upload production checkpoint and final package",
     ]
     positions = [workflow.index(step) for step in required_steps]
     assert positions == sorted(positions)
-    assert "environment:\n      name: ritzz-packaging-approval" in workflow
-    assert "run_private_upload_stage.py" in workflow
-    assert "upload_youtube_thumbnail.py" in workflow
-    assert "RITZZ_HUMAN_APPROVED: \"true\"" in workflow
+    assert "human-review-and-private-upload:" not in workflow
+    assert "ritzz-packaging-approval" not in workflow
+    assert "run_private_upload_stage.py" not in workflow
+    assert "RITZZ_HUMAN_APPROVED" not in workflow
     assert "public" not in workflow.casefold()
     assert "OPENAI_API_KEY" not in workflow
     assert "REPLICATE_API_TOKEN" not in workflow
@@ -87,7 +87,11 @@ def test_workflow_avoids_apt_and_pins_the_rendering_font_download():
     )
 
     assert "sudo apt-get" not in workflow
-    assert workflow.count("uses: ./.github/actions/setup-ffmpeg") == 3
+    assert workflow.count("uses: ./.github/actions/setup-ffmpeg") == 2
+    approval_workflow = Path(
+        ".github/workflows/ritzz-creative-approval-upload.yml"
+    ).read_text(encoding="utf-8")
+    assert approval_workflow.count("uses: ./.github/actions/setup-ffmpeg") == 1
     assert "command -v ffmpeg" not in workflow
     assert "command -v ffprobe" not in workflow
     assert "autobuild-2026-10-21-13-06" in ffmpeg_action
@@ -136,23 +140,26 @@ def test_new_production_downloads_zip_from_a_github_release_asset():
 
 def test_project_archive_steps_brace_ids_before_appending_wildcards():
     workflow = WORKFLOW.read_text(encoding="utf-8")
+    approval_workflow = Path(
+        ".github/workflows/ritzz-creative-approval-upload.yml"
+    ).read_text(encoding="utf-8")
 
     assert '-name "${PROJECT_ID}_*"' in workflow
-    assert '-name "${RITZZ_PROJECT_ID}_*"' in workflow
     assert '-name "$PROJECT_ID_*"' not in workflow
-    assert '-name "$RITZZ_PROJECT_ID_*"' not in workflow
+    assert '-name "${RITZZ_PROJECT_ID}_*"' in approval_workflow
+    assert '-name "$RITZZ_PROJECT_ID_*"' not in approval_workflow
 
 
 def test_checkpoint_uploads_include_hidden_artifact_directory_files():
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
-    assert workflow.count("uses: actions/upload-artifact@v4") == 4
-    assert workflow.count("include-hidden-files: true") == 3
+    assert workflow.count("uses: actions/upload-artifact@v4") == 2
+    assert workflow.count("include-hidden-files: true") == 1
 
 
 def test_preapproval_review_artifact_contains_only_the_rendered_mp4():
     workflow = WORKFLOW.read_text(encoding="utf-8")
-    production = workflow.split("  human-review-and-private-upload:\n", 1)[0]
+    production = workflow
     prepare_video = production.split(
         "      - name: Prepare MP4-only review download\n", 1
     )[1].split("      - name: Upload MP4-only review video\n", 1)[0]
@@ -171,21 +178,54 @@ def test_preapproval_review_artifact_contains_only_the_rendered_mp4():
     assert r"\$env:USERPROFILE\\Downloads" in production
 
 
-def test_human_review_downloads_checkpoint_from_the_current_workflow_run():
-    workflow = WORKFLOW.read_text(encoding="utf-8")
-    human_review = workflow.split("  human-review-and-private-upload:\n", 1)[1]
-    download_step = human_review.split(
-        "      - name: Restore project and prepare OAuth files\n", 1
-    )[0]
+def test_manual_upload_downloads_checkpoint_from_the_reviewed_source_run():
+    workflow = Path(
+        ".github/workflows/ritzz-creative-approval-upload.yml"
+    ).read_text(encoding="utf-8")
+    download_step = workflow.split(
+        "      - name: Download approved production checkpoint\n", 1
+    )[1].split("      - name: Restore reviewed project\n", 1)[0]
     resume_download_step = workflow.split(
-        "      - name: Download saved project checkpoint\n", 1
-    )[1].split("      - name: Restore saved project\n", 1)[0]
+        "      - name: Download approved production checkpoint\n", 1
+    )[1].split("      - name: Restore reviewed project\n", 1)[0]
 
     assert "uses: actions/download-artifact@v4" in download_step
-    assert "run-id:" not in download_step
-    assert "github-token:" not in download_step
-    assert "run-id: ${{ inputs.source_run_id }}" in resume_download_step
-    assert "github-token: ${{ github.token }}" in resume_download_step
+    assert "run-id: ${{ inputs.source_run_id }}" in download_step
+    assert "github-token: ${{ github.token }}" in download_step
+
+
+def test_private_upload_requires_owner_dispatch_and_explicit_review_approval():
+    workflow = Path(
+        ".github/workflows/ritzz-creative-approval-upload.yml"
+    ).read_text(encoding="utf-8")
+    production = WORKFLOW.read_text(encoding="utf-8")
+
+    assert "approve_private_upload:" in workflow
+    assert "default: false" in workflow
+    assert "github.actor == github.repository_owner" in workflow
+    assert "github.ref == 'refs/heads/main'" in workflow
+    assert "Source must be a successful main-branch production run" in workflow
+    assert "RITZZ_HUMAN_APPROVED: \"true\"" in workflow
+    assert "run_private_upload_stage.py" in workflow
+    assert "upload_youtube_thumbnail.py" in workflow
+    assert "run_private_upload_stage.py" not in production
+    assert "upload_youtube_thumbnail.py" not in production
+
+
+def test_private_upload_records_a_completion_marker_to_prevent_duplicate_uploads():
+    workflow = Path(
+        ".github/workflows/ritzz-creative-approval-upload.yml"
+    ).read_text(encoding="utf-8")
+
+    upload_video = workflow.index("run_private_upload_stage.py")
+    record_marker = workflow.index("Record private upload completion marker")
+    upload_marker = workflow.index("Upload private-upload completion marker")
+    save_checkpoint = workflow.index("Save resumable approved checkpoint")
+    set_thumbnail = workflow.index("upload_youtube_thumbnail.py")
+
+    assert upload_video < record_marker < upload_marker < save_checkpoint < set_thumbnail
+    assert "repository_artifacts=$(gh api --paginate --slurp" in workflow
+    assert "A private upload was already recorded" in workflow
 
 
 def test_resume_workflow_exposes_only_remaining_local_production_stages():

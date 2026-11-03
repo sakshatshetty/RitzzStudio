@@ -321,7 +321,7 @@ jobs:
             echo "Project: \`$PROJECT_ID\`"
             echo "Selected YouTube channel: \`$YOUTUBE_CHANNEL\`"
             echo
-            echo "Download the MP4-only \`ritzz-review-video-$PROJECT_ID\` artifact and review \`$PROJECT_ID.mp4\` before approving the protected upload job."
+            echo "Download the MP4-only \`ritzz-review-video-$PROJECT_ID\` artifact and review \`$PROJECT_ID.mp4\`. This run does not upload to YouTube."
             echo "GitHub Actions artifacts download as ZIP files; extract the MP4 into your local Downloads folder. The cloud runner cannot write directly to your PC."
             echo
             echo "From local PowerShell with GitHub CLI authenticated, download and extract only the MP4 directly to Downloads:"
@@ -334,7 +334,11 @@ jobs:
             echo
             echo "Run and artifact link: $RUN_URL"
             echo
-            echo "Flow images, storyboard, supplied metadata, and thumbnail were provided before this run. Review scene/narration matches in the rendered video; technical QA failures block approval."
+            echo "After review, dispatch the RITZZ Private Upload Approval workflow from main with this run ID, project ID, selected channel, and explicit approval. Only the repository owner can dispatch the upload workflow."
+            echo
+            echo "Approval workflow: https://github.com/${GITHUB_REPOSITORY}/actions/workflows/ritzz-creative-approval-upload.yml"
+            echo
+            echo "Flow images, storyboard, supplied metadata, and thumbnail were provided before this run. Review scene/narration matches in the rendered video; technical QA failures block upload."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Archive project for review and resume
@@ -361,102 +365,3 @@ jobs:
           if-no-files-found: warn
           include-hidden-files: true
           retention-days: 30
-
-  human-review-and-private-upload:
-    name: Human review and private YouTube upload
-    needs: production
-    if: ${{ needs.production.result == 'success' }}
-    runs-on: ubuntu-latest
-    environment:
-      name: ritzz-packaging-approval
-      url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
-    env:
-      RITZZ_PROJECT_ID: ${{ needs.production.outputs.project_id }}
-      GOOGLE_CLIENT_SECRETS_B64: ${{ secrets.GOOGLE_CLIENT_SECRETS_B64 }}
-      GOOGLE_TOKEN_B64: ${{ inputs.youtube_channel == 'Ritzz-Explains' && secrets.GOOGLE_TOKEN_B64 || inputs.youtube_channel == 'RitzzHistory' && secrets.GOOGLE_TOKEN_RITZZ_HISTORY_B64 || inputs.youtube_channel == 'RitzzTech1' && secrets.GOOGLE_TOKEN_RITZZ_TECH_B64 || '' }}
-      RITZZ_YOUTUBE_CHANNEL: ${{ inputs.youtube_channel }}
-      RITZZ_YOUTUBE_CHANNEL_TITLE: ${{ inputs.youtube_channel == 'Ritzz-Explains' && 'Ritzz' || inputs.youtube_channel == 'RitzzHistory' && 'Ritzz History' || inputs.youtube_channel == 'RitzzTech1' && 'Ritzz Tech' }}
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-
-      - name: Install dependencies and check upload media tools
-        run: |
-          python -m pip install -r requirements.txt
-
-      - name: Set up FFmpeg and FFprobe
-        uses: ./.github/actions/setup-ffmpeg
-
-      - name: Download reviewed project
-        uses: actions/download-artifact@v4
-        with:
-          name: ritzz-creative-production-${{ needs.production.outputs.project_id }}-checkpoint
-          path: .pipeline-artifacts
-
-      - name: Restore project and prepare OAuth files
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p projects .pipeline-artifacts
-          tar -xzf .pipeline-artifacts/project.tar.gz -C projects
-          printf '%s' "$GOOGLE_CLIENT_SECRETS_B64" | base64 --decode > .pipeline-artifacts/google-client-secrets.json
-          printf '%s' "$GOOGLE_TOKEN_B64" | base64 --decode > .pipeline-artifacts/google-token.json
-          echo "GOOGLE_CLIENT_SECRETS_FILE=$GITHUB_WORKSPACE/.pipeline-artifacts/google-client-secrets.json" >> "$GITHUB_ENV"
-          echo "GOOGLE_TOKEN_FILE=$GITHUB_WORKSPACE/.pipeline-artifacts/google-token.json" >> "$GITHUB_ENV"
-
-      - name: Finalize the human-approved exact-input package
-        env:
-          RITZZ_HUMAN_APPROVED: "true"
-        run: python scripts/package_creative_production.py
-
-      - name: Upload the approved metadata and final video privately
-        env:
-          GITHUB_ACTOR: ${{ github.actor }}
-          RITZZ_YOUTUBE_CATEGORY: Education
-        run: python scripts/run_private_upload_stage.py
-
-      - name: Set the supplied thumbnail on the private video
-        run: python scripts/upload_youtube_thumbnail.py
-
-      - name: Save approved upload checkpoint
-        if: ${{ always() }}
-        run: |
-          set -euo pipefail
-          mkdir -p .pipeline-artifacts
-          project_name=$(find projects -mindepth 1 -maxdepth 1 -type d -name "${RITZZ_PROJECT_ID}_*" -printf "%f\n" | head -n 1)
-          if [[ -z "$project_name" ]]; then
-            echo "Could not find the project directory for $RITZZ_PROJECT_ID." >&2
-            exit 1
-          fi
-          tar -czf .pipeline-artifacts/project.tar.gz -C projects "$project_name"
-
-      - name: Upload resumable approved checkpoint
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: ritzz-creative-production-${{ needs.production.outputs.project_id }}-checkpoint
-          path: |
-            .pipeline-artifacts/project.tar.gz
-            .pipeline-artifacts/final-package-*.zip
-          if-no-files-found: warn
-          include-hidden-files: true
-          retention-days: 30
-          overwrite: true
-
-      - name: Upload final approved production artifacts
-        if: ${{ success() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: ritzz-creative-production-${{ needs.production.outputs.project_id }}-approved
-          path: |
-            .pipeline-artifacts/project.tar.gz
-            .pipeline-artifacts/final-package-*.zip
-          if-no-files-found: error
-          include-hidden-files: true
-          retention-days: 90
