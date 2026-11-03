@@ -145,7 +145,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP"
           printf '%s' "$GOOGLE_CLIENT_SECRETS_B64" | base64 --decode > "$GOOGLE_CLIENT_SECRETS_FILE"
           printf '%s' "$GOOGLE_TOKEN_B64" | base64 --decode > "$GOOGLE_TOKEN_FILE"
-          python scripts/validate_pipeline_prerequisites.py --creative-package
+          python scripts/validate_pipeline_prerequisites.py --youtube-upload
           python scripts/verify_youtube_channel.py
 
       - name: Download approved production checkpoint
@@ -157,6 +157,7 @@ jobs:
           path: .pipeline-artifacts
 
       - name: Restore reviewed project
+        id: restore_project
         shell: bash
         run: |
           set -euo pipefail
@@ -210,7 +211,7 @@ jobs:
           retention-days: 90
 
       - name: Save resumable approved checkpoint
-        if: ${{ always() }}
+        if: ${{ always() && steps.restore_project.outcome == 'success' }}
         run: |
           set -euo pipefail
           mkdir -p .pipeline-artifacts

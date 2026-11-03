@@ -50,6 +50,33 @@ def test_creative_package_preflight_only_requires_voice_and_youtube_credentials(
     assert result["api_calls_made"] == "none"
 
 
+def test_youtube_upload_preflight_only_requires_youtube_credentials(monkeypatch):
+    _set_valid_environment(monkeypatch)
+    for name in REQUIRED_ENVIRONMENT_VARIABLES:
+        if name not in {"GOOGLE_CLIENT_SECRETS_B64", "GOOGLE_TOKEN_B64"}:
+            monkeypatch.delenv(name)
+
+    result = validate_prerequisites(youtube_upload=True)
+
+    assert result["required_secrets"] == "2"
+    assert result["oauth_client_json"] == "valid"
+    assert result["oauth_token_json"] == "valid"
+    assert result["api_calls_made"] == "none"
+
+
+def test_approval_upload_uses_upload_preflight_and_saves_only_restored_projects():
+    workflow = Path(
+        ".github/workflows/ritzz-creative-approval-upload.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "validate_pipeline_prerequisites.py --youtube-upload" in workflow
+    assert "id: restore_project" in workflow
+    assert (
+        "if: ${{ always() && steps.restore_project.outcome == 'success' }}"
+        in workflow
+    )
+
+
 def test_flux_image_model_requires_replicate_token(monkeypatch):
     _set_valid_environment(monkeypatch)
     monkeypatch.delenv("REPLICATE_API_TOKEN", raising=False)

@@ -41,22 +41,33 @@ def _decode_json_secret(name: str) -> dict[str, Any]:
 def validate_prerequisites(
     *,
     creative_package: bool = False,
+    youtube_upload: bool = False,
     image_model: str | None = None,
 ) -> dict[str, str]:
-    required_variables = (
-        tuple(
+    if creative_package and youtube_upload:
+        raise ValueError(
+            "Creative-package and YouTube-upload validation modes are mutually exclusive."
+        )
+    if youtube_upload:
+        required_variables = (
+            "GOOGLE_CLIENT_SECRETS_B64",
+            "GOOGLE_TOKEN_B64",
+        )
+    elif creative_package:
+        required_variables = tuple(
             name
             for name in REQUIRED_ENVIRONMENT_VARIABLES
             if name not in {"OPENAI_API_KEY", "VIDIQ_MCP_API_KEY"}
         )
-        if creative_package
-        else REQUIRED_ENVIRONMENT_VARIABLES
-    )
+    else:
+        required_variables = REQUIRED_ENVIRONMENT_VARIABLES
     if image_model is not None and image_model not in IMAGE_MODEL_OPTIONS:
         raise ValueError(
             "Unsupported image model; choose one of: "
             + ", ".join(IMAGE_MODEL_OPTIONS)
         )
+    if youtube_upload and image_model is not None:
+        raise ValueError("Image-model validation is not applicable to YouTube uploads.")
     if image_model == "FLUX_SCHNELL":
         required_variables += ("REPLICATE_API_TOKEN",)
     missing = [
@@ -92,6 +103,11 @@ def main() -> int:
         help="Validate the creative ZIP workflow's credentials instead of vidIQ.",
     )
     parser.add_argument(
+        "--youtube-upload",
+        action="store_true",
+        help="Validate only YouTube OAuth credentials required for an upload.",
+    )
+    parser.add_argument(
         "--image-model",
         choices=IMAGE_MODEL_OPTIONS,
         help="Validate credentials for the selected creative-workflow image model.",
@@ -99,6 +115,7 @@ def main() -> int:
     arguments = parser.parse_args()
     result = validate_prerequisites(
         creative_package=arguments.creative_package,
+        youtube_upload=arguments.youtube_upload,
         image_model=arguments.image_model,
     )
     print("Pipeline prerequisites passed.")
