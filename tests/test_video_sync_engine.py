@@ -213,6 +213,54 @@ def test_actual_audio_duration_takes_precedence_over_alignment_estimate(
     assert loaded.audio_duration_seconds == 32.5
 
 
+def test_load_narration_alignment_clamps_small_final_timestamp_overrun(
+    tmp_path: Path,
+) -> None:
+    result_file = tmp_path / "narration_result.json"
+    result_file.write_text(
+        json.dumps(
+            {
+                "duration_seconds": 10.4,
+                "actual_duration_seconds": 10.0,
+                "alignment": {
+                    "characters": ["a", "?", "\n"],
+                    "character_start_times_seconds": [9.7, 10.2, 10.4],
+                    "character_end_times_seconds": [9.8, 10.4, 10.4],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = VideoSynchronizationEngine.load_narration_alignment(result_file)
+
+    assert loaded.audio_duration_seconds == 10.0
+    assert loaded.character_start_times_seconds == [9.7, 10.0, 10.0]
+    assert loaded.character_end_times_seconds == [9.8, 10.0, 10.0]
+
+
+def test_load_narration_alignment_rejects_large_final_timestamp_overrun(
+    tmp_path: Path,
+) -> None:
+    result_file = tmp_path / "narration_result.json"
+    result_file.write_text(
+        json.dumps(
+            {
+                "actual_duration_seconds": 10.0,
+                "alignment": {
+                    "characters": ["a"],
+                    "character_start_times_seconds": [10.5],
+                    "character_end_times_seconds": [10.51],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="maximum tolerated overrun is 0.500s"):
+        VideoSynchronizationEngine.load_narration_alignment(result_file)
+
+
 def test_accepts_audio_below_legacy_recorded_minimum(tmp_path: Path) -> None:
     alignment = create_alignment()
     result_file = tmp_path / "short_result.json"
