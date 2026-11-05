@@ -9,6 +9,7 @@ VoiceModel = Literal[
     "eleven_multilingual_v2",
     "eleven_flash_v2_5",
     "eleven_v4_turbo",
+    "chatterbox_turbo",
 ]
 
 
