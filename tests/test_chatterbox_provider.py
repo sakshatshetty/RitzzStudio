@@ -4,20 +4,81 @@ from itertools import pairwise
 from pathlib import Path
 from types import ModuleType
 
-import numpy as np
 import pytest
 
 from modules.voice.chatterbox import ChatterboxTurboProvider
 from modules.voice.models import VoiceGenerationRequest
 
 
-def test_install_float32_resampler_normalizes_resampled_audio():
+def _install_fake_audio_dependencies(monkeypatch):
+    numpy = ModuleType("numpy")
+    numpy_float32 = object()
+
+    class _FakeArray:
+        def __init__(self, values, dtype=None):
+            self.values = list(values)
+            self.dtype = dtype
+
+        def squeeze(self):
+            return self
+
+        @property
+        def ndim(self):
+            return 1
+
+        @property
+        def size(self):
+            return len(self.values)
+
+    class _FiniteValues:
+        @staticmethod
+        def all():
+            return True
+
+    def asarray(values, dtype=None):
+        return _FakeArray(values, dtype)
+
+    def concatenate(arrays):
+        return _FakeArray(
+            [value for array in arrays for value in array.values],
+            arrays[0].dtype,
+        )
+
+    numpy.__dict__["float32"] = numpy_float32
+    numpy.__dict__["asarray"] = asarray
+    numpy.__dict__["concatenate"] = concatenate
+    def isfinite(values):
+        assert isinstance(values, _FakeArray)
+        return _FiniteValues()
+
+    numpy.__dict__["zeros"] = lambda size, dtype=None: _FakeArray(
+        [0.0] * size,
+        dtype,
+    )
+    numpy.__dict__["isfinite"] = isfinite
+    soundfile = ModuleType("soundfile")
+
+    def write(path, audio, sample_rate, *, subtype):
+        assert isinstance(audio, _FakeArray)
+        assert sample_rate == 1000
+        assert subtype == "PCM_16"
+        Path(path).write_bytes(b"wav audio")
+
+    soundfile.__dict__["write"] = write
+    monkeypatch.setitem(sys.modules, "numpy", numpy)
+    monkeypatch.setitem(sys.modules, "soundfile", soundfile)
+    return numpy_float32
+
+
+def test_install_float32_resampler_normalizes_resampled_audio(monkeypatch):
+    numpy_float32 = _install_fake_audio_dependencies(monkeypatch)
     librosa = ModuleType("test_librosa")
+
     def original_resample(audio, *, orig_sr, target_sr):
         assert audio == [0.1]
         assert orig_sr == 24000
         assert target_sr == 16000
-        return np.array([0.1], dtype=np.float64)
+        return [0.1]
 
     librosa.__dict__["resample"] = original_resample
     chatterbox_turbo = ModuleType("test_chatterbox_turbo")
@@ -28,7 +89,7 @@ def test_install_float32_resampler_normalizes_resampled_audio():
     result = librosa.resample([0.1], orig_sr=24000, target_sr=16000)
     ChatterboxTurboProvider._install_float32_resampling(chatterbox_turbo)
 
-    assert result.dtype == np.float32
+    assert result.dtype is numpy_float32
     assert librosa.resample is wrapped_resample
 
 
@@ -165,6 +226,8 @@ def test_build_alignment_rejects_mismatched_script_text():
 
 
 def test_generate_synthesizes_aligns_and_encodes_audio(tmp_path, monkeypatch):
+    _install_fake_audio_dependencies(monkeypatch)
+
     class _FakeModel:
         sr = 1000
 
@@ -232,6 +295,8 @@ def test_generate_loads_saved_conditionals_without_reference_audio(
     tmp_path,
     monkeypatch,
 ):
+    _install_fake_audio_dependencies(monkeypatch)
+
     profile_file = tmp_path / "voice-conditionals.pt"
     profile_file.write_bytes(b"saved conditionals")
     loaded_conditionals = object()
