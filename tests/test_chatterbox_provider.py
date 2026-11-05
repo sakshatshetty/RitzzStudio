@@ -93,6 +93,35 @@ def test_install_float32_resampler_normalizes_resampled_audio(monkeypatch):
     assert librosa.resample is wrapped_resample
 
 
+def test_turbo_model_label_is_set_without_constructor_keyword():
+    class _LegacyTurbo:
+        def __init__(
+            self,
+            t3,
+            s3gen,
+            ve,
+            tokenizer,
+            device,
+            conds=None,
+        ):
+            self.conds = conds
+
+    conditionals = object()
+    model = ChatterboxTurboProvider._construct_turbo_model(
+        _LegacyTurbo,
+        object(),
+        object(),
+        object(),
+        object(),
+        "cpu",
+        conditionals,
+        "Turbo",
+    )
+
+    assert model.conds is conditionals
+    assert model.model_label == "Turbo"
+
+
 def _aligned_characters(text: str) -> list[dict[str, float | str]]:
     result = []
     timestamp = 0.0
