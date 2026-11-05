@@ -104,7 +104,10 @@ def test_remona_submits_once_polls_downloads_and_aligns(
     assert Path(result.file_path).read_bytes() == b"encoded mp3"
 
 
-def test_remona_rejects_missing_api_key_or_preset():
+def test_remona_rejects_missing_api_key_or_preset(monkeypatch):
+    monkeypatch.delenv("REMONA_API_KEY", raising=False)
+    monkeypatch.delenv("REMONA_VOICE_PRESET", raising=False)
+
     with pytest.raises(ValueError, match="REMONA_API_KEY"):
         RemonaProvider(api_key="", voice_preset="Maya")
 
