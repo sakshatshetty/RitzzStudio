@@ -129,7 +129,10 @@ RITZZ voice. Use `elevenlabs` when the existing cloned voice must be preserved.
 Remona returns an asynchronous task and an audio URL. V2 polls that task,
 downloads and converts the audio, then uses WhisperX forced alignment before
 storyboard timing. Configure the `REMONA_API_KEY` Actions secret for Remona
-runs. The workflow does not install or run the Chatterbox model.
+runs, and ensure the Remona account has paid API access through an active Coder
+package or topped-up credits. Without either, the speech request returns HTTP
+402 before a narration task is created. The workflow does not install or run
+the Chatterbox model.
 
 The `0.92` speed is a configurable production default calibrated against
 measured narration pacing. The configured duration remains a script-planning

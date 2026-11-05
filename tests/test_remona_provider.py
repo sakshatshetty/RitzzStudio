@@ -1,18 +1,24 @@
 from pathlib import Path
 
 import pytest
+import requests
 
 from modules.voice.models import VoiceAlignment, VoiceGenerationRequest
 from modules.voice.remona import RemonaProvider
 
 
 class _Response:
-    def __init__(self, *, data=None, content=b""):
+    def __init__(self, *, data=None, content=b"", status_code=200):
         self._data = data
         self.content = content
+        self.status_code = status_code
 
     def raise_for_status(self):
-        return None
+        if self.status_code >= 400:
+            raise requests.HTTPError(
+                f"HTTP {self.status_code}",
+                response=self,
+            )
 
     def json(self):
         return self._data
@@ -143,6 +149,22 @@ def test_remona_reports_failed_task_without_downloading_audio(
 
     with pytest.raises(RuntimeError, match="upstream synthesis failed"):
         provider._wait_for_audio_url("task-123", {"Authorization": "Bearer test-key"})
+
+
+def test_remona_explains_payment_required_without_retry(monkeypatch, tmp_path):
+    provider = RemonaProvider(api_key="test-key", voice_preset="Maya")
+    post_calls = []
+
+    def fake_post(*args, **kwargs):
+        post_calls.append((args, kwargs))
+        return _Response(status_code=402)
+
+    monkeypatch.setattr("modules.voice.remona.requests.post", fake_post)
+
+    with pytest.raises(RuntimeError, match="Coder package or add credits"):
+        provider.generate(_request(tmp_path))
+
+    assert len(post_calls) == 1
 
 
 def test_remona_output_url_must_be_https():

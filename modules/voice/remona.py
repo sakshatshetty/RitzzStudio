@@ -76,7 +76,7 @@ class RemonaProvider:
             },
             timeout=60,
         )
-        response.raise_for_status()
+        self._raise_for_status(response)
         submission = self._json_object(response, "Remona task submission")
         task_id = submission.get("id")
         if not isinstance(task_id, str) or not task_id.strip():
@@ -94,7 +94,7 @@ class RemonaProvider:
             temporary_path = Path(temporary_directory)
             source_audio = temporary_path / "source-audio"
             audio_response = requests.get(audio_url, timeout=300)
-            audio_response.raise_for_status()
+            self._raise_for_status(audio_response)
             if not audio_response.content:
                 raise ValueError("Remona returned an empty audio file.")
             source_audio.write_bytes(audio_response.content)
@@ -153,7 +153,7 @@ class RemonaProvider:
                 headers=headers,
                 timeout=60,
             )
-            response.raise_for_status()
+            self._raise_for_status(response)
             task = self._json_object(response, "Remona task status")
             status = str(task.get("status", "")).casefold()
             if status in {"failed", "error", "cancelled", "canceled"}:
@@ -226,6 +226,23 @@ class RemonaProvider:
         if not isinstance(data, dict):
             raise TypeError(f"{description} response must be a JSON object.")
         return data
+
+    @staticmethod
+    def _raise_for_status(response: Any) -> None:
+        try:
+            response.raise_for_status()
+        except requests.HTTPError as error:
+            if response.status_code == 402:
+                raise RuntimeError(
+                    "Remona returned HTTP 402 payment_required. Activate a "
+                    "Coder package or add credits in the Remona console."
+                ) from error
+            if response.status_code == 403:
+                raise RuntimeError(
+                    "Remona denied access to this model (HTTP 403). Check the "
+                    "account's model plan or top up credits."
+                ) from error
+            raise
 
     @staticmethod
     def _json_object_from_file(path: Path, description: str) -> dict[str, Any]:
