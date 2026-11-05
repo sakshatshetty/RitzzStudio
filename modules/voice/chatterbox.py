@@ -253,6 +253,28 @@ class ChatterboxTurboProvider:
         _FLOAT32_RESAMPLING_MODULES.add(librosa)
 
     @staticmethod
+    def _construct_turbo_model(
+        model_class: Any,
+        t3: Any,
+        s3gen: Any,
+        ve: Any,
+        tokenizer: Any,
+        device: str,
+        conditionals: Any,
+        model_label: str,
+    ) -> Any:
+        model = model_class(
+            t3,
+            s3gen,
+            ve,
+            tokenizer,
+            device,
+            conds=conditionals,
+        )
+        model.model_label = model_label
+        return model
+
+    @staticmethod
     def _memory_efficient_turbo_class(chatterbox_turbo: Any) -> Any:
         # Release each checkpoint before loading the next to cap CPU memory use.
         class MemoryEfficientTurbo(chatterbox_turbo.ChatterboxTurboTTS):
@@ -318,14 +340,15 @@ class ChatterboxTurboProvider:
                         map_location=map_location,
                     ).to(device)
 
-                return cls(
+                return ChatterboxTurboProvider._construct_turbo_model(
+                    cls,
                     t3,
                     s3gen,
                     ve,
                     tokenizer,
                     device,
-                    conds=conditionals,
-                    model_label="Nano" if nano else "Turbo",
+                    conditionals,
+                    "Nano" if nano else "Turbo",
                 )
 
         return MemoryEfficientTurbo
