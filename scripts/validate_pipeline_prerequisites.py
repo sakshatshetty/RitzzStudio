@@ -7,7 +7,6 @@ import os
 import sys
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -63,7 +62,7 @@ def validate_prerequisites(
         provider_variables = (
             ("ELEVENLABS_API_KEY", "RITZZ_VOICE_ID")
             if tts_provider == "elevenlabs"
-            else ("CHATTERBOX_VOICE_REFERENCE_URL",)
+            else ()
         )
         required_variables = (
             *provider_variables,
@@ -90,11 +89,13 @@ def validate_prerequisites(
         raise ValueError(f"Missing required pipeline secrets: {', '.join(missing)}")
 
     if creative_package and tts_provider == "chatterbox":
-        reference_url = os.environ["CHATTERBOX_VOICE_REFERENCE_URL"].strip()
-        parsed_url = urlparse(reference_url)
-        if parsed_url.scheme != "https" or not parsed_url.netloc:
+        conditionals_file = os.environ.get(
+            "CHATTERBOX_VOICE_CONDITIONALS_FILE",
+            "",
+        ).strip()
+        if not conditionals_file or not Path(conditionals_file).is_file():
             raise ValueError(
-                "CHATTERBOX_VOICE_REFERENCE_URL must be an HTTPS URL."
+                "CHATTERBOX_VOICE_CONDITIONALS_FILE is missing or is not a file."
             )
 
     client_payload = _decode_json_secret("GOOGLE_CLIENT_SECRETS_B64")

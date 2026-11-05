@@ -61,18 +61,18 @@ def _prepare_project(tmp_path: Path) -> Path:
     return project_directory
 
 
-def test_chatterbox_selection_uses_reference_fingerprint_and_turbo_model(
+def test_chatterbox_selection_uses_conditionals_fingerprint_and_turbo_model(
     tmp_path,
     monkeypatch,
 ):
     project_directory = _prepare_project(tmp_path)
-    reference_file = tmp_path / "reference.wav"
-    reference_file.write_bytes(b"local reference")
+    conditionals_file = tmp_path / "voice-conditionals.pt"
+    conditionals_file.write_bytes(b"private saved voice conditionals")
     provider_instances = []
 
     class _FakeChatterboxProvider:
-        def __init__(self, path):
-            self.reference_audio_path = Path(path)
+        def __init__(self, *, conditionals_path):
+            self.conditionals_path = Path(conditionals_path)
             provider_instances.append(self)
 
     monkeypatch.setattr(
@@ -82,23 +82,21 @@ def test_chatterbox_selection_uses_reference_fingerprint_and_turbo_model(
     )
     monkeypatch.setattr(run_voice_stage, "VoiceEngine", _FakeVoiceEngine)
     monkeypatch.setattr(
-        run_voice_stage,
-        "probe_audio_duration",
-        lambda _path: 15.0,
-    )
-    monkeypatch.setattr(
         "modules.voice.chatterbox.ChatterboxTurboProvider",
         _FakeChatterboxProvider,
     )
     monkeypatch.setenv("RITZZ_PROJECT_ID", "test-project")
     monkeypatch.setenv("RITZZ_TTS_PROVIDER", "chatterbox")
-    monkeypatch.setenv("CHATTERBOX_VOICE_REFERENCE_FILE", str(reference_file))
+    monkeypatch.setenv(
+        "CHATTERBOX_VOICE_CONDITIONALS_FILE",
+        str(conditionals_file),
+    )
     monkeypatch.delenv("RITZZ_RESUME", raising=False)
     _FakeVoiceEngine.instances.clear()
 
     assert run_voice_stage.main() == 0
 
-    assert provider_instances[0].reference_audio_path == reference_file.resolve()
+    assert provider_instances[0].conditionals_path == conditionals_file.resolve()
     result = json.loads(
         (project_directory / "voice" / "narration_result.json").read_text(
             encoding="utf-8"
@@ -108,7 +106,7 @@ def test_chatterbox_selection_uses_reference_fingerprint_and_turbo_model(
     assert result["model_id"] == "chatterbox_turbo"
 
 
-def test_missing_chatterbox_reference_fails_before_model_generation(
+def test_missing_chatterbox_conditionals_fail_before_model_generation(
     tmp_path,
     monkeypatch,
 ):
@@ -121,15 +119,15 @@ def test_missing_chatterbox_reference_fails_before_model_generation(
     monkeypatch.setenv("RITZZ_PROJECT_ID", "test-project")
     monkeypatch.setenv("RITZZ_TTS_PROVIDER", "chatterbox")
     monkeypatch.setenv(
-        "CHATTERBOX_VOICE_REFERENCE_FILE",
-        str(tmp_path / "missing.wav"),
+        "CHATTERBOX_VOICE_CONDITIONALS_FILE",
+        str(tmp_path / "missing-conditionals.pt"),
     )
     monkeypatch.delenv("RITZZ_RESUME", raising=False)
 
     try:
         run_voice_stage.main()
     except FileNotFoundError as error:
-        assert "CHATTERBOX_VOICE_REFERENCE_FILE" in str(error)
+        assert "CHATTERBOX_VOICE_CONDITIONALS_FILE" in str(error)
     else:
         raise AssertionError("Missing Chatterbox reference unexpectedly passed.")
 

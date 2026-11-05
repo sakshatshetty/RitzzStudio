@@ -14,7 +14,6 @@ if str(PROJECT_ROOT) not in sys.path:
 from modules.project.config import ProductionConfig
 from modules.project.manager import ProjectManager
 from modules.video.sync_engine import VideoSynchronizationEngine
-from modules.voice.audio import probe_audio_duration
 from modules.voice.elevenlabs import ElevenLabsProvider
 from modules.voice.engine import VoiceEngine
 from modules.voice.models import VoiceGenerationResult
@@ -40,23 +39,20 @@ def main() -> int:
         provider = ElevenLabsProvider()
         model_id = "eleven_v4_turbo"
     elif provider_name == "chatterbox":
-        reference_file = Path(
-            os.environ.get("CHATTERBOX_VOICE_REFERENCE_FILE", "")
+        conditionals_file = Path(
+            os.environ.get("CHATTERBOX_VOICE_CONDITIONALS_FILE", "")
         )
-        if not reference_file.is_file():
+        if not conditionals_file.is_file():
             raise FileNotFoundError(
-                "CHATTERBOX_VOICE_REFERENCE_FILE is missing or is not a file."
+                "CHATTERBOX_VOICE_CONDITIONALS_FILE is missing or is not a file."
             )
-        reference_duration = probe_audio_duration(reference_file)
-        if reference_duration <= 5:
-            raise ValueError(
-                "The Chatterbox Turbo voice reference must be longer than 5 seconds."
-            )
-        reference_hash = hashlib.sha256(reference_file.read_bytes()).hexdigest()
-        voice_id = f"chatterbox:{reference_hash}"
+        conditionals_hash = hashlib.sha256(conditionals_file.read_bytes()).hexdigest()
+        voice_id = f"chatterbox:{conditionals_hash}"
         from modules.voice.chatterbox import ChatterboxTurboProvider
 
-        provider = ChatterboxTurboProvider(reference_file)
+        provider = ChatterboxTurboProvider(
+            conditionals_path=conditionals_file
+        )
         model_id = "chatterbox_turbo"
     else:
         raise ValueError(

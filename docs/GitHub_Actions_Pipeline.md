@@ -122,16 +122,28 @@ check for image/narration relevance and image quality.
 The separate **RITZZ Creative Package Production_V2** workflow provides a
 `narration_provider` selector, defaulting to Chatterbox Turbo. Choose
 `elevenlabs` to use the existing ElevenLabs voice, or `chatterbox` to synthesize
-with the reference-conditioned Turbo model. Chatterbox does not create a
-persistent voice ID: the reference audio is supplied for each narration run,
-and WhisperX forced-aligns the generated audio to the supplied script before
-scene timing.
+with the saved RITZZ voice profile. Chatterbox Turbo does not train a new model
+or issue a provider-managed voice ID. Instead, the one-time profile stores the
+model's reference conditioning and is reused for every narration run.
 
-For Chatterbox, configure the GitHub Actions secret
-`CHATTERBOX_VOICE_REFERENCE_URL` with a private HTTPS URL to a WAV reference
-longer than five seconds. Keep the audio private and do not commit it to the
-repository. The workflow downloads it only to the runner's temporary directory;
-it is not included in the saved project checkpoint or review package.
+The profile is created locally from an audio source with:
+
+```powershell
+python scripts/create_chatterbox_voice_conditionals.py `
+  --source "<source audio>" `
+  --output "ritzz-chatterbox-turbo-conditionals.pt"
+```
+
+The script uses the first 15 seconds, converts them to a temporary WAV, and
+deletes that temporary file after creating the conditioning profile. The source
+audio remains local. Keep both the source audio and resulting profile private;
+the profile is voice-derived data. Upload only
+`ritzz-chatterbox-turbo-conditionals.pt` as an asset on the private GitHub
+release tagged `ritzz-chatterbox-voice-v1`. V2 downloads that asset with its
+read-only GitHub token into the runner's temporary directory; it is not added
+to the repository, project checkpoint, or review package. The saved profile is
+specific to the pinned Chatterbox Turbo model version and should be regenerated
+if that model version changes.
 
 The `0.92` speed is a configurable production default calibrated against
 measured narration pacing. The configured duration remains a script-planning
@@ -346,7 +358,8 @@ The V2 workflow uses the same Google OAuth secrets. Its selected narration
 provider determines which additional secret is required:
 
 - `elevenlabs`: `ELEVENLABS_API_KEY` and `RITZZ_VOICE_ID`
-- `chatterbox` (the default): `CHATTERBOX_VOICE_REFERENCE_URL`
+- `chatterbox` (the default): no additional Actions secret; it downloads the
+  private voice profile asset from the configured release using `GITHUB_TOKEN`.
 
 Create a separate OAuth token for each channel by authorizing the YouTube API
 client while the corresponding channel is selected, then store each token file
