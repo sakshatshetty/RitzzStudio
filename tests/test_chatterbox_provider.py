@@ -1,4 +1,5 @@
 import json
+import sys
 from itertools import pairwise
 from pathlib import Path
 from types import ModuleType
@@ -224,4 +225,92 @@ def test_generate_synthesizes_aligns_and_encodes_audio(tmp_path, monkeypatch):
     assert Path(result.file_path).read_bytes() == b"encoded mp3"
     assert result.alignment is not None
     assert "".join(result.alignment.characters) == "One."
+    assert len(commands) == 2
+
+
+def test_generate_loads_saved_conditionals_without_reference_audio(
+    tmp_path,
+    monkeypatch,
+):
+    profile_file = tmp_path / "voice-conditionals.pt"
+    profile_file.write_bytes(b"saved conditionals")
+    loaded_conditionals = object()
+    load_calls = []
+
+    class _FakeConditionals:
+        @classmethod
+        def load(cls, path, *, map_location):
+            load_calls.append((Path(path), map_location))
+            return cls()
+
+        def to(self, device):
+            assert device == "cpu"
+            return loaded_conditionals
+
+    fake_package = ModuleType("chatterbox")
+    fake_package.__path__ = []
+    fake_turbo = ModuleType("chatterbox.tts_turbo")
+    fake_turbo.__dict__["Conditionals"] = _FakeConditionals
+    fake_package.__dict__["tts_turbo"] = fake_turbo
+    monkeypatch.setitem(sys.modules, "chatterbox", fake_package)
+    monkeypatch.setitem(sys.modules, "chatterbox.tts_turbo", fake_turbo)
+
+    class _FakeModel:
+        sr = 1000
+        device = "cpu"
+        conds = None
+
+        def generate(self, text):
+            assert text == "One."
+            assert self.conds is loaded_conditionals
+            return [0.1] * 1000
+
+    commands = []
+
+    def fake_run(command, check):
+        assert check is True
+        commands.append(command)
+        if command[1].endswith("align_chatterbox_chunks.py"):
+            input_file = Path(command[3])
+            output_file = Path(command[5])
+            payload = json.loads(input_file.read_text(encoding="utf-8"))
+            output_file.write_text(
+                json.dumps(
+                    {
+                        "chunks": [
+                            {
+                                "characters": _aligned_characters(
+                                    chunk["text"]
+                                ),
+                                "text": chunk["text"],
+                            }
+                            for chunk in payload["chunks"]
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+        else:
+            Path(command[-1]).write_bytes(b"encoded mp3")
+
+    monkeypatch.setattr(
+        "modules.voice.chatterbox.subprocess.run",
+        fake_run,
+    )
+    provider = ChatterboxTurboProvider(
+        conditionals_path=profile_file,
+        model=_FakeModel(),
+    )
+    request = VoiceGenerationRequest(
+        voice_id="chatterbox:saved-profile",
+        model_id="chatterbox_turbo",
+        preserve_text=True,
+        text="One.",
+        output_directory=str(tmp_path / "voice"),
+    )
+
+    result = provider.generate(request)
+
+    assert result.status == "completed"
+    assert load_calls == [(profile_file.resolve(), "cpu")]
     assert len(commands) == 2

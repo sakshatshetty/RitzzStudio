@@ -35,17 +35,37 @@ class ChatterboxTurboProvider:
 
     def __init__(
         self,
-        reference_audio_path: str | Path,
+        reference_audio_path: str | Path | None = None,
         *,
+        conditionals_path: str | Path | None = None,
         model: Any | None = None,
         alignment_python: str | None = None,
     ) -> None:
-        self.reference_audio_path = Path(reference_audio_path).resolve()
-        if not self.reference_audio_path.is_file():
+        if (reference_audio_path is None) == (conditionals_path is None):
+            raise ValueError(
+                "Provide exactly one Chatterbox voice reference or conditionals file."
+            )
+        self.reference_audio_path = (
+            Path(reference_audio_path).resolve()
+            if reference_audio_path is not None
+            else None
+        )
+        self.conditionals_path = (
+            Path(conditionals_path).resolve()
+            if conditionals_path is not None
+            else None
+        )
+        if self.reference_audio_path is not None and not self.reference_audio_path.is_file():
             raise FileNotFoundError(
                 f"Chatterbox voice reference was not found: {self.reference_audio_path}"
             )
+        if self.conditionals_path is not None and not self.conditionals_path.is_file():
+            raise FileNotFoundError(
+                "Chatterbox voice conditionals were not found: "
+                f"{self.conditionals_path}"
+            )
         self.model = model
+        self._conditionals_loaded = False
         self.alignment_python = (
             alignment_python
             or os.environ.get("RITZZ_WHISPERX_PYTHON")
@@ -60,6 +80,8 @@ class ChatterboxTurboProvider:
         import numpy as np
 
         model = self._load_model()
+        if self.conditionals_path is not None:
+            self._load_voice_conditionals(model)
         sample_rate = int(model.sr)
         if sample_rate <= 0:
             raise ValueError("Chatterbox Turbo returned an invalid sample rate.")
@@ -79,10 +101,13 @@ class ChatterboxTurboProvider:
         ) as temporary_directory:
             temporary_path = Path(temporary_directory)
             for index, (start, end, text) in enumerate(chunks):
-                generated = model.generate(
-                    text,
-                    audio_prompt_path=str(self.reference_audio_path),
-                )
+                if self.reference_audio_path is not None:
+                    generated = model.generate(
+                        text,
+                        audio_prompt_path=str(self.reference_audio_path),
+                    )
+                else:
+                    generated = model.generate(text)
                 audio = self._to_mono_float_audio(generated)
                 if audio.size == 0:
                     raise ValueError(
@@ -185,6 +210,19 @@ class ChatterboxTurboProvider:
             character_count=len(request.text),
             alignment=alignment,
         )
+
+    def _load_voice_conditionals(self, model: Any) -> None:
+        if self.conditionals_path is None or self._conditionals_loaded:
+            return
+
+        import chatterbox.tts_turbo as chatterbox_turbo
+
+        device = self.device or getattr(model, "device", "cpu")
+        model.conds = chatterbox_turbo.Conditionals.load(
+            self.conditionals_path,
+            map_location=device,
+        ).to(device)
+        self._conditionals_loaded = True
 
     def _load_model(self) -> Any:
         if self.model is not None:

@@ -50,45 +50,45 @@ def test_creative_package_preflight_only_requires_voice_and_youtube_credentials(
     assert result["api_calls_made"] == "none"
 
 
-def test_chatterbox_preflight_requires_reference_url_instead_of_elevenlabs(
+def test_chatterbox_preflight_requires_saved_conditionals_instead_of_elevenlabs(
     monkeypatch,
+    tmp_path,
 ):
     _set_valid_environment(monkeypatch)
     monkeypatch.delenv("ELEVENLABS_API_KEY")
     monkeypatch.delenv("RITZZ_VOICE_ID")
-    monkeypatch.setenv(
-        "CHATTERBOX_VOICE_REFERENCE_URL",
-        "https://private.example/voice-reference.wav",
-    )
+    conditionals_file = tmp_path / "voice-conditionals.pt"
+    conditionals_file.write_bytes(b"saved conditionals")
+    monkeypatch.setenv("CHATTERBOX_VOICE_CONDITIONALS_FILE", str(conditionals_file))
 
     result = validate_prerequisites(
         creative_package=True,
         tts_provider="chatterbox",
     )
 
-    assert result["required_secrets"] == "3"
+    assert result["required_secrets"] == "2"
     assert result["api_calls_made"] == "none"
 
 
-def test_chatterbox_preflight_requires_https_reference_url(monkeypatch):
+def test_chatterbox_preflight_rejects_missing_conditionals_file(monkeypatch):
     _set_valid_environment(monkeypatch)
     monkeypatch.setenv(
-        "CHATTERBOX_VOICE_REFERENCE_URL",
-        "http://private.example/voice-reference.wav",
+        "CHATTERBOX_VOICE_CONDITIONALS_FILE",
+        "missing-conditionals.pt",
     )
 
-    with pytest.raises(ValueError, match="must be an HTTPS URL"):
+    with pytest.raises(ValueError, match="CHATTERBOX_VOICE_CONDITIONALS_FILE"):
         validate_prerequisites(
             creative_package=True,
             tts_provider="chatterbox",
         )
 
 
-def test_chatterbox_preflight_requires_reference_url(monkeypatch):
+def test_chatterbox_preflight_requires_conditionals_file(monkeypatch):
     _set_valid_environment(monkeypatch)
-    monkeypatch.delenv("CHATTERBOX_VOICE_REFERENCE_URL", raising=False)
+    monkeypatch.delenv("CHATTERBOX_VOICE_CONDITIONALS_FILE", raising=False)
 
-    with pytest.raises(ValueError, match="CHATTERBOX_VOICE_REFERENCE_URL"):
+    with pytest.raises(ValueError, match="CHATTERBOX_VOICE_CONDITIONALS_FILE"):
         validate_prerequisites(
             creative_package=True,
             tts_provider="chatterbox",
@@ -103,7 +103,8 @@ def test_v2_workflow_defaults_to_chatterbox_and_preserves_original_workflow():
     assert "name: RITZZ Creative Package Production_V2" in workflow
     assert "narration_provider:" in workflow
     assert "default: chatterbox" in workflow
-    assert "CHATTERBOX_VOICE_REFERENCE_URL" in workflow
+    assert "ritzz-chatterbox-voice-v1" in workflow
+    assert "CHATTERBOX_VOICE_CONDITIONALS_FILE" in workflow
     assert "requirements-whisperx.txt" in workflow
 
 
