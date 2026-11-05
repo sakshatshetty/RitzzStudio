@@ -112,6 +112,15 @@ def test_workflow_avoids_apt_and_verifies_ffmpeg_download():
     assert 'RITZZ_FONT_PATH=$RUNNER_TEMP/ritzz-fonts/ComicNeue-Bold.ttf' in workflow
 
 
+def test_chatterbox_requirements_pin_perth_source_with_watermarker():
+    requirements = Path("requirements-chatterbox.txt").read_text(encoding="utf-8")
+
+    assert (
+        "resemble-perth @ git+https://github.com/resemble-ai/Perth.git@"
+        "ff1c8ac55a976971245cdd53c18d6131ca00d993"
+    ) in requirements
+
+
 def test_primary_workflow_keeps_legacy_topic_discovery_separate():
     workflow = WORKFLOW.read_text(encoding="utf-8")
 

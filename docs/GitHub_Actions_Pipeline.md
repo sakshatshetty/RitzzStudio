@@ -143,7 +143,9 @@ release tagged `ritzz-chatterbox-voice-v1`. V2 downloads that asset with its
 read-only GitHub token into the runner's temporary directory; it is not added
 to the repository, project checkpoint, or review package. The saved profile is
 specific to the pinned Chatterbox Turbo model version and should be regenerated
-if that model version changes.
+if that model version changes. V2 also pins Perth to a specific upstream source
+commit because the PyPI 1.0.1 wheel can leave `PerthImplicitWatermarker`
+unavailable with the workflow's Python/setuptools stack.
 
 The `0.92` speed is a configurable production default calibrated against
 measured narration pacing. The configured duration remains a script-planning
