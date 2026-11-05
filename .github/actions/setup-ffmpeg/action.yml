@@ -1,5 +1,5 @@
-name: Set up pinned FFmpeg
-description: Install verified FFmpeg and FFprobe binaries without apt
+name: Set up verified FFmpeg
+description: Install checksum-verified FFmpeg and FFprobe binaries without apt
 runs:
   using: composite
   steps:
@@ -9,14 +9,27 @@ runs:
         set -euo pipefail
 
         archive="$RUNNER_TEMP/ritzz-ffmpeg.tar.xz"
+        checksum_file="$RUNNER_TEMP/ritzz-ffmpeg-checksums.sha256"
         install_dir="$RUNNER_TEMP/ritzz-ffmpeg"
-        archive_url="https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-21-13-06/ffmpeg-N-127900-ge2798d5cad-linux64-gpl.tar.xz"
-        archive_sha256="cf339ce89e952120f6e01e57718c1e2e3c1914107ae81649a88156caa5cd6632"
+        release_url="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest"
+        archive_name="ffmpeg-master-latest-linux64-gpl.tar.xz"
 
         curl --fail --location --retry 2 --connect-timeout 10 --max-time 300 \
-          "$archive_url" \
+          "$release_url/checksums.sha256" \
+          --output "$checksum_file"
+        curl --fail --location --retry 2 --connect-timeout 10 --max-time 300 \
+          "$release_url/$archive_name" \
           --output "$archive"
-        if ! echo "$archive_sha256  $archive" | sha256sum --check --status; then
+
+        mapfile -t matching_checksums < <(
+          awk -v filename="$archive_name" '$2 == filename { print $1 }' "$checksum_file"
+        )
+        if (( ${#matching_checksums[@]} != 1 )) \
+          || [[ ! "${matching_checksums[0]}" =~ ^[[:xdigit:]]{64}$ ]]; then
+          echo "Could not find exactly one valid SHA-256 for $archive_name." >&2
+          exit 1
+        fi
+        if ! echo "${matching_checksums[0]}  $archive" | sha256sum --check --status; then
           echo "Downloaded FFmpeg archive failed SHA-256 verification." >&2
           exit 1
         fi
