@@ -14,10 +14,12 @@ runs:
         release_url="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest"
         archive_name="ffmpeg-master-latest-linux64-gpl.tar.xz"
 
-        curl --fail --location --retry 2 --connect-timeout 10 --max-time 300 \
+        curl --fail --location --retry 5 --retry-max-time 300 \
+          --connect-timeout 10 --max-time 300 \
           "$release_url/checksums.sha256" \
           --output "$checksum_file"
-        curl --fail --location --retry 2 --connect-timeout 10 --max-time 300 \
+        curl --fail --location --retry 5 --retry-max-time 300 \
+          --connect-timeout 10 --max-time 300 \
           "$release_url/$archive_name" \
           --output "$archive"
 

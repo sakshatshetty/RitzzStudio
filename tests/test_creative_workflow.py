@@ -100,6 +100,7 @@ def test_workflow_avoids_apt_and_verifies_ffmpeg_download():
     )
     assert 'archive_name="ffmpeg-master-latest-linux64-gpl.tar.xz"' in ffmpeg_action
     assert '"$release_url/checksums.sha256"' in ffmpeg_action
+    assert ffmpeg_action.count("--retry 5 --retry-max-time 300") == 2
     assert 'awk -v filename="$archive_name"' in ffmpeg_action
     assert "sha256sum --check --status" in ffmpeg_action
     assert 'echo "$install_dir/bin" >> "$GITHUB_PATH"' in ffmpeg_action
