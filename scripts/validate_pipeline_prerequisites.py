@@ -49,9 +49,9 @@ def validate_prerequisites(
         raise ValueError(
             "Creative-package and YouTube-upload validation modes are mutually exclusive."
         )
-    if tts_provider not in {"elevenlabs", "chatterbox"}:
+    if tts_provider not in {"elevenlabs", "remona"}:
         raise ValueError(
-            "Unsupported narration provider; choose elevenlabs or chatterbox."
+            "Unsupported narration provider; choose remona or elevenlabs."
         )
     if youtube_upload:
         required_variables = (
@@ -62,7 +62,7 @@ def validate_prerequisites(
         provider_variables = (
             ("ELEVENLABS_API_KEY", "RITZZ_VOICE_ID")
             if tts_provider == "elevenlabs"
-            else ()
+            else ("REMONA_API_KEY", "REMONA_VOICE_PRESET")
         )
         required_variables = (
             *provider_variables,
@@ -87,16 +87,6 @@ def validate_prerequisites(
     ]
     if missing:
         raise ValueError(f"Missing required pipeline secrets: {', '.join(missing)}")
-
-    if creative_package and tts_provider == "chatterbox":
-        conditionals_file = os.environ.get(
-            "CHATTERBOX_VOICE_CONDITIONALS_FILE",
-            "",
-        ).strip()
-        if not conditionals_file or not Path(conditionals_file).is_file():
-            raise ValueError(
-                "CHATTERBOX_VOICE_CONDITIONALS_FILE is missing or is not a file."
-            )
 
     client_payload = _decode_json_secret("GOOGLE_CLIENT_SECRETS_B64")
     client_config = client_payload.get("installed") or client_payload.get("web")
@@ -134,8 +124,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--tts-provider",
-        choices=("elevenlabs", "chatterbox"),
-        default="elevenlabs",
+        choices=("remona", "elevenlabs"),
+        default="remona",
         help="Validate credentials for the selected narration provider.",
     )
     arguments = parser.parse_args()

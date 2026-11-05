@@ -12,6 +12,7 @@ from modules.script.models import (
 from modules.voice.engine import (
     NarrationTooShortError,
     OpeningHookValidationError,
+    VoiceAlignmentError,
     VoiceEngine,
 )
 from modules.voice.models import (
@@ -668,6 +669,50 @@ def test_create_voice_retries_invalid_alignment_once(tmp_path):
         attempt.status
         for attempt in load_project_qa(project_directory).stages["voice"]
     ] == ["FAIL", "PASS"]
+
+
+def test_billable_provider_does_not_repeat_generation_after_alignment_failure(
+    tmp_path,
+):
+    manager = ProjectManager(tmp_path / "projects")
+    project = manager.create_project("A billable voice test")
+    project_directory = manager.get_project_path(project)
+    script_file = project_directory / "script" / "script.json"
+    script_file.parent.mkdir(parents=True, exist_ok=True)
+    script_file.write_text(make_script().model_dump_json(), encoding="utf-8")
+
+    class BillableProvider:
+        retry_on_alignment_error = False
+
+        def __init__(self):
+            self.calls = 0
+
+        def generate(self, request):
+            self.calls += 1
+            Path(request.output_directory).mkdir(parents=True, exist_ok=True)
+            audio_file = Path(request.output_directory) / request.output_filename
+            audio_file.write_bytes(b"mock audio")
+            return VoiceGenerationResult(
+                voice_id=request.voice_id,
+                model_id=request.model_id,
+                status="completed",
+                file_path=str(audio_file),
+                duration_seconds=480.5,
+                character_count=len(request.text),
+                alignment=VoiceAlignment(),
+            )
+
+    provider = BillableProvider()
+    engine = VoiceEngine(provider, duration_probe=lambda _: 480.5)
+
+    with pytest.raises(VoiceAlignmentError):
+        engine.create_voice(
+            script_file=script_file,
+            voice_id="remona-preset:Maya",
+            output_directory=project_directory / "voice",
+        )
+
+    assert provider.calls == 1
 
 
 def test_save_and_load_result(tmp_path):

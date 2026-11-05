@@ -273,7 +273,7 @@ def test_generate_synthesizes_aligns_and_encodes_audio(tmp_path, monkeypatch):
     def fake_run(command, check):
         assert check is True
         commands.append(command)
-        if command[1].endswith("align_chatterbox_chunks.py"):
+        if command[1].endswith("align_voice_chunks.py"):
             input_file = Path(command[3])
             output_file = Path(command[5])
             payload = json.loads(input_file.read_text(encoding="utf-8"))
@@ -364,7 +364,7 @@ def test_generate_loads_saved_conditionals_without_reference_audio(
     def fake_run(command, check):
         assert check is True
         commands.append(command)
-        if command[1].endswith("align_chatterbox_chunks.py"):
+        if command[1].endswith("align_voice_chunks.py"):
             input_file = Path(command[3])
             output_file = Path(command[5])
             payload = json.loads(input_file.read_text(encoding="utf-8"))

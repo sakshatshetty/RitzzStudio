@@ -61,19 +61,12 @@ def _prepare_project(tmp_path: Path) -> Path:
     return project_directory
 
 
-def test_chatterbox_selection_uses_conditionals_fingerprint_and_turbo_model(
+def test_remona_selection_uses_configured_preset_and_multilingual_model(
     tmp_path,
     monkeypatch,
 ):
     project_directory = _prepare_project(tmp_path)
-    conditionals_file = tmp_path / "voice-conditionals.pt"
-    conditionals_file.write_bytes(b"private saved voice conditionals")
-    provider_instances = []
-
-    class _FakeChatterboxProvider:
-        def __init__(self, *, conditionals_path):
-            self.conditionals_path = Path(conditionals_path)
-            provider_instances.append(self)
+    provider = object()
 
     monkeypatch.setattr(
         run_voice_stage,
@@ -81,32 +74,26 @@ def test_chatterbox_selection_uses_conditionals_fingerprint_and_turbo_model(
         lambda _path: _FakeProjectManager(_path, project_directory),
     )
     monkeypatch.setattr(run_voice_stage, "VoiceEngine", _FakeVoiceEngine)
-    monkeypatch.setattr(
-        "modules.voice.chatterbox.ChatterboxTurboProvider",
-        _FakeChatterboxProvider,
-    )
+    monkeypatch.setattr(run_voice_stage, "RemonaProvider", lambda **_kwargs: provider)
     monkeypatch.setenv("RITZZ_PROJECT_ID", "test-project")
-    monkeypatch.setenv("RITZZ_TTS_PROVIDER", "chatterbox")
-    monkeypatch.setenv(
-        "CHATTERBOX_VOICE_CONDITIONALS_FILE",
-        str(conditionals_file),
-    )
+    monkeypatch.setenv("RITZZ_TTS_PROVIDER", "remona")
+    monkeypatch.setenv("REMONA_VOICE_PRESET", "Maya")
     monkeypatch.delenv("RITZZ_RESUME", raising=False)
     _FakeVoiceEngine.instances.clear()
 
     assert run_voice_stage.main() == 0
 
-    assert provider_instances[0].conditionals_path == conditionals_file.resolve()
+    assert _FakeVoiceEngine.instances[0].provider is provider
     result = json.loads(
         (project_directory / "voice" / "narration_result.json").read_text(
             encoding="utf-8"
         )
     )
-    assert result["voice_id"].startswith("chatterbox:")
-    assert result["model_id"] == "chatterbox_turbo"
+    assert result["voice_id"] == "remona-preset:Maya"
+    assert result["model_id"] == "eleven_multilingual_v2"
 
 
-def test_missing_chatterbox_conditionals_fail_before_model_generation(
+def test_missing_remona_preset_fails_before_model_generation(
     tmp_path,
     monkeypatch,
 ):
@@ -117,22 +104,22 @@ def test_missing_chatterbox_conditionals_fail_before_model_generation(
         lambda _path: _FakeProjectManager(_path, project_directory),
     )
     monkeypatch.setenv("RITZZ_PROJECT_ID", "test-project")
-    monkeypatch.setenv("RITZZ_TTS_PROVIDER", "chatterbox")
-    monkeypatch.setenv(
-        "CHATTERBOX_VOICE_CONDITIONALS_FILE",
-        str(tmp_path / "missing-conditionals.pt"),
-    )
+    monkeypatch.setenv("RITZZ_TTS_PROVIDER", "remona")
+    monkeypatch.delenv("REMONA_VOICE_PRESET", raising=False)
     monkeypatch.delenv("RITZZ_RESUME", raising=False)
 
     try:
         run_voice_stage.main()
-    except FileNotFoundError as error:
-        assert "CHATTERBOX_VOICE_CONDITIONALS_FILE" in str(error)
+    except RuntimeError as error:
+        assert "REMONA_VOICE_PRESET" in str(error)
     else:
-        raise AssertionError("Missing Chatterbox reference unexpectedly passed.")
+        raise AssertionError("Missing Remona voice preset unexpectedly passed.")
 
 
-def test_default_provider_remains_elevenlabs(tmp_path, monkeypatch):
+def test_explicit_elevenlabs_selection_preserves_existing_voice(
+    tmp_path,
+    monkeypatch,
+):
     project_directory = _prepare_project(tmp_path)
     provider = object()
     monkeypatch.setattr(
@@ -148,7 +135,7 @@ def test_default_provider_remains_elevenlabs(tmp_path, monkeypatch):
     )
     monkeypatch.setenv("RITZZ_PROJECT_ID", "test-project")
     monkeypatch.setenv("RITZZ_VOICE_ID", "existing-voice")
-    monkeypatch.delenv("RITZZ_TTS_PROVIDER", raising=False)
+    monkeypatch.setenv("RITZZ_TTS_PROVIDER", "elevenlabs")
     monkeypatch.delenv("RITZZ_RESUME", raising=False)
     _FakeVoiceEngine.instances.clear()
 
@@ -161,3 +148,35 @@ def test_default_provider_remains_elevenlabs(tmp_path, monkeypatch):
         )
     )
     assert result["model_id"] == "eleven_v4_turbo"
+
+
+def test_default_provider_is_remona(tmp_path, monkeypatch):
+    project_directory = _prepare_project(tmp_path)
+    provider = object()
+    monkeypatch.setattr(
+        run_voice_stage,
+        "ProjectManager",
+        lambda _path: _FakeProjectManager(_path, project_directory),
+    )
+    monkeypatch.setattr(run_voice_stage, "VoiceEngine", _FakeVoiceEngine)
+    monkeypatch.setattr(
+        run_voice_stage,
+        "RemonaProvider",
+        lambda **_kwargs: provider,
+    )
+    monkeypatch.setenv("RITZZ_PROJECT_ID", "test-project")
+    monkeypatch.setenv("REMONA_VOICE_PRESET", "Maya")
+    monkeypatch.delenv("RITZZ_TTS_PROVIDER", raising=False)
+    monkeypatch.delenv("RITZZ_RESUME", raising=False)
+    _FakeVoiceEngine.instances.clear()
+
+    assert run_voice_stage.main() == 0
+
+    assert _FakeVoiceEngine.instances[0].provider is provider
+    result = json.loads(
+        (project_directory / "voice" / "narration_result.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert result["voice_id"] == "remona-preset:Maya"
+    assert result["model_id"] == "eleven_multilingual_v2"

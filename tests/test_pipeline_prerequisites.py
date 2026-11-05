@@ -50,61 +50,58 @@ def test_creative_package_preflight_only_requires_voice_and_youtube_credentials(
     assert result["api_calls_made"] == "none"
 
 
-def test_chatterbox_preflight_requires_saved_conditionals_instead_of_elevenlabs(
-    monkeypatch,
-    tmp_path,
-):
+def test_remona_preflight_requires_api_key_and_preset_instead_of_elevenlabs(monkeypatch):
     _set_valid_environment(monkeypatch)
     monkeypatch.delenv("ELEVENLABS_API_KEY")
     monkeypatch.delenv("RITZZ_VOICE_ID")
-    conditionals_file = tmp_path / "voice-conditionals.pt"
-    conditionals_file.write_bytes(b"saved conditionals")
-    monkeypatch.setenv("CHATTERBOX_VOICE_CONDITIONALS_FILE", str(conditionals_file))
+    monkeypatch.setenv("REMONA_API_KEY", "configured")
+    monkeypatch.setenv("REMONA_VOICE_PRESET", "Maya")
 
     result = validate_prerequisites(
         creative_package=True,
-        tts_provider="chatterbox",
+        tts_provider="remona",
     )
 
-    assert result["required_secrets"] == "2"
+    assert result["required_secrets"] == "4"
     assert result["api_calls_made"] == "none"
 
 
-def test_chatterbox_preflight_rejects_missing_conditionals_file(monkeypatch):
+def test_remona_preflight_rejects_missing_secret_or_preset(monkeypatch):
     _set_valid_environment(monkeypatch)
-    monkeypatch.setenv(
-        "CHATTERBOX_VOICE_CONDITIONALS_FILE",
-        "missing-conditionals.pt",
-    )
+    monkeypatch.setenv("REMONA_API_KEY", "configured")
+    monkeypatch.delenv("REMONA_VOICE_PRESET", raising=False)
 
-    with pytest.raises(ValueError, match="CHATTERBOX_VOICE_CONDITIONALS_FILE"):
+    with pytest.raises(ValueError, match="REMONA_VOICE_PRESET"):
         validate_prerequisites(
             creative_package=True,
-            tts_provider="chatterbox",
+            tts_provider="remona",
         )
 
 
-def test_chatterbox_preflight_requires_conditionals_file(monkeypatch):
+def test_remona_preflight_requires_api_key(monkeypatch):
     _set_valid_environment(monkeypatch)
-    monkeypatch.delenv("CHATTERBOX_VOICE_CONDITIONALS_FILE", raising=False)
+    monkeypatch.setenv("REMONA_VOICE_PRESET", "Maya")
+    monkeypatch.delenv("REMONA_API_KEY", raising=False)
 
-    with pytest.raises(ValueError, match="CHATTERBOX_VOICE_CONDITIONALS_FILE"):
+    with pytest.raises(ValueError, match="REMONA_API_KEY"):
         validate_prerequisites(
             creative_package=True,
-            tts_provider="chatterbox",
+            tts_provider="remona",
         )
 
 
-def test_v2_workflow_defaults_to_chatterbox_and_preserves_original_workflow():
+def test_v2_workflow_defaults_to_remona_and_preserves_original_workflow():
     workflow = Path(
         ".github/workflows/ritzz-creative-production-v2.yml"
     ).read_text(encoding="utf-8")
 
     assert "name: RITZZ Creative Package Production_V2" in workflow
     assert "narration_provider:" in workflow
-    assert "default: chatterbox" in workflow
-    assert "ritzz-chatterbox-voice-v1" in workflow
-    assert "CHATTERBOX_VOICE_CONDITIONALS_FILE" in workflow
+    assert "default: remona" in workflow
+    assert "REMONA_API_KEY" in workflow
+    assert "REMONA_VOICE_PRESET" in workflow
+    assert "chatterbox" not in workflow.casefold()
+    assert "tests/test_remona_provider.py" in workflow
     assert "requirements-whisperx.txt" in workflow
 
 

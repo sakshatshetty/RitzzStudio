@@ -432,6 +432,8 @@ class VoiceEngine:
             )
             return self.generate(regenerate_request(feedback, hook_only=True))
         except VoiceAlignmentError:
+            if not getattr(self.provider, "retry_on_alignment_error", True):
+                raise
             return self.generate(request)
 
     @staticmethod

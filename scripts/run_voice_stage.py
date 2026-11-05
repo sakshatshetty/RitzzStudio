@@ -1,6 +1,5 @@
 """Generate and validate narration for the approved project."""
 
-import hashlib
 import json
 import math
 import os
@@ -17,6 +16,7 @@ from modules.video.sync_engine import VideoSynchronizationEngine
 from modules.voice.elevenlabs import ElevenLabsProvider
 from modules.voice.engine import VoiceEngine
 from modules.voice.models import VoiceGenerationResult
+from modules.voice.remona import RemonaProvider
 
 
 def main() -> int:
@@ -31,32 +31,23 @@ def main() -> int:
         raise FileNotFoundError("Approved project script or production configuration is missing.")
 
     config = ProductionConfig.model_validate_json(config_file.read_text(encoding="utf-8"))
-    provider_name = os.environ.get("RITZZ_TTS_PROVIDER", "elevenlabs").strip().lower()
+    provider_name = os.environ.get("RITZZ_TTS_PROVIDER", "remona").strip().lower()
     if provider_name == "elevenlabs":
         voice_id = os.environ.get("RITZZ_VOICE_ID")
         if not voice_id:
             raise RuntimeError("RITZZ_VOICE_ID is not configured.")
         provider = ElevenLabsProvider()
         model_id = "eleven_v4_turbo"
-    elif provider_name == "chatterbox":
-        conditionals_file = Path(
-            os.environ.get("CHATTERBOX_VOICE_CONDITIONALS_FILE", "")
-        )
-        if not conditionals_file.is_file():
-            raise FileNotFoundError(
-                "CHATTERBOX_VOICE_CONDITIONALS_FILE is missing or is not a file."
-            )
-        conditionals_hash = hashlib.sha256(conditionals_file.read_bytes()).hexdigest()
-        voice_id = f"chatterbox:{conditionals_hash}"
-        from modules.voice.chatterbox import ChatterboxTurboProvider
-
-        provider = ChatterboxTurboProvider(
-            conditionals_path=conditionals_file
-        )
-        model_id = "chatterbox_turbo"
+    elif provider_name == "remona":
+        preset = os.environ.get("REMONA_VOICE_PRESET", "").strip()
+        if not preset:
+            raise RuntimeError("REMONA_VOICE_PRESET is not configured.")
+        provider = RemonaProvider(voice_preset=preset)
+        voice_id = f"remona-preset:{preset}"
+        model_id = "eleven_multilingual_v2"
     else:
         raise ValueError(
-            "RITZZ_TTS_PROVIDER must be either elevenlabs or chatterbox."
+            "RITZZ_TTS_PROVIDER must be either remona or elevenlabs."
         )
 
     engine = VoiceEngine(provider)

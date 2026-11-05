@@ -120,32 +120,16 @@ video QA. A technical failure blocks approval. The rendered video is the human
 check for image/narration relevance and image quality.
 
 The separate **RITZZ Creative Package Production_V2** workflow provides a
-`narration_provider` selector, defaulting to Chatterbox Turbo. Choose
-`elevenlabs` to use the existing ElevenLabs voice, or `chatterbox` to synthesize
-with the saved RITZZ voice profile. Chatterbox Turbo does not train a new model
-or issue a provider-managed voice ID. Instead, the one-time profile stores the
-model's reference conditioning and is reused for every narration run.
+`narration_provider` selector, defaulting to Remona. Choose `remona` to use
+Remona's `eleven_multilingual_v2` endpoint, or `elevenlabs` to use the existing
+RITZZ ElevenLabs voice. Remona's documented endpoint requires a provider preset
+voice; the current workflow defaults to `Maya`. This preset is **not** the saved
+RITZZ voice. Use `elevenlabs` when the existing cloned voice must be preserved.
 
-The profile is created locally from an audio source with:
-
-```powershell
-python scripts/create_chatterbox_voice_conditionals.py `
-  --source "<source audio>" `
-  --output "ritzz-chatterbox-turbo-conditionals.pt"
-```
-
-The script uses the first 15 seconds, converts them to a temporary WAV, and
-deletes that temporary file after creating the conditioning profile. The source
-audio remains local. Keep both the source audio and resulting profile private;
-the profile is voice-derived data. Upload only
-`ritzz-chatterbox-turbo-conditionals.pt` as an asset on the private GitHub
-release tagged `ritzz-chatterbox-voice-v1`. V2 downloads that asset with its
-read-only GitHub token into the runner's temporary directory; it is not added
-to the repository, project checkpoint, or review package. The saved profile is
-specific to the pinned Chatterbox Turbo model version and should be regenerated
-if that model version changes. V2 also pins Perth to a specific upstream source
-commit because the PyPI 1.0.1 wheel can leave `PerthImplicitWatermarker`
-unavailable with the workflow's Python/setuptools stack.
+Remona returns an asynchronous task and an audio URL. V2 polls that task,
+downloads and converts the audio, then uses WhisperX forced alignment before
+storyboard timing. Configure the `REMONA_API_KEY` Actions secret for Remona
+runs. The workflow does not install or run the Chatterbox model.
 
 The `0.92` speed is a configurable production default calibrated against
 measured narration pacing. The configured duration remains a script-planning
@@ -359,9 +343,9 @@ provider and shared secrets:
 The V2 workflow uses the same Google OAuth secrets. Its selected narration
 provider determines which additional secret is required:
 
+- `remona` (the default): `REMONA_API_KEY`; the workflow's default voice is
+  Remona's `Maya` preset, not the existing RITZZ clone.
 - `elevenlabs`: `ELEVENLABS_API_KEY` and `RITZZ_VOICE_ID`
-- `chatterbox` (the default): no additional Actions secret; it downloads the
-  private voice profile asset from the configured release using `GITHUB_TOKEN`.
 
 Create a separate OAuth token for each channel by authorizing the YouTube API
 client while the corresponding channel is selected, then store each token file
