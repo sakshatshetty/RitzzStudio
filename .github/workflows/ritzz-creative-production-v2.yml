@@ -1,0 +1,416 @@
+name: RITZZ Creative Package Production_V2
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Start production from a ZIP or resume a saved project
+        required: true
+        type: choice
+        options:
+          - NEW
+          - RESUME
+        default: NEW
+      narration_provider:
+        description: TTS provider for narration generation
+        required: true
+        type: choice
+        options:
+          - chatterbox
+          - elevenlabs
+        default: chatterbox
+      youtube_channel:
+        description: YouTube channel that will receive the private upload
+        required: true
+        type: choice
+        options:
+          - Ritzz-Explains
+          - RitzzHistory
+          - RitzzTech1
+        default: Ritzz-Explains
+      creative_package_release_tag:
+        description: Published GitHub release tag with creative-package.zip (NEW only)
+        required: false
+        type: string
+      image_override_release_tag:
+        description: Optional replacement creative-package release tag (RESUME + RENDER only)
+        required: false
+        type: string
+      image_override_scene_ids:
+        description: Comma-separated scene IDs to replace, e.g. scene_041,scene_042
+        required: false
+        type: string
+      project_id:
+        description: Existing project ID (RESUME only)
+        required: false
+        type: string
+      source_run_id:
+        description: Actions run ID containing the saved project checkpoint (RESUME only)
+        required: false
+        type: string
+      rerun_from_stage:
+        description: Earliest stage to rerun when resuming; CONTINUE reuses completed work
+        required: true
+        type: choice
+        options:
+          - CONTINUE
+          - NARRATION
+          - STORYBOARD
+          - RENDER
+          - FINAL_PACKAGE
+        default: CONTINUE
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: ritzz-creative-${{ inputs.project_id || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate credentials, selected channel, and focused tests
+    runs-on: ubuntu-latest
+    env:
+      ELEVENLABS_API_KEY: ${{ inputs.narration_provider == 'elevenlabs' && secrets.ELEVENLABS_API_KEY || '' }}
+      RITZZ_VOICE_ID: ${{ inputs.narration_provider == 'elevenlabs' && secrets.RITZZ_VOICE_ID || '' }}
+      CHATTERBOX_VOICE_REFERENCE_URL: ${{ secrets.CHATTERBOX_VOICE_REFERENCE_URL }}
+      RITZZ_TTS_PROVIDER: ${{ inputs.narration_provider }}
+      GOOGLE_CLIENT_SECRETS_B64: ${{ secrets.GOOGLE_CLIENT_SECRETS_B64 }}
+      GOOGLE_TOKEN_B64: ${{ inputs.youtube_channel == 'Ritzz-Explains' && secrets.GOOGLE_TOKEN_B64 || inputs.youtube_channel == 'RitzzHistory' && secrets.GOOGLE_TOKEN_RITZZ_HISTORY_B64 || inputs.youtube_channel == 'RitzzTech1' && secrets.GOOGLE_TOKEN_RITZZ_TECH_B64 || '' }}
+      RITZZ_YOUTUBE_CHANNEL: ${{ inputs.youtube_channel }}
+      RITZZ_YOUTUBE_CHANNEL_TITLE: ${{ inputs.youtube_channel == 'Ritzz-Explains' && 'Ritzz' || inputs.youtube_channel == 'RitzzHistory' && 'Ritzz History' || inputs.youtube_channel == 'RitzzTech1' && 'Ritzz Tech' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Validate optional image override inputs
+        env:
+          MODE: ${{ inputs.mode }}
+          RERUN_FROM_STAGE: ${{ inputs.rerun_from_stage }}
+          IMAGE_OVERRIDE_RELEASE_TAG: ${{ inputs.image_override_release_tag }}
+          IMAGE_OVERRIDE_SCENE_IDS: ${{ inputs.image_override_scene_ids }}
+        run: |
+          python -c "import os; from scripts.apply_creative_image_overrides import validate_image_override_inputs; validate_image_override_inputs(mode=os.environ['MODE'], rerun_from_stage=os.environ['RERUN_FROM_STAGE'], release_tag=os.environ['IMAGE_OVERRIDE_RELEASE_TAG'], scene_ids=os.environ['IMAGE_OVERRIDE_SCENE_IDS'])"
+
+      - name: Set up FFmpeg and FFprobe
+        uses: ./.github/actions/setup-ffmpeg
+
+      - name: Prepare media-test tools
+        run: |
+          mkdir -p "$RUNNER_TEMP/ritzz-fonts"
+          curl --fail --location --retry 2 --connect-timeout 10 --max-time 60 \
+            "https://raw.githubusercontent.com/google/fonts/45e3d5269e4a17d823f6d84470bc084dc5ae46f6/ofl/comicneue/ComicNeue-Bold.ttf" \
+            --output "$RUNNER_TEMP/ritzz-fonts/ComicNeue-Bold.ttf"
+          curl --fail --location --retry 2 --connect-timeout 10 --max-time 60 \
+            "https://raw.githubusercontent.com/google/fonts/45e3d5269e4a17d823f6d84470bc084dc5ae46f6/ofl/comicneue/OFL.txt" \
+            --output "$RUNNER_TEMP/ritzz-fonts/OFL.txt"
+          echo "RITZZ_FONT_PATH=$RUNNER_TEMP/ritzz-fonts/ComicNeue-Bold.ttf" >> "$GITHUB_ENV"
+
+      - name: Validate creative production secrets
+        run: >-
+          python scripts/validate_pipeline_prerequisites.py
+          --creative-package
+          --tts-provider "$RITZZ_TTS_PROVIDER"
+
+      - name: Verify selected YouTube channel access
+        env:
+          GOOGLE_CLIENT_SECRETS_FILE: ${{ runner.temp }}/youtube-client-secrets.json
+          GOOGLE_TOKEN_FILE: ${{ runner.temp }}/youtube-token.json
+        run: |
+          set -euo pipefail
+          printf '%s' "$GOOGLE_CLIENT_SECRETS_B64" | base64 --decode > "$GOOGLE_CLIENT_SECRETS_FILE"
+          printf '%s' "$GOOGLE_TOKEN_B64" | base64 --decode > "$GOOGLE_TOKEN_FILE"
+          python scripts/verify_youtube_channel.py
+
+      - name: Run creative production regression tests
+        run: >-
+          python -m pytest
+          tests/test_creative_package.py
+          tests/test_creative_workflow.py
+          tests/test_download_creative_package.py
+          tests/test_run_storyboard_stage.py
+          tests/test_run_render_stage.py
+          tests/test_video_pipeline_engine.py
+          tests/test_voice_engine.py
+          tests/test_upload_thumbnail_recovery.py
+          tests/test_private_upload_quality.py
+          tests/test_publishing_engine.py
+          tests/test_pipeline_prerequisites.py
+          tests/test_chatterbox_provider.py
+          tests/test_align_chatterbox_chunks.py
+          tests/test_run_voice_stage.py
+          -q
+
+  production:
+    name: Validate ZIP and produce video
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    outputs:
+      project_id: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
+    env:
+      ELEVENLABS_API_KEY: ${{ inputs.narration_provider == 'elevenlabs' && secrets.ELEVENLABS_API_KEY || '' }}
+      RITZZ_VOICE_ID: ${{ inputs.narration_provider == 'elevenlabs' && secrets.RITZZ_VOICE_ID || '' }}
+      CHATTERBOX_VOICE_REFERENCE_URL: ${{ secrets.CHATTERBOX_VOICE_REFERENCE_URL }}
+      RITZZ_TTS_PROVIDER: ${{ inputs.narration_provider }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-chatterbox.txt
+            requirements-whisperx.txt
+
+      - name: Install dependencies and prepare rendering font
+        run: |
+          python -m pip install -r requirements.txt
+          mkdir -p "$RUNNER_TEMP/ritzz-fonts"
+          curl --fail --location --retry 2 --connect-timeout 10 --max-time 60 \
+            "https://raw.githubusercontent.com/google/fonts/45e3d5269e4a17d823f6d84470bc084dc5ae46f6/ofl/comicneue/ComicNeue-Bold.ttf" \
+            --output "$RUNNER_TEMP/ritzz-fonts/ComicNeue-Bold.ttf"
+          curl --fail --location --retry 2 --connect-timeout 10 --max-time 60 \
+            "https://raw.githubusercontent.com/google/fonts/45e3d5269e4a17d823f6d84470bc084dc5ae46f6/ofl/comicneue/OFL.txt" \
+            --output "$RUNNER_TEMP/ritzz-fonts/OFL.txt"
+          echo "RITZZ_FONT_PATH=$RUNNER_TEMP/ritzz-fonts/ComicNeue-Bold.ttf" >> "$GITHUB_ENV"
+
+      - name: Set up FFmpeg and FFprobe
+        uses: ./.github/actions/setup-ffmpeg
+
+      - name: Install Chatterbox Turbo and WhisperX
+        if: ${{ inputs.narration_provider == 'chatterbox' && (inputs.mode == 'NEW' || inputs.rerun_from_stage != 'FINAL_PACKAGE') }}
+        run: |
+          set -euo pipefail
+          python -m pip install -r requirements-chatterbox.txt
+          python -m venv "$RUNNER_TEMP/whisperx-env"
+          "$RUNNER_TEMP/whisperx-env/bin/python" -m pip install -r requirements-whisperx.txt
+          echo "RITZZ_WHISPERX_PYTHON=$RUNNER_TEMP/whisperx-env/bin/python" >> "$GITHUB_ENV"
+
+      - name: Download Chatterbox voice reference
+        if: ${{ inputs.narration_provider == 'chatterbox' && (inputs.mode == 'NEW' || inputs.rerun_from_stage != 'FINAL_PACKAGE') }}
+        env:
+          CHATTERBOX_VOICE_REFERENCE_URL: ${{ secrets.CHATTERBOX_VOICE_REFERENCE_URL }}
+          CHATTERBOX_VOICE_REFERENCE_FILE: ${{ runner.temp }}/ritzz_voice_reference.wav
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error --retry 2 \
+            --connect-timeout 10 --max-time 120 \
+            "$CHATTERBOX_VOICE_REFERENCE_URL" \
+            --output "$CHATTERBOX_VOICE_REFERENCE_FILE"
+          if [[ ! -s "$CHATTERBOX_VOICE_REFERENCE_FILE" ]]; then
+            echo "The downloaded Chatterbox voice reference is missing or empty." >&2
+            exit 1
+          fi
+
+      - name: Download the user-supplied ZIP
+        if: ${{ inputs.mode == 'NEW' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CREATIVE_PACKAGE_RELEASE_TAG: ${{ inputs.creative_package_release_tag }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$CREATIVE_PACKAGE_RELEASE_TAG" ]]; then
+            echo "creative_package_release_tag is required for a NEW production." >&2
+            exit 1
+          fi
+          python scripts/download_creative_package.py \
+            --release-tag "$CREATIVE_PACKAGE_RELEASE_TAG"
+
+      - name: Validate and import the creative ZIP
+        if: ${{ inputs.mode == 'NEW' }}
+        id: new-project
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .pipeline-artifacts
+          python scripts/import_creative_package.py \
+            --zip .pipeline-artifacts/creative-package.zip \
+            > .pipeline-artifacts/import_result.json
+          project_id=$(python -c "import json; print(json.load(open('.pipeline-artifacts/import_result.json', encoding='utf-8'))['project_id'])")
+          echo "project_id=$project_id" >> "$GITHUB_OUTPUT"
+          echo "Validated creative package for project $project_id."
+
+      - name: Download saved project checkpoint
+        if: ${{ inputs.mode == 'RESUME' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ritzz-creative-production-${{ inputs.project_id }}-checkpoint
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+          path: .pipeline-artifacts
+
+      - name: Restore saved project
+        if: ${{ inputs.mode == 'RESUME' }}
+        id: resume-project
+        shell: bash
+        env:
+          PROJECT_ID: ${{ inputs.project_id }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$PROJECT_ID" || -z "$SOURCE_RUN_ID" ]]; then
+            echo "RESUME requires both project_id and source_run_id." >&2
+            exit 1
+          fi
+          if [[ ! "$PROJECT_ID" =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$ ]]; then
+            echo "project_id contains unsupported characters." >&2
+            exit 1
+          fi
+          if [[ ! "$SOURCE_RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "source_run_id must contain digits only." >&2
+            exit 1
+          fi
+          mkdir -p projects
+          tar -xzf .pipeline-artifacts/project.tar.gz -C projects
+          python -c "import os; from modules.project.manager import ProjectManager; ProjectManager('projects').load_project(os.environ['PROJECT_ID'])"
+          echo "project_id=$PROJECT_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Download image override package
+        if: ${{ inputs.mode == 'RESUME' && inputs.rerun_from_stage == 'RENDER' && inputs.image_override_release_tag != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE_OVERRIDE_RELEASE_TAG: ${{ inputs.image_override_release_tag }}
+        run: |
+          python scripts/download_creative_package.py \
+            --release-tag "$IMAGE_OVERRIDE_RELEASE_TAG" \
+            --output .pipeline-artifacts/image-override.zip
+
+      - name: Apply selected image-only overrides
+        if: ${{ inputs.mode == 'RESUME' && inputs.rerun_from_stage == 'RENDER' && inputs.image_override_release_tag != '' }}
+        env:
+          PROJECT_ID: ${{ inputs.project_id }}
+          IMAGE_OVERRIDE_SCENE_IDS: ${{ inputs.image_override_scene_ids }}
+        run: |
+          python scripts/apply_creative_image_overrides.py \
+            --zip .pipeline-artifacts/image-override.zip \
+            --project-id "$PROJECT_ID" \
+            --scene-ids "$IMAGE_OVERRIDE_SCENE_IDS"
+
+      - name: Generate or reuse supplied-script narration
+        if: ${{ inputs.mode == 'NEW' || inputs.rerun_from_stage != 'FINAL_PACKAGE' }}
+        env:
+          RITZZ_PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
+          RITZZ_RESUME: ${{ inputs.mode == 'RESUME' && inputs.rerun_from_stage != 'NARRATION' && 'true' || 'false' }}
+          RITZZ_RERUN_FROM_STAGE: ${{ inputs.mode == 'RESUME' && inputs.rerun_from_stage || 'CONTINUE' }}
+          RITZZ_TTS_PROVIDER: ${{ inputs.narration_provider }}
+          CHATTERBOX_VOICE_REFERENCE_FILE: ${{ runner.temp }}/ritzz_voice_reference.wav
+          RITZZ_WHISPERX_PYTHON: ${{ runner.temp }}/whisperx-env/bin/python
+        run: python scripts/run_voice_stage.py
+
+      - name: Time supplied Flow storyboard against narration
+        if: ${{ inputs.mode == 'NEW' || inputs.rerun_from_stage == 'NARRATION' || inputs.rerun_from_stage == 'STORYBOARD' }}
+        env:
+          RITZZ_PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
+        run: python scripts/run_storyboard_stage.py
+
+      - name: Render supplied stills and run technical QA
+        if: ${{ inputs.mode == 'NEW' || inputs.rerun_from_stage != 'FINAL_PACKAGE' }}
+        env:
+          RITZZ_PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
+          RITZZ_RERUN_FROM_STAGE: ${{ inputs.mode == 'RESUME' && inputs.rerun_from_stage || 'CONTINUE' }}
+        run: python scripts/run_render_stage.py
+
+      - name: Create exact-input final review package
+        env:
+          RITZZ_PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
+        run: python scripts/package_creative_production.py
+
+      - name: Prepare MP4-only review download
+        env:
+          PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
+        run: |
+          set -euo pipefail
+          mapfile -d '' project_dirs < <(find projects -mindepth 1 -maxdepth 1 -type d -name "${PROJECT_ID}_*" -print0)
+          if [[ "${#project_dirs[@]}" -ne 1 ]]; then
+            echo "Expected one project directory for $PROJECT_ID; found ${#project_dirs[@]}." >&2
+            exit 1
+          fi
+          video_file="${project_dirs[0]}/video/ritzz_test.mp4"
+          if [[ ! -s "$video_file" ]]; then
+            echo "The rendered review MP4 is missing or empty: $video_file" >&2
+            exit 1
+          fi
+          mkdir -p .pipeline-artifacts/review-video
+          cp -- "$video_file" ".pipeline-artifacts/review-video/${PROJECT_ID}.mp4"
+
+      - name: Upload MP4-only review video
+        uses: actions/upload-artifact@v4
+        with:
+          name: ritzz-review-video-${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
+          path: .pipeline-artifacts/review-video/${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}.mp4
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish review link
+        if: ${{ always() && (steps.new-project.outputs.project_id != '' || steps.resume-project.outputs.project_id != '') }}
+        env:
+          PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          YOUTUBE_CHANNEL: ${{ inputs.youtube_channel }}
+        run: |
+          {
+            echo "## RITZZ production review"
+            echo
+            echo "Project: \`$PROJECT_ID\`"
+            echo "Selected YouTube channel: \`$YOUTUBE_CHANNEL\`"
+            echo
+            echo "Download the MP4-only \`ritzz-review-video-$PROJECT_ID\` artifact and review \`$PROJECT_ID.mp4\`. This run does not upload to YouTube."
+            echo "GitHub Actions artifacts download as ZIP files; extract the MP4 into your local Downloads folder. The cloud runner cannot write directly to your PC."
+            echo
+            echo "From local PowerShell with GitHub CLI authenticated, download and extract only the MP4 directly to Downloads:"
+            download_command="gh run download ${GITHUB_RUN_ID} --repo ${GITHUB_REPOSITORY} --name ritzz-review-video-${PROJECT_ID} --dir \"\$env:USERPROFILE\\Downloads\""
+            echo '```powershell'
+            echo "$download_command"
+            echo '```'
+            echo
+            echo "The complete review package is also available as \`final-package-$PROJECT_ID.zip\`."
+            echo
+            echo "Run and artifact link: $RUN_URL"
+            echo
+            echo "After review, dispatch the RITZZ Private Upload Approval workflow from main with this run ID, project ID, selected channel, and explicit approval. Only the repository owner can dispatch the upload workflow."
+            echo
+            echo "Approval workflow: https://github.com/${GITHUB_REPOSITORY}/actions/workflows/ritzz-creative-approval-upload.yml"
+            echo
+            echo "Flow images, storyboard, supplied metadata, and thumbnail were provided before this run. Review scene/narration matches in the rendered video; technical QA failures block upload."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Archive project for review and resume
+        if: ${{ always() && (steps.new-project.outputs.project_id != '' || steps.resume-project.outputs.project_id != '') }}
+        env:
+          PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
+        run: |
+          set -euo pipefail
+          project_name=$(find projects -mindepth 1 -maxdepth 1 -type d -name "${PROJECT_ID}_*" -printf "%f\n" | head -n 1)
+          if [[ -z "$project_name" ]]; then
+            echo "Could not find the project directory for $PROJECT_ID." >&2
+            exit 1
+          fi
+          tar -czf .pipeline-artifacts/project.tar.gz -C projects "$project_name"
+
+      - name: Upload production checkpoint and final package
+        if: ${{ always() && (steps.new-project.outputs.project_id != '' || steps.resume-project.outputs.project_id != '') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ritzz-creative-production-${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}-checkpoint
+          path: |
+            .pipeline-artifacts/project.tar.gz
+            .pipeline-artifacts/final-package-*.zip
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 30

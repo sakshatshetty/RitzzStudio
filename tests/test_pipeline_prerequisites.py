@@ -50,6 +50,63 @@ def test_creative_package_preflight_only_requires_voice_and_youtube_credentials(
     assert result["api_calls_made"] == "none"
 
 
+def test_chatterbox_preflight_requires_reference_url_instead_of_elevenlabs(
+    monkeypatch,
+):
+    _set_valid_environment(monkeypatch)
+    monkeypatch.delenv("ELEVENLABS_API_KEY")
+    monkeypatch.delenv("RITZZ_VOICE_ID")
+    monkeypatch.setenv(
+        "CHATTERBOX_VOICE_REFERENCE_URL",
+        "https://private.example/voice-reference.wav",
+    )
+
+    result = validate_prerequisites(
+        creative_package=True,
+        tts_provider="chatterbox",
+    )
+
+    assert result["required_secrets"] == "3"
+    assert result["api_calls_made"] == "none"
+
+
+def test_chatterbox_preflight_requires_https_reference_url(monkeypatch):
+    _set_valid_environment(monkeypatch)
+    monkeypatch.setenv(
+        "CHATTERBOX_VOICE_REFERENCE_URL",
+        "http://private.example/voice-reference.wav",
+    )
+
+    with pytest.raises(ValueError, match="must be an HTTPS URL"):
+        validate_prerequisites(
+            creative_package=True,
+            tts_provider="chatterbox",
+        )
+
+
+def test_chatterbox_preflight_requires_reference_url(monkeypatch):
+    _set_valid_environment(monkeypatch)
+    monkeypatch.delenv("CHATTERBOX_VOICE_REFERENCE_URL", raising=False)
+
+    with pytest.raises(ValueError, match="CHATTERBOX_VOICE_REFERENCE_URL"):
+        validate_prerequisites(
+            creative_package=True,
+            tts_provider="chatterbox",
+        )
+
+
+def test_v2_workflow_defaults_to_chatterbox_and_preserves_original_workflow():
+    workflow = Path(
+        ".github/workflows/ritzz-creative-production-v2.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "name: RITZZ Creative Package Production_V2" in workflow
+    assert "narration_provider:" in workflow
+    assert "default: chatterbox" in workflow
+    assert "CHATTERBOX_VOICE_REFERENCE_URL" in workflow
+    assert "requirements-whisperx.txt" in workflow
+
+
 def test_youtube_upload_preflight_only_requires_youtube_credentials(monkeypatch):
     _set_valid_environment(monkeypatch)
     for name in REQUIRED_ENVIRONMENT_VARIABLES:

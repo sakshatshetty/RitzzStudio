@@ -7,6 +7,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -43,10 +44,15 @@ def validate_prerequisites(
     creative_package: bool = False,
     youtube_upload: bool = False,
     image_model: str | None = None,
+    tts_provider: str = "elevenlabs",
 ) -> dict[str, str]:
     if creative_package and youtube_upload:
         raise ValueError(
             "Creative-package and YouTube-upload validation modes are mutually exclusive."
+        )
+    if tts_provider not in {"elevenlabs", "chatterbox"}:
+        raise ValueError(
+            "Unsupported narration provider; choose elevenlabs or chatterbox."
         )
     if youtube_upload:
         required_variables = (
@@ -54,10 +60,15 @@ def validate_prerequisites(
             "GOOGLE_TOKEN_B64",
         )
     elif creative_package:
-        required_variables = tuple(
-            name
-            for name in REQUIRED_ENVIRONMENT_VARIABLES
-            if name not in {"OPENAI_API_KEY", "VIDIQ_MCP_API_KEY"}
+        provider_variables = (
+            ("ELEVENLABS_API_KEY", "RITZZ_VOICE_ID")
+            if tts_provider == "elevenlabs"
+            else ("CHATTERBOX_VOICE_REFERENCE_URL",)
+        )
+        required_variables = (
+            *provider_variables,
+            "GOOGLE_CLIENT_SECRETS_B64",
+            "GOOGLE_TOKEN_B64",
         )
     else:
         required_variables = REQUIRED_ENVIRONMENT_VARIABLES
@@ -77,6 +88,14 @@ def validate_prerequisites(
     ]
     if missing:
         raise ValueError(f"Missing required pipeline secrets: {', '.join(missing)}")
+
+    if creative_package and tts_provider == "chatterbox":
+        reference_url = os.environ["CHATTERBOX_VOICE_REFERENCE_URL"].strip()
+        parsed_url = urlparse(reference_url)
+        if parsed_url.scheme != "https" or not parsed_url.netloc:
+            raise ValueError(
+                "CHATTERBOX_VOICE_REFERENCE_URL must be an HTTPS URL."
+            )
 
     client_payload = _decode_json_secret("GOOGLE_CLIENT_SECRETS_B64")
     client_config = client_payload.get("installed") or client_payload.get("web")
@@ -112,11 +131,18 @@ def main() -> int:
         choices=IMAGE_MODEL_OPTIONS,
         help="Validate credentials for the selected creative-workflow image model.",
     )
+    parser.add_argument(
+        "--tts-provider",
+        choices=("elevenlabs", "chatterbox"),
+        default="elevenlabs",
+        help="Validate credentials for the selected narration provider.",
+    )
     arguments = parser.parse_args()
     result = validate_prerequisites(
         creative_package=arguments.creative_package,
         youtube_upload=arguments.youtube_upload,
         image_model=arguments.image_model,
+        tts_provider=arguments.tts_provider,
     )
     print("Pipeline prerequisites passed.")
     for name, value in result.items():

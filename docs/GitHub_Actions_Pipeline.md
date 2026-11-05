@@ -119,6 +119,20 @@ coverage, uses static stills and hard cuts, then renders and runs technical
 video QA. A technical failure blocks approval. The rendered video is the human
 check for image/narration relevance and image quality.
 
+The separate **RITZZ Creative Package Production_V2** workflow provides a
+`narration_provider` selector, defaulting to Chatterbox Turbo. Choose
+`elevenlabs` to use the existing ElevenLabs voice, or `chatterbox` to synthesize
+with the reference-conditioned Turbo model. Chatterbox does not create a
+persistent voice ID: the reference audio is supplied for each narration run,
+and WhisperX forced-aligns the generated audio to the supplied script before
+scene timing.
+
+For Chatterbox, configure the GitHub Actions secret
+`CHATTERBOX_VOICE_REFERENCE_URL` with a private HTTPS URL to a WAV reference
+longer than five seconds. Keep the audio private and do not commit it to the
+repository. The workflow downloads it only to the runner's temporary directory;
+it is not included in the saved project checkpoint or review package.
+
 The `0.92` speed is a configurable production default calibrated against
 measured narration pacing. The configured duration remains a script-planning
 target, not a hard minimum for generated audio. Narration must have a positive,
@@ -318,7 +332,8 @@ selected automatically.
 
 ## Repository setup
 
-The primary Flow-package workflow needs these secrets:
+The original **RITZZ Creative Package Production** workflow needs these
+provider and shared secrets:
 
 - `ELEVENLABS_API_KEY`
 - `RITZZ_VOICE_ID`
@@ -326,6 +341,12 @@ The primary Flow-package workflow needs these secrets:
 - `GOOGLE_TOKEN_B64` for `Ritzz-Explains` (`@Ritzz-Explains`)
 - `GOOGLE_TOKEN_RITZZ_HISTORY_B64` for `RitzzHistory` (`@RitzzHistory`)
 - `GOOGLE_TOKEN_RITZZ_TECH_B64` for `RitzzTech1` (`@RitzzTech1`)
+
+The V2 workflow uses the same Google OAuth secrets. Its selected narration
+provider determines which additional secret is required:
+
+- `elevenlabs`: `ELEVENLABS_API_KEY` and `RITZZ_VOICE_ID`
+- `chatterbox` (the default): `CHATTERBOX_VOICE_REFERENCE_URL`
 
 Create a separate OAuth token for each channel by authorizing the YouTube API
 client while the corresponding channel is selected, then store each token file

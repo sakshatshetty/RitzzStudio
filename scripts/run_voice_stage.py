@@ -1,5 +1,6 @@
 """Generate and validate narration for the approved project."""
 
+import hashlib
 import json
 import math
 import os
@@ -13,6 +14,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from modules.project.config import ProductionConfig
 from modules.project.manager import ProjectManager
 from modules.video.sync_engine import VideoSynchronizationEngine
+from modules.voice.audio import probe_audio_duration
 from modules.voice.elevenlabs import ElevenLabsProvider
 from modules.voice.engine import VoiceEngine
 from modules.voice.models import VoiceGenerationResult
@@ -30,11 +32,38 @@ def main() -> int:
         raise FileNotFoundError("Approved project script or production configuration is missing.")
 
     config = ProductionConfig.model_validate_json(config_file.read_text(encoding="utf-8"))
-    voice_id = os.environ.get("RITZZ_VOICE_ID")
-    if not voice_id:
-        raise RuntimeError("RITZZ_VOICE_ID is not configured.")
+    provider_name = os.environ.get("RITZZ_TTS_PROVIDER", "elevenlabs").strip().lower()
+    if provider_name == "elevenlabs":
+        voice_id = os.environ.get("RITZZ_VOICE_ID")
+        if not voice_id:
+            raise RuntimeError("RITZZ_VOICE_ID is not configured.")
+        provider = ElevenLabsProvider()
+        model_id = "eleven_v4_turbo"
+    elif provider_name == "chatterbox":
+        reference_file = Path(
+            os.environ.get("CHATTERBOX_VOICE_REFERENCE_FILE", "")
+        )
+        if not reference_file.is_file():
+            raise FileNotFoundError(
+                "CHATTERBOX_VOICE_REFERENCE_FILE is missing or is not a file."
+            )
+        reference_duration = probe_audio_duration(reference_file)
+        if reference_duration <= 5:
+            raise ValueError(
+                "The Chatterbox Turbo voice reference must be longer than 5 seconds."
+            )
+        reference_hash = hashlib.sha256(reference_file.read_bytes()).hexdigest()
+        voice_id = f"chatterbox:{reference_hash}"
+        from modules.voice.chatterbox import ChatterboxTurboProvider
 
-    engine = VoiceEngine(ElevenLabsProvider())
+        provider = ChatterboxTurboProvider(reference_file)
+        model_id = "chatterbox_turbo"
+    else:
+        raise ValueError(
+            "RITZZ_TTS_PROVIDER must be either elevenlabs or chatterbox."
+        )
+
+    engine = VoiceEngine(provider)
     result_path = voice_directory / "narration_result.json"
     audio_file = voice_directory / "narration.mp3"
     if os.environ.get("RITZZ_RESUME") == "true" and (
@@ -87,6 +116,7 @@ def main() -> int:
         voice_id=voice_id,
         output_directory=voice_directory,
         production_config=config,
+        model_id=model_id,
     )
     engine.save_result(result, result_path)
     if result.status != "completed":
