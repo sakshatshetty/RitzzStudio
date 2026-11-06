@@ -1,5 +1,7 @@
 """Project-level production configuration."""
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, model_validator
 
 DURATION_TOLERANCE_SECONDS = 60
@@ -24,6 +26,12 @@ class ProductionConfig(BaseModel):
     minimum_duration_seconds: int = Field(default=480, ge=1)
     words_per_minute: int = Field(default=170, ge=80, le=220)
     voice_speed: float = Field(default=1.0, ge=0.7, le=1.2)
+    smallest_model: Literal[
+        "lightning_v3.1_pro",
+        "lightning_v3.1",
+    ] = "lightning_v3.1_pro"
+    smallest_voice_id: str = Field(default="voice_CNOBFXW1SC", min_length=1)
+    smallest_language: str = Field(default="en", min_length=1)
     script_profile: str = "RITZZ_ANCIENT_HUMAN_CURIOSITY"
     scene_minimum_duration_seconds: float = Field(default=3.0, ge=0.0)
     scene_maximum_duration_seconds: float = Field(default=4.0, gt=0, le=10.0)

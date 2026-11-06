@@ -119,14 +119,15 @@ coverage, uses static stills and hard cuts, then renders and runs technical
 video QA. A technical failure blocks approval. The rendered video is the human
 check for image/narration relevance and image quality.
 
-The separate **RITZZ Creative Package Production_V2** workflow defaults to
-Smallest.ai (`smallest`) and provides `elevenlabs` as an alternative. Smallest
-uses Lightning v3.1 Pro by default with voice ID `voice_CNOBFXW1SC` at speed
-1.0. The
-`smallest_model`, `smallest_voice_id`, and `smallest_language` dispatch inputs
-can select a different supported pool, voice, or language. If the optional
-inputs are changed at dispatch, they override those defaults. The provider
-sends text in chunks of at most 250 characters
+The separate **RITZZ Creative Package Production_V2** workflow has one
+narration setting: select `smallestai` or `elevenlabs`. Smallest.ai audio
+settings are part of each project's `production_config.json`, not workflow
+inputs. The defaults are Lightning v3.1 Pro, voice ID `voice_CNOBFXW1SC`,
+language `en`, and speed `1.0`. Change `smallest_model`, `smallest_voice_id`,
+`smallest_language`, or `voice_speed` in the project configuration as needed.
+Smallest's current API documents Lightning v3.1 and Lightning v3.1 Pro; it does
+not list Lightning 3.0, so the project config defaults to the supported v3.1
+Pro model. The provider sends text in chunks of at most 250 characters
 (Smallest recommends about 250 characters per request), joins returned WAV
 audio, converts it to the pipeline MP3 format, and runs WhisperX forced
 alignment before storyboard timing. Preflight and tests do not call the paid
@@ -141,10 +142,11 @@ Smallest.ai supports instant voice cloning through its dashboard or
 `POST /waves/v1/voice-cloning`. Its current API accepts a clean 5–15 second
 sample under 5 MB in MP3, WAV, MP4, or WebM. Only clone a voice you own or have
 permission to use. Create the clone on the Lightning v3.1 Pro pool to use it
-with the default `lightning_v3.1_pro` synthesis model, then enter its returned
-`voiceId` in the `smallest_voice_id` workflow input. The voice ID is used for
-narration and is recorded in project metadata; the API key is not. Check the
-clone's compatible `modelIds` if you choose a different Smallest model.
+with the default `lightning_v3.1_pro` synthesis model, then set its returned
+`voiceId` as `smallest_voice_id` in the project's `production_config.json`.
+The voice ID is used for narration and is recorded in project metadata; the
+API key is not. Check the clone's compatible `modelIds` if you choose a
+different Smallest model.
 Smallest documents the process in its
 [Instant Voice Clone guide](https://docs.smallest.ai/models/voice-cloning/instant-clone-api)
 and the
@@ -367,7 +369,7 @@ provider and shared secrets:
 The V2 workflow uses the same Google OAuth secrets. Its selected narration
 provider determines which additional secrets are required:
 
-- `smallest` (the default): `smallestai_api_key` (mapped to
+- `smallestai` (the default): `smallestai_api_key` (mapped to
   `SMALLEST_API_KEY` in the runner).
 - `elevenlabs`: `ELEVENLABS_API_KEY` and `RITZZ_VOICE_ID`
 

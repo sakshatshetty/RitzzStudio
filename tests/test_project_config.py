@@ -3,6 +3,20 @@ import pytest
 from modules.project.config import ProductionConfig
 
 
+def test_smallest_audio_settings_default_to_production_config():
+    config = ProductionConfig()
+
+    assert config.smallest_model == "lightning_v3.1_pro"
+    assert config.smallest_voice_id == "voice_CNOBFXW1SC"
+    assert config.smallest_language == "en"
+    assert config.voice_speed == 1.0
+
+
+def test_production_config_rejects_unsupported_smallest_model():
+    with pytest.raises(ValueError, match="smallest_model"):
+        ProductionConfig.model_validate({"smallest_model": "lightning_v3.0"})
+
+
 def test_production_config_derives_minimum_words_from_duration():
     config = ProductionConfig(target_duration_seconds=360, minimum_duration_seconds=300)
     assert config.words_per_minute == 170

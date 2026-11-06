@@ -16,10 +16,7 @@ from modules.video.sync_engine import VideoSynchronizationEngine
 from modules.voice.elevenlabs import ElevenLabsProvider
 from modules.voice.engine import VoiceEngine
 from modules.voice.models import VoiceGenerationResult
-from modules.voice.smallest_ai import (
-    SMALLEST_LIGHTNING_MODELS,
-    SmallestAIProvider,
-)
+from modules.voice.smallest_ai import SmallestAIProvider
 
 
 def main() -> int:
@@ -36,7 +33,7 @@ def main() -> int:
     config = ProductionConfig.model_validate_json(config_file.read_text(encoding="utf-8"))
     provider_name = os.environ.get(
         "RITZZ_TTS_PROVIDER",
-        "smallest",
+        "smallestai",
     ).strip().lower()
     if provider_name == "elevenlabs":
         voice_id = os.environ.get("RITZZ_VOICE_ID")
@@ -44,31 +41,13 @@ def main() -> int:
             raise RuntimeError("RITZZ_VOICE_ID is not configured.")
         provider = ElevenLabsProvider()
         model_id = "eleven_v4_turbo"
-    elif provider_name == "smallest":
-        voice_id = os.environ.get(
-            "SMALLEST_VOICE_ID",
-            "voice_CNOBFXW1SC",
-        ).strip()
-        if not voice_id:
-            raise RuntimeError("SMALLEST_VOICE_ID is not configured.")
-        selected_model = os.environ.get(
-            "SMALLEST_MODEL",
-            "lightning_v3.1_pro",
-        ).strip()
-        if selected_model == "lightning_v3.1":
-            model_id = "lightning_v3.1"
-        elif selected_model == "lightning_v3.1_pro":
-            model_id = "lightning_v3.1_pro"
-        else:
-            supported = ", ".join(sorted(SMALLEST_LIGHTNING_MODELS))
-            raise RuntimeError(
-                f"SMALLEST_MODEL must be one of: {supported}."
-            )
-        config.voice_speed = 1.0
-        provider = SmallestAIProvider()
+    elif provider_name == "smallestai":
+        voice_id = config.smallest_voice_id
+        model_id = config.smallest_model
+        provider = SmallestAIProvider(language=config.smallest_language)
     else:
         raise ValueError(
-            "RITZZ_TTS_PROVIDER must be either smallest or elevenlabs."
+            "RITZZ_TTS_PROVIDER must be either smallestai or elevenlabs."
         )
 
     engine = VoiceEngine(provider)
