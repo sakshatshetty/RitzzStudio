@@ -16,27 +16,9 @@ on:
         required: true
         type: choice
         options:
-          - smallest
+          - smallestai
           - elevenlabs
-        default: smallest
-      smallest_model:
-        description: Smallest.ai Lightning model for narration and voice-clone compatibility
-        required: true
-        type: choice
-        options:
-          - lightning_v3.1_pro
-          - lightning_v3.1
-        default: lightning_v3.1_pro
-      smallest_voice_id:
-        description: Smallest.ai voice ID used for narration
-        required: true
-        type: string
-        default: voice_CNOBFXW1SC
-      smallest_language:
-        description: Language code matching the selected Smallest.ai voice
-        required: true
-        type: string
-        default: en
+        default: smallestai
       youtube_channel:
         description: YouTube channel that will receive the private upload
         required: true
@@ -93,10 +75,7 @@ jobs:
     env:
       ELEVENLABS_API_KEY: ${{ inputs.narration_provider == 'elevenlabs' && secrets.ELEVENLABS_API_KEY || '' }}
       RITZZ_VOICE_ID: ${{ inputs.narration_provider == 'elevenlabs' && secrets.RITZZ_VOICE_ID || '' }}
-      SMALLEST_API_KEY: ${{ inputs.narration_provider == 'smallest' && secrets.smallestai_api_key || '' }}
-      SMALLEST_VOICE_ID: ${{ inputs.smallest_voice_id }}
-      SMALLEST_MODEL: ${{ inputs.smallest_model }}
-      SMALLEST_LANGUAGE: ${{ inputs.smallest_language }}
+      SMALLEST_API_KEY: ${{ inputs.narration_provider == 'smallestai' && secrets.smallestai_api_key || '' }}
       RITZZ_TTS_PROVIDER: ${{ inputs.narration_provider }}
       GOOGLE_CLIENT_SECRETS_B64: ${{ secrets.GOOGLE_CLIENT_SECRETS_B64 }}
       GOOGLE_TOKEN_B64: ${{ inputs.youtube_channel == 'Ritzz-Explains' && secrets.GOOGLE_TOKEN_B64 || inputs.youtube_channel == 'RitzzHistory' && secrets.GOOGLE_TOKEN_RITZZ_HISTORY_B64 || inputs.youtube_channel == 'RitzzTech1' && secrets.GOOGLE_TOKEN_RITZZ_TECH_B64 || '' }}
@@ -182,10 +161,7 @@ jobs:
     env:
       ELEVENLABS_API_KEY: ${{ inputs.narration_provider == 'elevenlabs' && secrets.ELEVENLABS_API_KEY || '' }}
       RITZZ_VOICE_ID: ${{ inputs.narration_provider == 'elevenlabs' && secrets.RITZZ_VOICE_ID || '' }}
-      SMALLEST_API_KEY: ${{ inputs.narration_provider == 'smallest' && secrets.smallestai_api_key || '' }}
-      SMALLEST_VOICE_ID: ${{ inputs.smallest_voice_id }}
-      SMALLEST_MODEL: ${{ inputs.smallest_model }}
-      SMALLEST_LANGUAGE: ${{ inputs.smallest_language }}
+      SMALLEST_API_KEY: ${{ inputs.narration_provider == 'smallestai' && secrets.smallestai_api_key || '' }}
       RITZZ_TTS_PROVIDER: ${{ inputs.narration_provider }}
     steps:
       - name: Check out repository
@@ -216,7 +192,7 @@ jobs:
         uses: ./.github/actions/setup-ffmpeg
 
       - name: Install WhisperX for Smallest.ai narration alignment
-        if: ${{ inputs.narration_provider == 'smallest' && (inputs.mode == 'NEW' || inputs.rerun_from_stage != 'FINAL_PACKAGE') }}
+        if: ${{ inputs.narration_provider == 'smallestai' && (inputs.mode == 'NEW' || inputs.rerun_from_stage != 'FINAL_PACKAGE') }}
         run: |
           set -euo pipefail
           python -m venv "$RUNNER_TEMP/whisperx-env"

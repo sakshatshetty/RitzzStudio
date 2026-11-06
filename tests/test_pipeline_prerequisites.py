@@ -66,14 +66,16 @@ def test_smallest_preflight_rejects_missing_api_key(monkeypatch):
     with pytest.raises(ValueError, match="SMALLEST_API_KEY"):
         validate_prerequisites(
             creative_package=True,
-            tts_provider="smallest",
+            tts_provider="smallestai",
         )
 
 
-def test_smallest_preflight_does_not_require_clone_voice_id(monkeypatch):
+def test_smallestai_preflight_only_needs_api_key_not_audio_settings(monkeypatch):
     _set_valid_environment(monkeypatch)
     monkeypatch.delenv("SMALLEST_VOICE_ID", raising=False)
-    result = validate_prerequisites(creative_package=True, tts_provider="smallest")
+    monkeypatch.delenv("SMALLEST_MODEL", raising=False)
+    monkeypatch.delenv("SMALLEST_LANGUAGE", raising=False)
+    result = validate_prerequisites(creative_package=True, tts_provider="smallestai")
     assert result["smallest_api_key"] == "configured"
 
 
@@ -84,9 +86,15 @@ def test_v2_workflow_defaults_to_smallest_ai_and_preserves_original_workflow():
 
     assert "name: RITZZ Creative Package Production_V2" in workflow
     assert "narration_provider:" in workflow
-    assert "default: smallest" in workflow
+    assert "default: smallestai" in workflow
+    assert "          - smallestai\n          - elevenlabs" in workflow
     assert "secrets.smallestai_api_key" in workflow
-    assert "default: voice_CNOBFXW1SC" in workflow
+    assert "smallest_model:" not in workflow
+    assert "smallest_voice_id:" not in workflow
+    assert "smallest_language:" not in workflow
+    assert "SMALLEST_MODEL:" not in workflow
+    assert "SMALLEST_VOICE_ID:" not in workflow
+    assert "SMALLEST_LANGUAGE:" not in workflow
     assert "GOOGLE_TTS_SERVICE_ACCOUNT_B64" not in workflow
     assert "REMONA_API_KEY" not in workflow
     assert "chatterbox" not in workflow.casefold()

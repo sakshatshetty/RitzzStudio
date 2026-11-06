@@ -62,12 +62,22 @@ def _prepare_project(tmp_path: Path) -> Path:
     return project_directory
 
 
-def test_smallest_selection_uses_selected_voice_and_model(
+def test_smallestai_selection_uses_project_voice_model_language_and_speed(
     tmp_path,
     monkeypatch,
 ):
     project_directory = _prepare_project(tmp_path)
+    (project_directory / "production_config.json").write_text(
+        ProductionConfig(
+            smallest_model="lightning_v3.1",
+            smallest_voice_id="voice_from_project_config",
+            smallest_language="hi",
+            voice_speed=1.0,
+        ).model_dump_json(),
+        encoding="utf-8",
+    )
     provider = object()
+    provider_kwargs = {}
 
     monkeypatch.setattr(
         run_voice_stage,
@@ -78,13 +88,14 @@ def test_smallest_selection_uses_selected_voice_and_model(
     monkeypatch.setattr(
         run_voice_stage,
         "SmallestAIProvider",
-        lambda **_kwargs: provider,
+        lambda **kwargs: provider_kwargs.update(kwargs) or provider,
     )
     monkeypatch.setenv("RITZZ_PROJECT_ID", "test-project")
-    monkeypatch.setenv("RITZZ_TTS_PROVIDER", "smallest")
+    monkeypatch.setenv("RITZZ_TTS_PROVIDER", "smallestai")
     monkeypatch.setenv("SMALLEST_API_KEY", "test-api-key")
-    monkeypatch.setenv("SMALLEST_VOICE_ID", "voice_custom")
-    monkeypatch.setenv("SMALLEST_MODEL", "lightning_v3.1_pro")
+    monkeypatch.setenv("SMALLEST_VOICE_ID", "must_not_override_config")
+    monkeypatch.setenv("SMALLEST_MODEL", "must_not_override_config")
+    monkeypatch.setenv("SMALLEST_LANGUAGE", "must_not_override_config")
     monkeypatch.delenv("RITZZ_RESUME", raising=False)
     _FakeVoiceEngine.instances.clear()
 
@@ -96,8 +107,12 @@ def test_smallest_selection_uses_selected_voice_and_model(
             encoding="utf-8"
         )
     )
-    assert result["voice_id"] == "voice_custom"
-    assert result["model_id"] == "lightning_v3.1_pro"
+    assert result["voice_id"] == "voice_from_project_config"
+    assert result["model_id"] == "lightning_v3.1"
+    assert provider_kwargs == {"language": "hi"}
+    assert _FakeVoiceEngine.instances[0].create_voice_kwargs[
+        "production_config"
+    ].voice_speed == 1.0
 
 
 def test_smallest_api_key_is_not_saved_in_voice_metadata(
@@ -111,9 +126,8 @@ def test_smallest_api_key_is_not_saved_in_voice_metadata(
         lambda _path: _FakeProjectManager(_path, project_directory),
     )
     monkeypatch.setenv("RITZZ_PROJECT_ID", "test-project")
-    monkeypatch.setenv("RITZZ_TTS_PROVIDER", "smallest")
+    monkeypatch.setenv("RITZZ_TTS_PROVIDER", "smallestai")
     monkeypatch.setenv("SMALLEST_API_KEY", "sensitive-api-key")
-    monkeypatch.setenv("SMALLEST_VOICE_ID", "voice_custom")
     monkeypatch.delenv("RITZZ_RESUME", raising=False)
     _FakeVoiceEngine.instances.clear()
 
@@ -130,7 +144,7 @@ def test_smallest_api_key_is_not_saved_in_voice_metadata(
         project_directory / "voice" / "narration_result.json"
     ).read_text(encoding="utf-8")
     result = json.loads(result_text)
-    assert result["voice_id"] == "voice_custom"
+    assert result["voice_id"] == "voice_CNOBFXW1SC"
     assert "sensitive-api-key" not in result_text
 
 
@@ -168,10 +182,10 @@ def test_explicit_elevenlabs_selection_preserves_existing_voice(
     assert result["model_id"] == "eleven_v4_turbo"
 
 
-def test_default_provider_is_smallest(tmp_path, monkeypatch):
+def test_default_provider_is_smallestai(tmp_path, monkeypatch):
     project_directory = _prepare_project(tmp_path)
     (project_directory / "production_config.json").write_text(
-        ProductionConfig(voice_speed=0.85).model_dump_json(),
+        ProductionConfig().model_dump_json(),
         encoding="utf-8",
     )
     provider = object()
@@ -188,7 +202,6 @@ def test_default_provider_is_smallest(tmp_path, monkeypatch):
     )
     monkeypatch.setenv("RITZZ_PROJECT_ID", "test-project")
     monkeypatch.setenv("SMALLEST_API_KEY", "test-api-key")
-    monkeypatch.setenv("SMALLEST_VOICE_ID", "voice_CNOBFXW1SC")
     monkeypatch.delenv("RITZZ_TTS_PROVIDER", raising=False)
     monkeypatch.delenv("RITZZ_RESUME", raising=False)
     _FakeVoiceEngine.instances.clear()

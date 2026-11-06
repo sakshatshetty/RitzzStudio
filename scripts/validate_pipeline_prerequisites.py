@@ -43,15 +43,15 @@ def validate_prerequisites(
     creative_package: bool = False,
     youtube_upload: bool = False,
     image_model: str | None = None,
-    tts_provider: str = "smallest",
+    tts_provider: str = "smallestai",
 ) -> dict[str, str]:
     if creative_package and youtube_upload:
         raise ValueError(
             "Creative-package and YouTube-upload validation modes are mutually exclusive."
         )
-    if tts_provider not in {"smallest", "elevenlabs"}:
+    if tts_provider not in {"smallestai", "elevenlabs"}:
         raise ValueError(
-            "Unsupported narration provider; choose smallest or elevenlabs."
+            "Unsupported narration provider; choose smallestai or elevenlabs."
         )
     if youtube_upload:
         required_variables = (
@@ -103,7 +103,7 @@ def validate_prerequisites(
         "oauth_token_json": "valid",
         "api_calls_made": "none",
     }
-    if creative_package and tts_provider == "smallest":
+    if creative_package and tts_provider == "smallestai":
         result["smallest_api_key"] = "configured"
     return result
 
@@ -127,8 +127,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--tts-provider",
-        choices=("smallest", "elevenlabs"),
-        default="smallest",
+        choices=("smallestai", "elevenlabs"),
+        default="smallestai",
         help="Validate credentials for the selected narration provider.",
     )
     arguments = parser.parse_args()
