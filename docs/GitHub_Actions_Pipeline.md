@@ -119,23 +119,44 @@ coverage, uses static stills and hard cuts, then renders and runs technical
 video QA. A technical failure blocks approval. The rendered video is the human
 check for image/narration relevance and image quality.
 
-The separate **RITZZ Creative Package Production_V2** workflow provides a
-`narration_provider` selector, defaulting to Remona. Choose `remona` to use
-Remona's `eleven_multilingual_v2` endpoint, or `elevenlabs` to use the existing
-RITZZ ElevenLabs voice. Remona's documented endpoint requires a provider preset
-voice; the current workflow defaults to `Maya`. This preset is **not** the saved
-RITZZ voice. Use `elevenlabs` when the existing cloned voice must be preserved.
+The separate **RITZZ Creative Package Production_V2** workflow defaults to
+Smallest.ai (`smallest`) and provides `elevenlabs` as an alternative. Smallest
+uses Lightning v3.1 Pro by default with voice ID `voice_CNOBFXW1SC` at speed
+1.0. The
+`smallest_model`, `smallest_voice_id`, and `smallest_language` dispatch inputs
+can select a different supported pool, voice, or language. If the optional
+inputs are changed at dispatch, they override those defaults. The provider
+sends text in chunks of at most 250 characters
+(Smallest recommends about 250 characters per request), joins returned WAV
+audio, converts it to the pipeline MP3 format, and runs WhisperX forced
+alignment before storyboard timing. Preflight and tests do not call the paid
+synthesis API.
 
-Remona returns an asynchronous task and an audio URL. V2 polls that task,
-downloads and converts the audio, then uses WhisperX forced alignment before
-storyboard timing. Configure the `REMONA_API_KEY` Actions secret for Remona
-runs, and ensure the Remona account has paid API access through an active Coder
-package or topped-up credits. Without either, the speech request returns HTTP
-402 before a narration task is created. The workflow does not install or run
-the Chatterbox model.
+To enable Smallest.ai in Actions, create an API key in the Smallest.ai console
+and save it as the `smallestai_api_key` Actions secret. The workflow maps it
+to `SMALLEST_API_KEY` for the provider. This is separate from the Google OAuth
+credentials used for YouTube.
 
-The `0.92` speed is a configurable production default calibrated against
-measured narration pacing. The configured duration remains a script-planning
+Smallest.ai supports instant voice cloning through its dashboard or
+`POST /waves/v1/voice-cloning`. Its current API accepts a clean 5–15 second
+sample under 5 MB in MP3, WAV, MP4, or WebM. Only clone a voice you own or have
+permission to use. Create the clone on the Lightning v3.1 Pro pool to use it
+with the default `lightning_v3.1_pro` synthesis model, then enter its returned
+`voiceId` in the `smallest_voice_id` workflow input. The voice ID is used for
+narration and is recorded in project metadata; the API key is not. Check the
+clone's compatible `modelIds` if you choose a different Smallest model.
+Smallest documents the process in its
+[Instant Voice Clone guide](https://docs.smallest.ai/models/voice-cloning/instant-clone-api)
+and the
+[Lightning TTS quickstart](https://docs.smallest.ai/models/text-to-speech/quickstart).
+
+Smallest's synchronous TTS response does not provide character-level timing.
+V2 installs WhisperX for Smallest narration and aligns the completed audio to
+the supplied script before scene timing. Use `elevenlabs` if the existing
+RITZZ ElevenLabs voice is preferred.
+
+The original ElevenLabs workflow uses its calibrated `0.92` speed. V2 uses
+Smallest.ai speed `1.0`. The configured duration remains a script-planning
 target, not a hard minimum for generated audio. Narration must have a positive,
 finite measured duration and valid character alignment; scene timing uses its
 actual timestamps, so shorter narration can produce a shorter video. Audio is
@@ -344,10 +365,10 @@ provider and shared secrets:
 - `GOOGLE_TOKEN_RITZZ_TECH_B64` for `RitzzTech1` (`@RitzzTech1`)
 
 The V2 workflow uses the same Google OAuth secrets. Its selected narration
-provider determines which additional secret is required:
+provider determines which additional secrets are required:
 
-- `remona` (the default): `REMONA_API_KEY`; the workflow's default voice is
-  Remona's `Maya` preset, not the existing RITZZ clone.
+- `smallest` (the default): `smallestai_api_key` (mapped to
+  `SMALLEST_API_KEY` in the runner).
 - `elevenlabs`: `ELEVENLABS_API_KEY` and `RITZZ_VOICE_ID`
 
 Create a separate OAuth token for each channel by authorizing the YouTube API

@@ -16,7 +16,10 @@ from modules.video.sync_engine import VideoSynchronizationEngine
 from modules.voice.elevenlabs import ElevenLabsProvider
 from modules.voice.engine import VoiceEngine
 from modules.voice.models import VoiceGenerationResult
-from modules.voice.remona import RemonaProvider
+from modules.voice.smallest_ai import (
+    SMALLEST_LIGHTNING_MODELS,
+    SmallestAIProvider,
+)
 
 
 def main() -> int:
@@ -31,23 +34,41 @@ def main() -> int:
         raise FileNotFoundError("Approved project script or production configuration is missing.")
 
     config = ProductionConfig.model_validate_json(config_file.read_text(encoding="utf-8"))
-    provider_name = os.environ.get("RITZZ_TTS_PROVIDER", "remona").strip().lower()
+    provider_name = os.environ.get(
+        "RITZZ_TTS_PROVIDER",
+        "smallest",
+    ).strip().lower()
     if provider_name == "elevenlabs":
         voice_id = os.environ.get("RITZZ_VOICE_ID")
         if not voice_id:
             raise RuntimeError("RITZZ_VOICE_ID is not configured.")
         provider = ElevenLabsProvider()
         model_id = "eleven_v4_turbo"
-    elif provider_name == "remona":
-        preset = os.environ.get("REMONA_VOICE_PRESET", "").strip()
-        if not preset:
-            raise RuntimeError("REMONA_VOICE_PRESET is not configured.")
-        provider = RemonaProvider(voice_preset=preset)
-        voice_id = f"remona-preset:{preset}"
-        model_id = "eleven_multilingual_v2"
+    elif provider_name == "smallest":
+        voice_id = os.environ.get(
+            "SMALLEST_VOICE_ID",
+            "voice_CNOBFXW1SC",
+        ).strip()
+        if not voice_id:
+            raise RuntimeError("SMALLEST_VOICE_ID is not configured.")
+        selected_model = os.environ.get(
+            "SMALLEST_MODEL",
+            "lightning_v3.1_pro",
+        ).strip()
+        if selected_model == "lightning_v3.1":
+            model_id = "lightning_v3.1"
+        elif selected_model == "lightning_v3.1_pro":
+            model_id = "lightning_v3.1_pro"
+        else:
+            supported = ", ".join(sorted(SMALLEST_LIGHTNING_MODELS))
+            raise RuntimeError(
+                f"SMALLEST_MODEL must be one of: {supported}."
+            )
+        config.voice_speed = 1.0
+        provider = SmallestAIProvider()
     else:
         raise ValueError(
-            "RITZZ_TTS_PROVIDER must be either remona or elevenlabs."
+            "RITZZ_TTS_PROVIDER must be either smallest or elevenlabs."
         )
 
     engine = VoiceEngine(provider)

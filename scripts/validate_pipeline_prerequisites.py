@@ -43,15 +43,15 @@ def validate_prerequisites(
     creative_package: bool = False,
     youtube_upload: bool = False,
     image_model: str | None = None,
-    tts_provider: str = "elevenlabs",
+    tts_provider: str = "smallest",
 ) -> dict[str, str]:
     if creative_package and youtube_upload:
         raise ValueError(
             "Creative-package and YouTube-upload validation modes are mutually exclusive."
         )
-    if tts_provider not in {"elevenlabs", "remona"}:
+    if tts_provider not in {"smallest", "elevenlabs"}:
         raise ValueError(
-            "Unsupported narration provider; choose remona or elevenlabs."
+            "Unsupported narration provider; choose smallest or elevenlabs."
         )
     if youtube_upload:
         required_variables = (
@@ -62,7 +62,7 @@ def validate_prerequisites(
         provider_variables = (
             ("ELEVENLABS_API_KEY", "RITZZ_VOICE_ID")
             if tts_provider == "elevenlabs"
-            else ("REMONA_API_KEY", "REMONA_VOICE_PRESET")
+            else ("SMALLEST_API_KEY",)
         )
         required_variables = (
             *provider_variables,
@@ -97,12 +97,15 @@ def validate_prerequisites(
     if not token_payload.get("refresh_token") and not token_payload.get("token"):
         raise ValueError("GOOGLE_TOKEN_B64 does not contain an OAuth token.")
 
-    return {
+    result = {
         "required_secrets": str(len(required_variables)),
         "oauth_client_json": "valid",
         "oauth_token_json": "valid",
         "api_calls_made": "none",
     }
+    if creative_package and tts_provider == "smallest":
+        result["smallest_api_key"] = "configured"
+    return result
 
 
 def main() -> int:
@@ -124,8 +127,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--tts-provider",
-        choices=("remona", "elevenlabs"),
-        default="remona",
+        choices=("smallest", "elevenlabs"),
+        default="smallest",
         help="Validate credentials for the selected narration provider.",
     )
     arguments = parser.parse_args()

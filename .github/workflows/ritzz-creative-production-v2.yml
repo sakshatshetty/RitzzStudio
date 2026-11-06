@@ -16,14 +16,27 @@ on:
         required: true
         type: choice
         options:
-          - remona
+          - smallest
           - elevenlabs
-        default: remona
-      remona_voice_preset:
-        description: Remona preset voice for this test (Maya is not the saved RITZZ voice)
+        default: smallest
+      smallest_model:
+        description: Smallest.ai Lightning model for narration and voice-clone compatibility
+        required: true
+        type: choice
+        options:
+          - lightning_v3.1_pro
+          - lightning_v3.1
+        default: lightning_v3.1_pro
+      smallest_voice_id:
+        description: Smallest.ai voice ID used for narration
         required: true
         type: string
-        default: Maya
+        default: voice_CNOBFXW1SC
+      smallest_language:
+        description: Language code matching the selected Smallest.ai voice
+        required: true
+        type: string
+        default: en
       youtube_channel:
         description: YouTube channel that will receive the private upload
         required: true
@@ -80,8 +93,10 @@ jobs:
     env:
       ELEVENLABS_API_KEY: ${{ inputs.narration_provider == 'elevenlabs' && secrets.ELEVENLABS_API_KEY || '' }}
       RITZZ_VOICE_ID: ${{ inputs.narration_provider == 'elevenlabs' && secrets.RITZZ_VOICE_ID || '' }}
-      REMONA_API_KEY: ${{ inputs.narration_provider == 'remona' && secrets.REMONA_API_KEY || '' }}
-      REMONA_VOICE_PRESET: ${{ inputs.narration_provider == 'remona' && inputs.remona_voice_preset || '' }}
+      SMALLEST_API_KEY: ${{ inputs.narration_provider == 'smallest' && secrets.smallestai_api_key || '' }}
+      SMALLEST_VOICE_ID: ${{ inputs.smallest_voice_id }}
+      SMALLEST_MODEL: ${{ inputs.smallest_model }}
+      SMALLEST_LANGUAGE: ${{ inputs.smallest_language }}
       RITZZ_TTS_PROVIDER: ${{ inputs.narration_provider }}
       GOOGLE_CLIENT_SECRETS_B64: ${{ secrets.GOOGLE_CLIENT_SECRETS_B64 }}
       GOOGLE_TOKEN_B64: ${{ inputs.youtube_channel == 'Ritzz-Explains' && secrets.GOOGLE_TOKEN_B64 || inputs.youtube_channel == 'RitzzHistory' && secrets.GOOGLE_TOKEN_RITZZ_HISTORY_B64 || inputs.youtube_channel == 'RitzzTech1' && secrets.GOOGLE_TOKEN_RITZZ_TECH_B64 || '' }}
@@ -153,7 +168,7 @@ jobs:
           tests/test_private_upload_quality.py
           tests/test_publishing_engine.py
           tests/test_pipeline_prerequisites.py
-          tests/test_remona_provider.py
+          tests/test_smallest_ai_provider.py
           tests/test_run_voice_stage.py
           -q
 
@@ -167,8 +182,10 @@ jobs:
     env:
       ELEVENLABS_API_KEY: ${{ inputs.narration_provider == 'elevenlabs' && secrets.ELEVENLABS_API_KEY || '' }}
       RITZZ_VOICE_ID: ${{ inputs.narration_provider == 'elevenlabs' && secrets.RITZZ_VOICE_ID || '' }}
-      REMONA_API_KEY: ${{ inputs.narration_provider == 'remona' && secrets.REMONA_API_KEY || '' }}
-      REMONA_VOICE_PRESET: ${{ inputs.narration_provider == 'remona' && inputs.remona_voice_preset || '' }}
+      SMALLEST_API_KEY: ${{ inputs.narration_provider == 'smallest' && secrets.smallestai_api_key || '' }}
+      SMALLEST_VOICE_ID: ${{ inputs.smallest_voice_id }}
+      SMALLEST_MODEL: ${{ inputs.smallest_model }}
+      SMALLEST_LANGUAGE: ${{ inputs.smallest_language }}
       RITZZ_TTS_PROVIDER: ${{ inputs.narration_provider }}
     steps:
       - name: Check out repository
@@ -198,8 +215,8 @@ jobs:
       - name: Set up FFmpeg and FFprobe
         uses: ./.github/actions/setup-ffmpeg
 
-      - name: Install WhisperX for Remona narration alignment
-        if: ${{ inputs.narration_provider == 'remona' && (inputs.mode == 'NEW' || inputs.rerun_from_stage != 'FINAL_PACKAGE') }}
+      - name: Install WhisperX for Smallest.ai narration alignment
+        if: ${{ inputs.narration_provider == 'smallest' && (inputs.mode == 'NEW' || inputs.rerun_from_stage != 'FINAL_PACKAGE') }}
         run: |
           set -euo pipefail
           python -m venv "$RUNNER_TEMP/whisperx-env"
@@ -297,7 +314,6 @@ jobs:
           RITZZ_RESUME: ${{ inputs.mode == 'RESUME' && inputs.rerun_from_stage != 'NARRATION' && 'true' || 'false' }}
           RITZZ_RERUN_FROM_STAGE: ${{ inputs.mode == 'RESUME' && inputs.rerun_from_stage || 'CONTINUE' }}
           RITZZ_TTS_PROVIDER: ${{ inputs.narration_provider }}
-          REMONA_VOICE_PRESET: ${{ inputs.narration_provider == 'remona' && inputs.remona_voice_preset || '' }}
           RITZZ_WHISPERX_PYTHON: ${{ runner.temp }}/whisperx-env/bin/python
         run: python scripts/run_voice_stage.py
 

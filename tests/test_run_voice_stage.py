@@ -26,6 +26,7 @@ class _FakeVoiceEngine:
         self.instances.append(self)
 
     def create_voice(self, **kwargs):
+        self.create_voice_kwargs = kwargs
         output_path = Path(kwargs["output_directory"]) / "narration.mp3"
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(b"fake narration")
@@ -61,7 +62,7 @@ def _prepare_project(tmp_path: Path) -> Path:
     return project_directory
 
 
-def test_remona_selection_uses_configured_preset_and_multilingual_model(
+def test_smallest_selection_uses_selected_voice_and_model(
     tmp_path,
     monkeypatch,
 ):
@@ -74,10 +75,16 @@ def test_remona_selection_uses_configured_preset_and_multilingual_model(
         lambda _path: _FakeProjectManager(_path, project_directory),
     )
     monkeypatch.setattr(run_voice_stage, "VoiceEngine", _FakeVoiceEngine)
-    monkeypatch.setattr(run_voice_stage, "RemonaProvider", lambda **_kwargs: provider)
+    monkeypatch.setattr(
+        run_voice_stage,
+        "SmallestAIProvider",
+        lambda **_kwargs: provider,
+    )
     monkeypatch.setenv("RITZZ_PROJECT_ID", "test-project")
-    monkeypatch.setenv("RITZZ_TTS_PROVIDER", "remona")
-    monkeypatch.setenv("REMONA_VOICE_PRESET", "Maya")
+    monkeypatch.setenv("RITZZ_TTS_PROVIDER", "smallest")
+    monkeypatch.setenv("SMALLEST_API_KEY", "test-api-key")
+    monkeypatch.setenv("SMALLEST_VOICE_ID", "voice_custom")
+    monkeypatch.setenv("SMALLEST_MODEL", "lightning_v3.1_pro")
     monkeypatch.delenv("RITZZ_RESUME", raising=False)
     _FakeVoiceEngine.instances.clear()
 
@@ -89,11 +96,11 @@ def test_remona_selection_uses_configured_preset_and_multilingual_model(
             encoding="utf-8"
         )
     )
-    assert result["voice_id"] == "remona-preset:Maya"
-    assert result["model_id"] == "eleven_multilingual_v2"
+    assert result["voice_id"] == "voice_custom"
+    assert result["model_id"] == "lightning_v3.1_pro"
 
 
-def test_missing_remona_preset_fails_before_model_generation(
+def test_smallest_api_key_is_not_saved_in_voice_metadata(
     tmp_path,
     monkeypatch,
 ):
@@ -104,16 +111,27 @@ def test_missing_remona_preset_fails_before_model_generation(
         lambda _path: _FakeProjectManager(_path, project_directory),
     )
     monkeypatch.setenv("RITZZ_PROJECT_ID", "test-project")
-    monkeypatch.setenv("RITZZ_TTS_PROVIDER", "remona")
-    monkeypatch.delenv("REMONA_VOICE_PRESET", raising=False)
+    monkeypatch.setenv("RITZZ_TTS_PROVIDER", "smallest")
+    monkeypatch.setenv("SMALLEST_API_KEY", "sensitive-api-key")
+    monkeypatch.setenv("SMALLEST_VOICE_ID", "voice_custom")
     monkeypatch.delenv("RITZZ_RESUME", raising=False)
+    _FakeVoiceEngine.instances.clear()
 
-    try:
-        run_voice_stage.main()
-    except RuntimeError as error:
-        assert "REMONA_VOICE_PRESET" in str(error)
-    else:
-        raise AssertionError("Missing Remona voice preset unexpectedly passed.")
+    monkeypatch.setattr(run_voice_stage, "VoiceEngine", _FakeVoiceEngine)
+    provider = object()
+    monkeypatch.setattr(
+        run_voice_stage,
+        "SmallestAIProvider",
+        lambda **_kwargs: provider,
+    )
+    assert run_voice_stage.main() == 0
+
+    result_text = (
+        project_directory / "voice" / "narration_result.json"
+    ).read_text(encoding="utf-8")
+    result = json.loads(result_text)
+    assert result["voice_id"] == "voice_custom"
+    assert "sensitive-api-key" not in result_text
 
 
 def test_explicit_elevenlabs_selection_preserves_existing_voice(
@@ -150,8 +168,12 @@ def test_explicit_elevenlabs_selection_preserves_existing_voice(
     assert result["model_id"] == "eleven_v4_turbo"
 
 
-def test_default_provider_is_remona(tmp_path, monkeypatch):
+def test_default_provider_is_smallest(tmp_path, monkeypatch):
     project_directory = _prepare_project(tmp_path)
+    (project_directory / "production_config.json").write_text(
+        ProductionConfig(voice_speed=0.85).model_dump_json(),
+        encoding="utf-8",
+    )
     provider = object()
     monkeypatch.setattr(
         run_voice_stage,
@@ -161,11 +183,12 @@ def test_default_provider_is_remona(tmp_path, monkeypatch):
     monkeypatch.setattr(run_voice_stage, "VoiceEngine", _FakeVoiceEngine)
     monkeypatch.setattr(
         run_voice_stage,
-        "RemonaProvider",
+        "SmallestAIProvider",
         lambda **_kwargs: provider,
     )
     monkeypatch.setenv("RITZZ_PROJECT_ID", "test-project")
-    monkeypatch.setenv("REMONA_VOICE_PRESET", "Maya")
+    monkeypatch.setenv("SMALLEST_API_KEY", "test-api-key")
+    monkeypatch.setenv("SMALLEST_VOICE_ID", "voice_CNOBFXW1SC")
     monkeypatch.delenv("RITZZ_TTS_PROVIDER", raising=False)
     monkeypatch.delenv("RITZZ_RESUME", raising=False)
     _FakeVoiceEngine.instances.clear()
@@ -178,5 +201,8 @@ def test_default_provider_is_remona(tmp_path, monkeypatch):
             encoding="utf-8"
         )
     )
-    assert result["voice_id"] == "remona-preset:Maya"
-    assert result["model_id"] == "eleven_multilingual_v2"
+    assert result["voice_id"] == "voice_CNOBFXW1SC"
+    assert result["model_id"] == "lightning_v3.1_pro"
+    assert _FakeVoiceEngine.instances[0].create_voice_kwargs[
+        "production_config"
+    ].voice_speed == 1.0
