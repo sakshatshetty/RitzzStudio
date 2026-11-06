@@ -26,6 +26,7 @@ class _FakeVoiceEngine:
         self.instances.append(self)
 
     def create_voice(self, **kwargs):
+        self.create_voice_kwargs = kwargs
         output_path = Path(kwargs["output_directory"]) / "narration.mp3"
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(b"fake narration")
@@ -61,19 +62,12 @@ def _prepare_project(tmp_path: Path) -> Path:
     return project_directory
 
 
-def test_chatterbox_selection_uses_conditionals_fingerprint_and_turbo_model(
+def test_smallest_selection_uses_selected_voice_and_model(
     tmp_path,
     monkeypatch,
 ):
     project_directory = _prepare_project(tmp_path)
-    conditionals_file = tmp_path / "voice-conditionals.pt"
-    conditionals_file.write_bytes(b"private saved voice conditionals")
-    provider_instances = []
-
-    class _FakeChatterboxProvider:
-        def __init__(self, *, conditionals_path):
-            self.conditionals_path = Path(conditionals_path)
-            provider_instances.append(self)
+    provider = object()
 
     monkeypatch.setattr(
         run_voice_stage,
@@ -82,31 +76,31 @@ def test_chatterbox_selection_uses_conditionals_fingerprint_and_turbo_model(
     )
     monkeypatch.setattr(run_voice_stage, "VoiceEngine", _FakeVoiceEngine)
     monkeypatch.setattr(
-        "modules.voice.chatterbox.ChatterboxTurboProvider",
-        _FakeChatterboxProvider,
+        run_voice_stage,
+        "SmallestAIProvider",
+        lambda **_kwargs: provider,
     )
     monkeypatch.setenv("RITZZ_PROJECT_ID", "test-project")
-    monkeypatch.setenv("RITZZ_TTS_PROVIDER", "chatterbox")
-    monkeypatch.setenv(
-        "CHATTERBOX_VOICE_CONDITIONALS_FILE",
-        str(conditionals_file),
-    )
+    monkeypatch.setenv("RITZZ_TTS_PROVIDER", "smallest")
+    monkeypatch.setenv("SMALLEST_API_KEY", "test-api-key")
+    monkeypatch.setenv("SMALLEST_VOICE_ID", "voice_custom")
+    monkeypatch.setenv("SMALLEST_MODEL", "lightning_v3.1_pro")
     monkeypatch.delenv("RITZZ_RESUME", raising=False)
     _FakeVoiceEngine.instances.clear()
 
     assert run_voice_stage.main() == 0
 
-    assert provider_instances[0].conditionals_path == conditionals_file.resolve()
+    assert _FakeVoiceEngine.instances[0].provider is provider
     result = json.loads(
         (project_directory / "voice" / "narration_result.json").read_text(
             encoding="utf-8"
         )
     )
-    assert result["voice_id"].startswith("chatterbox:")
-    assert result["model_id"] == "chatterbox_turbo"
+    assert result["voice_id"] == "voice_custom"
+    assert result["model_id"] == "lightning_v3.1_pro"
 
 
-def test_missing_chatterbox_conditionals_fail_before_model_generation(
+def test_smallest_api_key_is_not_saved_in_voice_metadata(
     tmp_path,
     monkeypatch,
 ):
@@ -117,22 +111,33 @@ def test_missing_chatterbox_conditionals_fail_before_model_generation(
         lambda _path: _FakeProjectManager(_path, project_directory),
     )
     monkeypatch.setenv("RITZZ_PROJECT_ID", "test-project")
-    monkeypatch.setenv("RITZZ_TTS_PROVIDER", "chatterbox")
-    monkeypatch.setenv(
-        "CHATTERBOX_VOICE_CONDITIONALS_FILE",
-        str(tmp_path / "missing-conditionals.pt"),
-    )
+    monkeypatch.setenv("RITZZ_TTS_PROVIDER", "smallest")
+    monkeypatch.setenv("SMALLEST_API_KEY", "sensitive-api-key")
+    monkeypatch.setenv("SMALLEST_VOICE_ID", "voice_custom")
     monkeypatch.delenv("RITZZ_RESUME", raising=False)
+    _FakeVoiceEngine.instances.clear()
 
-    try:
-        run_voice_stage.main()
-    except FileNotFoundError as error:
-        assert "CHATTERBOX_VOICE_CONDITIONALS_FILE" in str(error)
-    else:
-        raise AssertionError("Missing Chatterbox reference unexpectedly passed.")
+    monkeypatch.setattr(run_voice_stage, "VoiceEngine", _FakeVoiceEngine)
+    provider = object()
+    monkeypatch.setattr(
+        run_voice_stage,
+        "SmallestAIProvider",
+        lambda **_kwargs: provider,
+    )
+    assert run_voice_stage.main() == 0
+
+    result_text = (
+        project_directory / "voice" / "narration_result.json"
+    ).read_text(encoding="utf-8")
+    result = json.loads(result_text)
+    assert result["voice_id"] == "voice_custom"
+    assert "sensitive-api-key" not in result_text
 
 
-def test_default_provider_remains_elevenlabs(tmp_path, monkeypatch):
+def test_explicit_elevenlabs_selection_preserves_existing_voice(
+    tmp_path,
+    monkeypatch,
+):
     project_directory = _prepare_project(tmp_path)
     provider = object()
     monkeypatch.setattr(
@@ -148,7 +153,7 @@ def test_default_provider_remains_elevenlabs(tmp_path, monkeypatch):
     )
     monkeypatch.setenv("RITZZ_PROJECT_ID", "test-project")
     monkeypatch.setenv("RITZZ_VOICE_ID", "existing-voice")
-    monkeypatch.delenv("RITZZ_TTS_PROVIDER", raising=False)
+    monkeypatch.setenv("RITZZ_TTS_PROVIDER", "elevenlabs")
     monkeypatch.delenv("RITZZ_RESUME", raising=False)
     _FakeVoiceEngine.instances.clear()
 
@@ -161,3 +166,43 @@ def test_default_provider_remains_elevenlabs(tmp_path, monkeypatch):
         )
     )
     assert result["model_id"] == "eleven_v4_turbo"
+
+
+def test_default_provider_is_smallest(tmp_path, monkeypatch):
+    project_directory = _prepare_project(tmp_path)
+    (project_directory / "production_config.json").write_text(
+        ProductionConfig(voice_speed=0.85).model_dump_json(),
+        encoding="utf-8",
+    )
+    provider = object()
+    monkeypatch.setattr(
+        run_voice_stage,
+        "ProjectManager",
+        lambda _path: _FakeProjectManager(_path, project_directory),
+    )
+    monkeypatch.setattr(run_voice_stage, "VoiceEngine", _FakeVoiceEngine)
+    monkeypatch.setattr(
+        run_voice_stage,
+        "SmallestAIProvider",
+        lambda **_kwargs: provider,
+    )
+    monkeypatch.setenv("RITZZ_PROJECT_ID", "test-project")
+    monkeypatch.setenv("SMALLEST_API_KEY", "test-api-key")
+    monkeypatch.setenv("SMALLEST_VOICE_ID", "voice_CNOBFXW1SC")
+    monkeypatch.delenv("RITZZ_TTS_PROVIDER", raising=False)
+    monkeypatch.delenv("RITZZ_RESUME", raising=False)
+    _FakeVoiceEngine.instances.clear()
+
+    assert run_voice_stage.main() == 0
+
+    assert _FakeVoiceEngine.instances[0].provider is provider
+    result = json.loads(
+        (project_directory / "voice" / "narration_result.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert result["voice_id"] == "voice_CNOBFXW1SC"
+    assert result["model_id"] == "lightning_v3.1_pro"
+    assert _FakeVoiceEngine.instances[0].create_voice_kwargs[
+        "production_config"
+    ].voice_speed == 1.0

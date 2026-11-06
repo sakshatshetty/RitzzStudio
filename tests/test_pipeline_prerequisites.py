@@ -25,6 +25,7 @@ def _set_valid_environment(monkeypatch):
         "GOOGLE_TOKEN_B64",
         _encoded({"refresh_token": "refresh"}),
     )
+    monkeypatch.setenv("SMALLEST_API_KEY", "smallest-test-key")
 
 
 def test_validate_prerequisites_accepts_configured_secrets(monkeypatch):
@@ -37,7 +38,7 @@ def test_validate_prerequisites_accepts_configured_secrets(monkeypatch):
     assert result["api_calls_made"] == "none"
 
 
-def test_creative_package_preflight_only_requires_voice_and_youtube_credentials(
+def test_creative_package_preflight_requires_smallest_ai_and_youtube_credentials(
     monkeypatch,
 ):
     _set_valid_environment(monkeypatch)
@@ -46,65 +47,50 @@ def test_creative_package_preflight_only_requires_voice_and_youtube_credentials(
 
     result = validate_prerequisites(creative_package=True)
 
+    assert result["required_secrets"] == "3"
+    assert result["smallest_api_key"] == "configured"
+    assert result["api_calls_made"] == "none"
+
+
+def test_elevenlabs_preflight_remains_selectable(monkeypatch):
+    _set_valid_environment(monkeypatch)
+    result = validate_prerequisites(creative_package=True, tts_provider="elevenlabs")
     assert result["required_secrets"] == "4"
     assert result["api_calls_made"] == "none"
 
 
-def test_chatterbox_preflight_requires_saved_conditionals_instead_of_elevenlabs(
-    monkeypatch,
-    tmp_path,
-):
+def test_smallest_preflight_rejects_missing_api_key(monkeypatch):
     _set_valid_environment(monkeypatch)
-    monkeypatch.delenv("ELEVENLABS_API_KEY")
-    monkeypatch.delenv("RITZZ_VOICE_ID")
-    conditionals_file = tmp_path / "voice-conditionals.pt"
-    conditionals_file.write_bytes(b"saved conditionals")
-    monkeypatch.setenv("CHATTERBOX_VOICE_CONDITIONALS_FILE", str(conditionals_file))
+    monkeypatch.delenv("SMALLEST_API_KEY", raising=False)
 
-    result = validate_prerequisites(
-        creative_package=True,
-        tts_provider="chatterbox",
-    )
-
-    assert result["required_secrets"] == "2"
-    assert result["api_calls_made"] == "none"
-
-
-def test_chatterbox_preflight_rejects_missing_conditionals_file(monkeypatch):
-    _set_valid_environment(monkeypatch)
-    monkeypatch.setenv(
-        "CHATTERBOX_VOICE_CONDITIONALS_FILE",
-        "missing-conditionals.pt",
-    )
-
-    with pytest.raises(ValueError, match="CHATTERBOX_VOICE_CONDITIONALS_FILE"):
+    with pytest.raises(ValueError, match="SMALLEST_API_KEY"):
         validate_prerequisites(
             creative_package=True,
-            tts_provider="chatterbox",
+            tts_provider="smallest",
         )
 
 
-def test_chatterbox_preflight_requires_conditionals_file(monkeypatch):
+def test_smallest_preflight_does_not_require_clone_voice_id(monkeypatch):
     _set_valid_environment(monkeypatch)
-    monkeypatch.delenv("CHATTERBOX_VOICE_CONDITIONALS_FILE", raising=False)
-
-    with pytest.raises(ValueError, match="CHATTERBOX_VOICE_CONDITIONALS_FILE"):
-        validate_prerequisites(
-            creative_package=True,
-            tts_provider="chatterbox",
-        )
+    monkeypatch.delenv("SMALLEST_VOICE_ID", raising=False)
+    result = validate_prerequisites(creative_package=True, tts_provider="smallest")
+    assert result["smallest_api_key"] == "configured"
 
 
-def test_v2_workflow_defaults_to_chatterbox_and_preserves_original_workflow():
+def test_v2_workflow_defaults_to_smallest_ai_and_preserves_original_workflow():
     workflow = Path(
         ".github/workflows/ritzz-creative-production-v2.yml"
     ).read_text(encoding="utf-8")
 
     assert "name: RITZZ Creative Package Production_V2" in workflow
     assert "narration_provider:" in workflow
-    assert "default: chatterbox" in workflow
-    assert "ritzz-chatterbox-voice-v1" in workflow
-    assert "CHATTERBOX_VOICE_CONDITIONALS_FILE" in workflow
+    assert "default: smallest" in workflow
+    assert "secrets.smallestai_api_key" in workflow
+    assert "default: voice_CNOBFXW1SC" in workflow
+    assert "GOOGLE_TTS_SERVICE_ACCOUNT_B64" not in workflow
+    assert "REMONA_API_KEY" not in workflow
+    assert "chatterbox" not in workflow.casefold()
+    assert "tests/test_smallest_ai_provider.py" in workflow
     assert "requirements-whisperx.txt" in workflow
 
 
@@ -150,7 +136,7 @@ def test_flux_image_model_requires_replicate_token(monkeypatch):
         creative_package=True,
         image_model="FLUX_SCHNELL",
     )
-    assert result["required_secrets"] == "5"
+    assert result["required_secrets"] == "4"
 
 
 def test_gpt_image_model_does_not_require_replicate_token(monkeypatch):
@@ -162,7 +148,7 @@ def test_gpt_image_model_does_not_require_replicate_token(monkeypatch):
         image_model="GPT_IMAGE_2",
     )
 
-    assert result["required_secrets"] == "4"
+    assert result["required_secrets"] == "3"
 
 
 def test_validate_prerequisites_rejects_unknown_image_model(monkeypatch):

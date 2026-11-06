@@ -10,6 +10,8 @@ VoiceModel = Literal[
     "eleven_flash_v2_5",
     "eleven_v4_turbo",
     "chatterbox_turbo",
+    "lightning_v3.1",
+    "lightning_v3.1_pro",
 ]
 
 
