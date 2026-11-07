@@ -43,7 +43,7 @@ RESULT_FILE = (
 
 VOICE_ID_ENV = "RITZZ_VOICE_ID"
 
-MODEL_ID = "eleven_v4_turbo"
+MODEL_ID = "eleven_turbo_v2_5"
 
 
 def main() -> None:

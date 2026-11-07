@@ -215,7 +215,7 @@ def test_create_request():
 
     assert (
         request.model_id
-        == "eleven_v4_turbo"
+        == "eleven_turbo_v2_5"
     )
 
     assert (

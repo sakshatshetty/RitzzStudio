@@ -149,7 +149,7 @@ def test_generate_with_mocked_request(
         assert json["text"] == "Hello."
         assert (
             json["model_id"]
-            == "eleven_v4_turbo"
+            == "eleven_turbo_v2_5"
         )
         assert json["voice_settings"] == {
             "stability": 0.75,

@@ -79,7 +79,7 @@ class VoiceEngine:
         voice_id: str,
         output_directory: str | Path,
         output_filename: str = "narration.mp3",
-        model_id: VoiceModel = "eleven_v4_turbo",
+        model_id: VoiceModel = "eleven_turbo_v2_5",
         production_config: ProductionConfig | None = None,
     ) -> VoiceGenerationRequest:
         """Create a voice-generation request from a script."""
@@ -361,7 +361,7 @@ class VoiceEngine:
         voice_id: str,
         output_directory: str | Path,
         output_filename: str = "narration.mp3",
-        model_id: VoiceModel = "eleven_v4_turbo",
+        model_id: VoiceModel = "eleven_turbo_v2_5",
         production_config: ProductionConfig | None = None,
     ) -> VoiceGenerationResult:
         """Load a script, create a request, and generate narration."""
