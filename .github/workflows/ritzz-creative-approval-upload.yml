@@ -65,14 +65,16 @@ jobs:
           if ! jq -e \
             --arg repository "$GITHUB_REPOSITORY" \
             --arg production_workflow ".github/workflows/ritzz-creative-production.yml" \
+            --arg production_v2_workflow ".github/workflows/ritzz-creative-production-v2.yml" \
             --arg approval_workflow ".github/workflows/ritzz-creative-approval-upload.yml" \
             '.head_repository.full_name == $repository
              and .head_branch == "main"
              and (
-               (.path == $production_workflow and .event == "workflow_dispatch" and .conclusion == "success")
+               ((.path == $production_workflow or .path == $production_v2_workflow)
+                and .event == "workflow_dispatch" and .conclusion == "success")
                or (.path == $approval_workflow and (.conclusion == "success" or .conclusion == "failure"))
              )' <<< "$run_json" >/dev/null; then
-            echo "Source must be a successful main-branch production run or a prior upload run." >&2
+            echo "Source must be a successful main-branch creative production run or a prior upload run." >&2
             exit 1
           fi
 
