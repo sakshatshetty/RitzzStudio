@@ -92,7 +92,7 @@ def main() -> int:
         text = " ".join(selected_sentences)
     request = VoiceGenerationRequest(
         voice_id=voice_id,
-        model_id="eleven_v4_turbo",
+        model_id="eleven_turbo_v2_5",
         text=text,
         output_directory=str(OUTPUT_DIRECTORY.parent / args.take_name),
         output_filename=f"{args.take_name}.mp3",
