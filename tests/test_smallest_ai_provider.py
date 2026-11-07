@@ -106,7 +106,7 @@ def test_smallest_provider_synthesizes_wav_and_aligns(
         "voice_id": "meher",
         "model": "lightning_v3.1_pro",
         "sample_rate": 24000,
-        "speed": 1.0,
+        "speed": 0.92,
         "language": "en",
         "output_format": "wav",
     }

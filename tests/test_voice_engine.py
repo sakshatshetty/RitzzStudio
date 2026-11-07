@@ -233,7 +233,7 @@ def test_create_request():
         == "narration.mp3"
     )
     assert request.voice_settings.stability == 0.75
-    assert request.voice_settings.speed == pytest.approx(1.0)
+    assert request.voice_settings.speed == pytest.approx(0.92)
     assert request.minimum_duration_seconds is None
 
 

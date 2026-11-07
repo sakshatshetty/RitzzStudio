@@ -47,7 +47,7 @@ class VoiceSettings(BaseModel):
     similarity_boost: float = Field(default=0.75, ge=0, le=1)
     style: float = Field(default=0, ge=0, le=1)
     use_speaker_boost: bool = True
-    speed: float = Field(default=1.0, ge=0.7, le=1.2)
+    speed: float = Field(default=0.92, ge=0.7, le=1.2)
 
 
 class VoiceGenerationRequest(BaseModel):

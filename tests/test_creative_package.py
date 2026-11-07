@@ -517,7 +517,7 @@ def test_materializes_immutable_creative_assets_for_existing_engines(tmp_path):
     assert production_config["scene_minimum_duration_seconds"] == pytest.approx(0.0)
     assert production_config["scene_maximum_duration_seconds"] == pytest.approx(10.0)
     assert production_config["words_per_minute"] == 170
-    assert production_config["voice_speed"] == pytest.approx(1.0)
+    assert production_config["voice_speed"] == pytest.approx(0.92)
     assert (
         project_directory / "creative_input" / "script.txt"
     ).read_bytes() == files["script.txt"]

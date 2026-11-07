@@ -197,7 +197,7 @@ pilot passes its QA and human review requirements.
 
 Implemented for future narration requests:
 
-- ElevenLabs defaults: speed `1.0`, stability `0.90`, similarity `0.75`,
+- ElevenLabs defaults: speed `0.92`, stability `0.90`, similarity `0.75`,
   style exaggeration `0`, speaker boost enabled.
 - Script generation prompts request natural spoken punctuation. Script section
   endings are normalized before synthesis, and requests receive a final-stop
