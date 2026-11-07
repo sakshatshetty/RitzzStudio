@@ -218,4 +218,4 @@ def test_default_provider_is_smallestai(tmp_path, monkeypatch):
     assert result["model_id"] == "lightning_v3.1_pro"
     assert _FakeVoiceEngine.instances[0].create_voice_kwargs[
         "production_config"
-    ].voice_speed == 1.0
+    ].voice_speed == 0.92

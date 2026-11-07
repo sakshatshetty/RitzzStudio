@@ -123,7 +123,7 @@ The separate **RITZZ Creative Package Production_V2** workflow has one
 narration setting: select `smallestai` or `elevenlabs`. Smallest.ai audio
 settings are part of each project's `production_config.json`, not workflow
 inputs. The defaults are Lightning v3.1 Pro, voice ID `voice_CNOBFXW1SC`,
-language `en`, and speed `1.0`. Change `smallest_model`, `smallest_voice_id`,
+language `en`, and speed `0.92`. Change `smallest_model`, `smallest_voice_id`,
 `smallest_language`, or `voice_speed` in the project configuration as needed.
 Smallest's current API documents Lightning v3.1 and Lightning v3.1 Pro; it does
 not list Lightning 3.0, so the project config defaults to the supported v3.1
@@ -157,8 +157,8 @@ V2 installs WhisperX for Smallest narration and aligns the completed audio to
 the supplied script before scene timing. Use `elevenlabs` if the existing
 RITZZ ElevenLabs voice is preferred.
 
-The original ElevenLabs workflow uses its calibrated `0.92` speed. V2 uses
-Smallest.ai speed `1.0`. The configured duration remains a script-planning
+Both providers use the configured narration speed, which defaults to `0.92`.
+The configured duration remains a script-planning
 target, not a hard minimum for generated audio. Narration must have a positive,
 finite measured duration and valid character alignment; scene timing uses its
 actual timestamps, so shorter narration can produce a shorter video. Audio is
