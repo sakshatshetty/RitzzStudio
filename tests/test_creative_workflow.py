@@ -216,7 +216,10 @@ def test_private_upload_requires_owner_dispatch_and_explicit_review_approval():
     assert "default: false" in workflow
     assert "github.actor == github.repository_owner" in workflow
     assert "github.ref == 'refs/heads/main'" in workflow
-    assert '"$production_v2_workflow"' in workflow
+    assert (
+        '--arg production_v2_workflow '
+        '".github/workflows/ritzz-creative-production-v2.yml"'
+    ) in workflow
     assert ".path == $production_v2_workflow" in workflow
     assert "Source must be a successful main-branch creative production run" in workflow
     assert "RITZZ_HUMAN_APPROVED: \"true\"" in workflow
