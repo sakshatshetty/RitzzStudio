@@ -98,6 +98,10 @@ def test_v2_workflow_defaults_to_smallest_ai_and_preserves_original_workflow():
     assert "GOOGLE_TTS_SERVICE_ACCOUNT_B64" not in workflow
     assert "REMONA_API_KEY" not in workflow
     assert "chatterbox" not in workflow.casefold()
+    assert "name: Cache WhisperX alignment model" in workflow
+    assert "uses: actions/cache@v4" in workflow
+    assert "TORCH_HOME=$RUNNER_TEMP/torch-cache" in workflow
+    assert "tests/test_align_voice_chunks.py" in workflow
     assert "tests/test_smallest_ai_provider.py" in workflow
     assert "requirements-whisperx.txt" in workflow
 

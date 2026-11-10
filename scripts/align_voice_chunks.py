@@ -16,17 +16,27 @@ def align_chunks(input_file: Path, output_file: Path) -> None:
         raise ValueError("Alignment input must contain at least one audio chunk.")
 
     device = "cpu"
+    print("Loading WhisperX character-alignment model on CPU.", flush=True)
     model, metadata = whisperx.load_align_model(
         language_code="en",
         device=device,
     )
+    print(
+        f"WhisperX model loaded; aligning {len(chunks)} audio chunk(s).",
+        flush=True,
+    )
     aligned_chunks: list[dict[str, Any]] = []
-    for chunk in chunks:
+    for index, chunk in enumerate(chunks, start=1):
         audio_file = Path(chunk["audio_file"])
         if not audio_file.is_file():
             raise FileNotFoundError(
                 f"Audio chunk for forced alignment was not found: {audio_file}"
             )
+        print(
+            f"Aligning chunk {index}/{len(chunks)} "
+            f"({len(chunk['text'])} characters).",
+            flush=True,
+        )
         audio = whisperx.load_audio(str(audio_file))
         aligned = whisperx.align(
             [
@@ -53,6 +63,7 @@ def align_chunks(input_file: Path, output_file: Path) -> None:
                 "text": chunk["text"],
             }
         )
+        print(f"Aligned chunk {index}/{len(chunks)}.", flush=True)
 
     output_file.write_text(
         json.dumps({"chunks": aligned_chunks}, ensure_ascii=False),

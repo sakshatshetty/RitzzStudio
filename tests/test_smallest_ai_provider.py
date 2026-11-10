@@ -139,6 +139,71 @@ def test_smallest_provider_splits_long_text_into_recommended_chunks(
     )
 
 
+def test_smallest_provider_aligns_each_tts_chunk_with_its_audio(
+    tmp_path,
+    monkeypatch,
+):
+    text = "A complete sentence for narration. " * 18
+    expected_text_chunks = SmallestAIProvider._split_text(text)
+    requested_text: list[str] = []
+    captured_alignment: dict[str, object] = {}
+    monkeypatch.setenv("SMALLEST_API_KEY", "test-api-key")
+    provider = SmallestAIProvider()
+    monkeypatch.setattr(
+        "modules.voice.smallest_ai.requests.post",
+        lambda _url, *, json, **_kwargs: (
+            requested_text.append(json["text"]) or _FakeResponse()
+        ),
+    )
+
+    def fake_ffmpeg(command, *, cwd, check):
+        assert check is True
+        Path(command[-1]).write_bytes(b"fake-mp3")
+
+    monkeypatch.setattr("modules.voice.smallest_ai.subprocess.run", fake_ffmpeg)
+    total_duration = len(expected_text_chunks) * 2.5
+
+    def fake_probe(path):
+        return total_duration if Path(path).suffix == ".mp3" else 2.5
+
+    monkeypatch.setattr("modules.voice.smallest_ai.probe_audio_duration", fake_probe)
+
+    def capture_alignment(input_chunks, supplied_text, duration, _temporary_path):
+        captured_alignment["chunks"] = input_chunks
+        captured_alignment["text"] = supplied_text
+        captured_alignment["duration"] = duration
+        return VoiceAlignment(
+            characters=list(supplied_text),
+            character_start_times_seconds=[0.0] * len(supplied_text),
+            character_end_times_seconds=[0.1] * len(supplied_text),
+        )
+
+    monkeypatch.setattr(provider, "_align_audio", capture_alignment)
+    result = provider.generate(_request(tmp_path, text=text))
+
+    alignment_chunks = captured_alignment["chunks"]
+    assert requested_text == expected_text_chunks
+    assert captured_alignment["text"] == text
+    assert captured_alignment["duration"] == total_duration
+    assert len(alignment_chunks) == len(expected_text_chunks)
+    assert [chunk["text"] for chunk in alignment_chunks] == expected_text_chunks
+    assert [chunk["start_character"] for chunk in alignment_chunks] == [
+        sum(len(value) for value in expected_text_chunks[:index])
+        for index in range(len(expected_text_chunks))
+    ]
+    assert [chunk["end_character"] for chunk in alignment_chunks] == [
+        sum(len(value) for value in expected_text_chunks[: index + 1])
+        for index in range(len(expected_text_chunks))
+    ]
+    assert [chunk["audio_offset_seconds"] for chunk in alignment_chunks] == [
+        index * 2.5 for index in range(len(expected_text_chunks))
+    ]
+    assert [Path(chunk["audio_file"]).name for chunk in alignment_chunks] == [
+        f"part-{index:04d}.wav" for index in range(len(expected_text_chunks))
+    ]
+    assert result.status == "completed"
+
+
 def test_text_chunking_handles_long_tokens_and_preserves_input():
     text = "x" * (SmallestAIProvider.MAX_INPUT_CHARACTERS + 20)
 
