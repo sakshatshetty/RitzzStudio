@@ -18,7 +18,7 @@ def test_voice_generation_request():
     )
 
     assert request.voice_id == "test_voice"
-    assert request.model_id == "eleven_turbo_v2_5"
+    assert request.model_id == "eleven_v4_turbo"
     assert request.output_format == "mp3_44100_128"
     assert request.voice_settings.stability == 0.75
     assert request.voice_settings.similarity_boost == 0.75
