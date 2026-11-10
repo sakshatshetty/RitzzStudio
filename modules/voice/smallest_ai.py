@@ -76,7 +76,8 @@ class SmallestAIProvider:
         ) as temporary_directory:
             temporary_path = Path(temporary_directory)
             part_files: list[Path] = []
-            for index, text_chunk in enumerate(self._split_text(request.text)):
+            text_chunks = self._split_text(request.text)
+            for index, text_chunk in enumerate(text_chunks):
                 response = requests.post(
                     f"{self.BASE_URL}/tts",
                     headers={
@@ -143,8 +144,33 @@ class SmallestAIProvider:
                 raise ValueError(
                     "Smallest AI audio has a non-positive or invalid duration."
                 )
+            alignment_chunks: list[dict[str, Any]] = []
+            audio_offset = 0.0
+            character_offset = 0
+            for text_chunk, part_path in zip(
+                text_chunks,
+                part_files,
+                strict=True,
+            ):
+                chunk_duration = float(probe_audio_duration(part_path))
+                alignment_chunks.append(
+                    {
+                        "audio_file": str(part_path),
+                        "audio_offset_seconds": audio_offset,
+                        "duration_seconds": chunk_duration,
+                        "end_character": character_offset + len(text_chunk),
+                        "start_character": character_offset,
+                        "text": text_chunk,
+                    }
+                )
+                audio_offset += chunk_duration
+                character_offset += len(text_chunk)
+            if character_offset != len(request.text):
+                raise ValueError(
+                    "Smallest AI text chunks do not cover the supplied narration."
+                )
             alignment = self._align_audio(
-                temporary_mp3,
+                alignment_chunks,
                 request.text,
                 duration,
                 temporary_path,
@@ -198,23 +224,15 @@ class SmallestAIProvider:
 
     def _align_audio(
         self,
-        audio_file: Path,
+        input_chunks: list[dict[str, Any]],
         text: str,
         duration_seconds: float,
         temporary_path: Path,
     ) -> VoiceAlignment:
-        input_chunk = {
-            "audio_file": str(audio_file),
-            "audio_offset_seconds": 0.0,
-            "duration_seconds": duration_seconds,
-            "end_character": len(text),
-            "start_character": 0,
-            "text": text,
-        }
         alignment_input = temporary_path / "alignment-input.json"
         alignment_output = temporary_path / "alignment-output.json"
         alignment_input.write_text(
-            json.dumps({"chunks": [input_chunk]}, ensure_ascii=False),
+            json.dumps({"chunks": input_chunks}, ensure_ascii=False),
             encoding="utf-8",
         )
         aligner_script = (
@@ -236,7 +254,7 @@ class SmallestAIProvider:
         aligned_chunks = self._read_alignment_chunks(alignment_output)
         return build_alignment(
             text,
-            [input_chunk],
+            input_chunks,
             aligned_chunks,
             duration_seconds,
         )

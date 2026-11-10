@@ -129,9 +129,10 @@ Smallest's current API documents Lightning v3.1 and Lightning v3.1 Pro; it does
 not list Lightning 3.0, so the project config defaults to the supported v3.1
 Pro model. The provider sends text in chunks of at most 250 characters
 (Smallest recommends about 250 characters per request), joins returned WAV
-audio, converts it to the pipeline MP3 format, and runs WhisperX forced
-alignment before storyboard timing. Preflight and tests do not call the paid
-synthesis API.
+audio, converts it to the pipeline MP3 format, and aligns each matching
+text/audio chunk with WhisperX before storyboard timing. The alignment model
+is loaded once per narration and cached between workflow runs; progress is
+reported for each chunk. Preflight and tests do not call the paid synthesis API.
 
 To enable Smallest.ai in Actions, create an API key in the Smallest.ai console
 and save it as the `smallestai_api_key` Actions secret. The workflow maps it
