@@ -179,7 +179,7 @@ def test_explicit_elevenlabs_selection_preserves_existing_voice(
             encoding="utf-8"
         )
     )
-    assert result["model_id"] == "eleven_turbo_v2_5"
+    assert result["model_id"] == "eleven_v4_turbo"
 
 
 def test_default_provider_is_smallestai(tmp_path, monkeypatch):

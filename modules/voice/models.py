@@ -56,7 +56,7 @@ class VoiceGenerationRequest(BaseModel):
     voice_id: str
 
     model_id: VoiceModel = (
-        "eleven_turbo_v2_5"
+        "eleven_v4_turbo"
     )
 
     preserve_text: bool = False

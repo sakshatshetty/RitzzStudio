@@ -40,7 +40,7 @@ def main() -> int:
         if not voice_id:
             raise RuntimeError("RITZZ_VOICE_ID is not configured.")
         provider = ElevenLabsProvider()
-        model_id = "eleven_turbo_v2_5"
+        model_id = "eleven_v4_turbo"
     elif provider_name == "smallestai":
         voice_id = config.smallest_voice_id
         model_id = config.smallest_model
