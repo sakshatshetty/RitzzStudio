@@ -122,7 +122,7 @@ check for image/narration relevance and image quality.
 The separate **RITZZ Creative Package Production_V2** workflow has one
 narration setting: select `smallestai` or `elevenlabs`. Smallest.ai audio
 settings are part of each project's `production_config.json`, not workflow
-inputs. The defaults are Lightning v3.1 Pro, voice ID `voice_CNOBFXW1SC`,
+inputs. The defaults are Lightning v3.1 Pro, voice ID `grant`,
 language `en`, and speed `0.92`. Change `smallest_model`, `smallest_voice_id`,
 `smallest_language`, or `voice_speed` in the project configuration as needed.
 Smallest's current API documents Lightning v3.1 and Lightning v3.1 Pro; it does
