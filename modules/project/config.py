@@ -30,7 +30,7 @@ class ProductionConfig(BaseModel):
         "lightning_v3.1_pro",
         "lightning_v3.1",
     ] = "lightning_v3.1_pro"
-    smallest_voice_id: str = Field(default="voice_CNOBFXW1SC", min_length=1)
+    smallest_voice_id: str = Field(default="grant", min_length=1)
     smallest_language: str = Field(default="en", min_length=1)
     script_profile: str = "RITZZ_ANCIENT_HUMAN_CURIOSITY"
     scene_minimum_duration_seconds: float = Field(default=3.0, ge=0.0)

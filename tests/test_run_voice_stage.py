@@ -144,7 +144,7 @@ def test_smallest_api_key_is_not_saved_in_voice_metadata(
         project_directory / "voice" / "narration_result.json"
     ).read_text(encoding="utf-8")
     result = json.loads(result_text)
-    assert result["voice_id"] == "voice_CNOBFXW1SC"
+    assert result["voice_id"] == "grant"
     assert "sensitive-api-key" not in result_text
 
 
@@ -214,7 +214,7 @@ def test_default_provider_is_smallestai(tmp_path, monkeypatch):
             encoding="utf-8"
         )
     )
-    assert result["voice_id"] == "voice_CNOBFXW1SC"
+    assert result["voice_id"] == "grant"
     assert result["model_id"] == "lightning_v3.1_pro"
     assert _FakeVoiceEngine.instances[0].create_voice_kwargs[
         "production_config"
