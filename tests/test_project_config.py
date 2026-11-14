@@ -9,6 +9,7 @@ def test_smallest_audio_settings_default_to_production_config():
     assert config.smallest_model == "lightning_v3.1_pro"
     assert config.smallest_voice_id == "grant"
     assert config.smallest_language == "en"
+    assert config.smallest_speed == 0.85
     assert config.voice_speed == 0.92
 
 

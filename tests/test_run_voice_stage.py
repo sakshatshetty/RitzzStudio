@@ -72,7 +72,7 @@ def test_smallestai_selection_uses_project_voice_model_language_and_speed(
             smallest_model="lightning_v3.1",
             smallest_voice_id="voice_from_project_config",
             smallest_language="hi",
-            voice_speed=1.0,
+            smallest_speed=1.0,
         ).model_dump_json(),
         encoding="utf-8",
     )
@@ -180,6 +180,9 @@ def test_explicit_elevenlabs_selection_preserves_existing_voice(
         )
     )
     assert result["model_id"] == "eleven_v4_turbo"
+    assert _FakeVoiceEngine.instances[0].create_voice_kwargs[
+        "production_config"
+    ].voice_speed == 0.92
 
 
 def test_default_provider_is_smallestai(tmp_path, monkeypatch):
@@ -218,4 +221,4 @@ def test_default_provider_is_smallestai(tmp_path, monkeypatch):
     assert result["model_id"] == "lightning_v3.1_pro"
     assert _FakeVoiceEngine.instances[0].create_voice_kwargs[
         "production_config"
-    ].voice_speed == 0.92
+    ].voice_speed == 0.85
