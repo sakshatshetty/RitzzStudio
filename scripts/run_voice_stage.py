@@ -31,6 +31,7 @@ def main() -> int:
         raise FileNotFoundError("Approved project script or production configuration is missing.")
 
     config = ProductionConfig.model_validate_json(config_file.read_text(encoding="utf-8"))
+    voice_config = config
     provider_name = os.environ.get(
         "RITZZ_TTS_PROVIDER",
         "smallestai",
@@ -45,6 +46,9 @@ def main() -> int:
         voice_id = config.smallest_voice_id
         model_id = config.smallest_model
         provider = SmallestAIProvider(language=config.smallest_language)
+        voice_config = config.model_copy(
+            update={"voice_speed": config.smallest_speed}
+        )
     else:
         raise ValueError(
             "RITZZ_TTS_PROVIDER must be either smallestai or elevenlabs."
@@ -102,7 +106,7 @@ def main() -> int:
         script_file=script_file,
         voice_id=voice_id,
         output_directory=voice_directory,
-        production_config=config,
+        production_config=voice_config,
         model_id=model_id,
     )
     engine.save_result(result, result_path)
