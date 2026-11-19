@@ -289,7 +289,7 @@ def test_marcus_voice_profile_uses_configured_elevenlabs_secret(
         )
     )
     assert result["voice_id"] == "marcus-secret-voice-id"
-    assert result["model_id"] == "eleven_turbo_v2_5"
+    assert result["model_id"] == "eleven_v4_turbo"
     assert _FakeVoiceEngine.instances[0].provider is provider
 
 
