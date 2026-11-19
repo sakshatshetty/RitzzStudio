@@ -15,7 +15,10 @@ on:
       voice_profile:
         description: Voice profile key from modules/project/config.py VOICE_PROFILES
         required: true
-        type: string
+        type: choice
+        options:
+          - marcus_elevenlabs
+          - john_smallest.ai
         default: john_smallest.ai
       youtube_channel:
         description: YouTube channel that will receive the private upload

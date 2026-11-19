@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from modules.project.config import VOICE_PROFILES
 from scripts.validate_pipeline_prerequisites import (
     REQUIRED_ENVIRONMENT_VARIABLES,
     validate_prerequisites,
@@ -128,11 +129,21 @@ def test_v2_workflow_selects_configured_voice_profiles():
     workflow = Path(
         ".github/workflows/ritzz-creative-production-v2.yml"
     ).read_text(encoding="utf-8")
+    voice_profile_input = workflow.split(
+        "      voice_profile:\n", 1
+    )[1].split("      youtube_channel:\n", 1)[0]
+    profile_options = [
+        line.removeprefix("          - ")
+        for line in voice_profile_input.splitlines()
+        if line.startswith("          - ")
+    ]
 
     assert "name: RITZZ Creative Package Production_V2" in workflow
     assert "voice_profile:" in workflow
-    assert "type: string" in workflow
+    assert "type: choice" in voice_profile_input
+    assert profile_options == list(VOICE_PROFILES)
     assert "default: john_smallest.ai" in workflow
+    assert "john_smallest.ai" in profile_options
     assert "narration_provider:" not in workflow
     assert "RITZZ_VOICE_PROFILE: ${{ inputs.voice_profile }}" in workflow
     assert "--voice-profile \"$RITZZ_VOICE_PROFILE\"" in workflow
