@@ -1,4 +1,5 @@
 name: RITZZ Creative Package Production
+run-name: RITZZ Creative Package Production - ${{ inputs.project_id || github.run_id }}
 
 on:
   workflow_dispatch:
@@ -234,6 +235,26 @@ jobs:
           tar -xzf .pipeline-artifacts/project.tar.gz -C projects
           python -c "import os; from modules.project.manager import ProjectManager; ProjectManager('projects').load_project(os.environ['PROJECT_ID'])"
           echo "project_id=$PROJECT_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Save project ID cleanup marker
+        env:
+          PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$PROJECT_ID" =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$ ]]; then
+            echo "project_id is invalid; refusing to write cleanup marker." >&2
+            exit 1
+          fi
+          mkdir -p .pipeline-artifacts
+          printf '%s\n' "$PROJECT_ID" > .pipeline-artifacts/project-id.txt
+
+      - name: Upload project ID cleanup marker
+        uses: actions/upload-artifact@v4
+        with:
+          name: ritzz-project-${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}-cleanup-marker
+          path: .pipeline-artifacts/project-id.txt
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Download image override package
         if: ${{ inputs.mode == 'RESUME' && inputs.rerun_from_stage == 'RENDER' && inputs.image_override_release_tag != '' }}

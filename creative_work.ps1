@@ -267,6 +267,14 @@ try {
             $currentSection = $sectionName
             continue
         }
+        if (
+            $null -ne $currentSection -and
+            $currentSection -ne 'Description' -and
+            [regex]::IsMatch($line, '^\s*#\s*\S')
+        ) {
+            $currentSection = $null
+            continue
+        }
         if ($null -ne $currentSection) {
             $sections[$currentSection].Add($line)
         }

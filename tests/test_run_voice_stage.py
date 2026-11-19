@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from typing import ClassVar
 
-from modules.project.config import ProductionConfig
+from modules.project.config import ProductionConfig, VOICE_PROFILES, VoiceProfile
 from modules.voice.models import VoiceAlignment, VoiceGenerationResult
 from scripts import run_voice_stage
 
@@ -91,6 +91,7 @@ def test_smallestai_selection_uses_project_voice_model_language_and_speed(
         lambda **kwargs: provider_kwargs.update(kwargs) or provider,
     )
     monkeypatch.setenv("RITZZ_PROJECT_ID", "test-project")
+    monkeypatch.delenv("RITZZ_VOICE_PROFILE", raising=False)
     monkeypatch.setenv("RITZZ_TTS_PROVIDER", "smallestai")
     monkeypatch.setenv("SMALLEST_API_KEY", "test-api-key")
     monkeypatch.setenv("SMALLEST_VOICE_ID", "must_not_override_config")
@@ -115,6 +116,75 @@ def test_smallestai_selection_uses_project_voice_model_language_and_speed(
     ].voice_speed == 1.0
 
 
+def test_john_voice_profile_uses_project_smallest_voice_id(tmp_path, monkeypatch):
+    project_directory = _prepare_project(tmp_path)
+    provider = object()
+    monkeypatch.setattr(
+        run_voice_stage,
+        "ProjectManager",
+        lambda _path: _FakeProjectManager(_path, project_directory),
+    )
+    monkeypatch.setattr(run_voice_stage, "VoiceEngine", _FakeVoiceEngine)
+    monkeypatch.setattr(
+        run_voice_stage,
+        "SmallestAIProvider",
+        lambda **_kwargs: provider,
+    )
+    monkeypatch.setenv("RITZZ_PROJECT_ID", "test-project")
+    monkeypatch.setenv("RITZZ_VOICE_PROFILE", "john_smallest.ai")
+    monkeypatch.setenv("SMALLEST_API_KEY", "test-api-key")
+    monkeypatch.delenv("RITZZ_TTS_PROVIDER", raising=False)
+    monkeypatch.delenv("RITZZ_RESUME", raising=False)
+    _FakeVoiceEngine.instances.clear()
+
+    assert run_voice_stage.main() == 0
+
+    result = json.loads(
+        (project_directory / "voice" / "narration_result.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert result["voice_id"] == "grant"
+    assert _FakeVoiceEngine.instances[0].provider is provider
+
+
+def test_new_configured_voice_profile_uses_its_direct_voice_id(
+    tmp_path,
+    monkeypatch,
+):
+    project_directory = _prepare_project(tmp_path)
+    profile = VoiceProfile(provider="smallestai", voice_id="future-smallest-id")
+    monkeypatch.setitem(VOICE_PROFILES, "future_smallest", profile)
+    provider = object()
+    monkeypatch.setattr(
+        run_voice_stage,
+        "ProjectManager",
+        lambda _path: _FakeProjectManager(_path, project_directory),
+    )
+    monkeypatch.setattr(run_voice_stage, "VoiceEngine", _FakeVoiceEngine)
+    monkeypatch.setattr(
+        run_voice_stage,
+        "SmallestAIProvider",
+        lambda **_kwargs: provider,
+    )
+    monkeypatch.setenv("RITZZ_PROJECT_ID", "test-project")
+    monkeypatch.setenv("RITZZ_VOICE_PROFILE", "future_smallest")
+    monkeypatch.setenv("SMALLEST_API_KEY", "test-api-key")
+    monkeypatch.delenv("RITZZ_TTS_PROVIDER", raising=False)
+    monkeypatch.delenv("RITZZ_RESUME", raising=False)
+    _FakeVoiceEngine.instances.clear()
+
+    assert run_voice_stage.main() == 0
+
+    result = json.loads(
+        (project_directory / "voice" / "narration_result.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert result["voice_id"] == "future-smallest-id"
+    assert _FakeVoiceEngine.instances[0].provider is provider
+
+
 def test_smallest_api_key_is_not_saved_in_voice_metadata(
     tmp_path,
     monkeypatch,
@@ -126,6 +196,7 @@ def test_smallest_api_key_is_not_saved_in_voice_metadata(
         lambda _path: _FakeProjectManager(_path, project_directory),
     )
     monkeypatch.setenv("RITZZ_PROJECT_ID", "test-project")
+    monkeypatch.delenv("RITZZ_VOICE_PROFILE", raising=False)
     monkeypatch.setenv("RITZZ_TTS_PROVIDER", "smallestai")
     monkeypatch.setenv("SMALLEST_API_KEY", "sensitive-api-key")
     monkeypatch.delenv("RITZZ_RESUME", raising=False)
@@ -166,6 +237,7 @@ def test_explicit_elevenlabs_selection_preserves_existing_voice(
         lambda: provider,
     )
     monkeypatch.setenv("RITZZ_PROJECT_ID", "test-project")
+    monkeypatch.delenv("RITZZ_VOICE_PROFILE", raising=False)
     monkeypatch.setenv("RITZZ_VOICE_ID", "existing-voice")
     monkeypatch.setenv("RITZZ_TTS_PROVIDER", "elevenlabs")
     monkeypatch.delenv("RITZZ_RESUME", raising=False)
@@ -183,6 +255,42 @@ def test_explicit_elevenlabs_selection_preserves_existing_voice(
     assert _FakeVoiceEngine.instances[0].create_voice_kwargs[
         "production_config"
     ].voice_speed == 0.92
+
+
+def test_marcus_voice_profile_uses_configured_elevenlabs_secret(
+    tmp_path,
+    monkeypatch,
+):
+    project_directory = _prepare_project(tmp_path)
+    provider = object()
+    monkeypatch.setattr(
+        run_voice_stage,
+        "ProjectManager",
+        lambda _path: _FakeProjectManager(_path, project_directory),
+    )
+    monkeypatch.setattr(run_voice_stage, "VoiceEngine", _FakeVoiceEngine)
+    monkeypatch.setattr(
+        run_voice_stage,
+        "ElevenLabsProvider",
+        lambda: provider,
+    )
+    monkeypatch.setenv("RITZZ_PROJECT_ID", "test-project")
+    monkeypatch.setenv("RITZZ_VOICE_PROFILE", "marcus_elevenlabs")
+    monkeypatch.setenv("RITZZ_VOICE_ID", "marcus-secret-voice-id")
+    monkeypatch.setenv("RITZZ_TTS_PROVIDER", "smallestai")
+    monkeypatch.delenv("RITZZ_RESUME", raising=False)
+    _FakeVoiceEngine.instances.clear()
+
+    assert run_voice_stage.main() == 0
+
+    result = json.loads(
+        (project_directory / "voice" / "narration_result.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert result["voice_id"] == "marcus-secret-voice-id"
+    assert result["model_id"] == "eleven_turbo_v2_5"
+    assert _FakeVoiceEngine.instances[0].provider is provider
 
 
 def test_default_provider_is_smallestai(tmp_path, monkeypatch):
@@ -204,6 +312,7 @@ def test_default_provider_is_smallestai(tmp_path, monkeypatch):
         lambda **_kwargs: provider,
     )
     monkeypatch.setenv("RITZZ_PROJECT_ID", "test-project")
+    monkeypatch.delenv("RITZZ_VOICE_PROFILE", raising=False)
     monkeypatch.setenv("SMALLEST_API_KEY", "test-api-key")
     monkeypatch.delenv("RITZZ_TTS_PROVIDER", raising=False)
     monkeypatch.delenv("RITZZ_RESUME", raising=False)

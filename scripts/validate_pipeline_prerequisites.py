@@ -13,6 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from modules.image.models import IMAGE_MODEL_OPTIONS
+from modules.project.config import get_voice_profile
 
 REQUIRED_ENVIRONMENT_VARIABLES = (
     "OPENAI_API_KEY",
@@ -44,26 +45,41 @@ def validate_prerequisites(
     youtube_upload: bool = False,
     image_model: str | None = None,
     tts_provider: str = "smallestai",
+    voice_profile: str | None = None,
 ) -> dict[str, str]:
     if creative_package and youtube_upload:
         raise ValueError(
             "Creative-package and YouTube-upload validation modes are mutually exclusive."
         )
-    if tts_provider not in {"smallestai", "elevenlabs"}:
+    if voice_profile is not None and not creative_package:
+        raise ValueError("Voice-profile validation requires creative-package mode.")
+    if voice_profile is None and tts_provider not in {"smallestai", "elevenlabs"}:
         raise ValueError(
             "Unsupported narration provider; choose smallestai or elevenlabs."
         )
+    selected_profile = (
+        get_voice_profile(voice_profile) if voice_profile is not None else None
+    )
+    selected_provider = (
+        selected_profile.provider if selected_profile else tts_provider
+    )
     if youtube_upload:
         required_variables = (
             "GOOGLE_CLIENT_SECRETS_B64",
             "GOOGLE_TOKEN_B64",
         )
     elif creative_package:
-        provider_variables = (
-            ("ELEVENLABS_API_KEY", "RITZZ_VOICE_ID")
-            if tts_provider == "elevenlabs"
-            else ("SMALLEST_API_KEY",)
-        )
+        if selected_provider == "elevenlabs":
+            provider_variables = ("ELEVENLABS_API_KEY",)
+            if selected_profile is None or selected_profile.voice_id_env:
+                voice_id_environment = (
+                    selected_profile.voice_id_env
+                    if selected_profile
+                    else "RITZZ_VOICE_ID"
+                )
+                provider_variables += (voice_id_environment,)
+        else:
+            provider_variables = ("SMALLEST_API_KEY",)
         required_variables = (
             *provider_variables,
             "GOOGLE_CLIENT_SECRETS_B64",
@@ -103,7 +119,7 @@ def validate_prerequisites(
         "oauth_token_json": "valid",
         "api_calls_made": "none",
     }
-    if creative_package and tts_provider == "smallestai":
+    if creative_package and selected_provider == "smallestai":
         result["smallest_api_key"] = "configured"
     return result
 
@@ -131,12 +147,17 @@ def main() -> int:
         default="smallestai",
         help="Validate credentials for the selected narration provider.",
     )
+    parser.add_argument(
+        "--voice-profile",
+        help="Validate credentials for a configured voice profile.",
+    )
     arguments = parser.parse_args()
     result = validate_prerequisites(
         creative_package=arguments.creative_package,
         youtube_upload=arguments.youtube_upload,
         image_model=arguments.image_model,
         tts_provider=arguments.tts_provider,
+        voice_profile=arguments.voice_profile,
     )
     print("Pipeline prerequisites passed.")
     for name, value in result.items():

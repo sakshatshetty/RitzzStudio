@@ -1,6 +1,33 @@
 import pytest
 
-from modules.project.config import ProductionConfig
+from modules.project.config import (
+    VOICE_PROFILES,
+    ProductionConfig,
+    VoiceProfile,
+    get_voice_profile,
+)
+
+
+def test_voice_profiles_map_names_to_provider_and_voice_source():
+    marcus = get_voice_profile("MARCUS_ELEVENLABS")
+    john = get_voice_profile("john_smallest.ai")
+
+    assert marcus.provider == "elevenlabs"
+    assert marcus.voice_id_env == "RITZZ_VOICE_ID"
+    assert john.provider == "smallestai"
+    assert john.use_project_smallest_voice is True
+
+
+def test_voice_profile_registry_supports_future_configured_voices(monkeypatch):
+    profile = VoiceProfile(provider="elevenlabs", voice_id="future-voice-id")
+    monkeypatch.setitem(VOICE_PROFILES, "future_voice", profile)
+
+    assert get_voice_profile("future_voice") == profile
+
+
+def test_voice_profile_requires_exactly_one_voice_id_source():
+    with pytest.raises(ValueError, match="exactly one voice ID source"):
+        VoiceProfile(provider="elevenlabs")
 
 
 def test_smallest_audio_settings_default_to_production_config():
