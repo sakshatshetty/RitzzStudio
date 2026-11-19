@@ -59,6 +59,51 @@ def test_elevenlabs_preflight_remains_selectable(monkeypatch):
     assert result["api_calls_made"] == "none"
 
 
+def test_voice_profile_preflight_selects_smallest_ai_requirements(monkeypatch):
+    _set_valid_environment(monkeypatch)
+
+    result = validate_prerequisites(
+        creative_package=True,
+        voice_profile="john_smallest.ai",
+    )
+
+    assert result["required_secrets"] == "3"
+    assert result["smallest_api_key"] == "configured"
+
+
+def test_voice_profile_preflight_selects_elevenlabs_requirements(monkeypatch):
+    _set_valid_environment(monkeypatch)
+
+    result = validate_prerequisites(
+        creative_package=True,
+        voice_profile="marcus_elevenlabs",
+    )
+
+    assert result["required_secrets"] == "4"
+    assert result["api_calls_made"] == "none"
+
+
+def test_voice_profile_preflight_allows_future_configured_voice_id(
+    monkeypatch,
+):
+    from modules.project.config import VOICE_PROFILES, VoiceProfile
+
+    _set_valid_environment(monkeypatch)
+    monkeypatch.delenv("RITZZ_VOICE_ID", raising=False)
+    monkeypatch.setitem(
+        VOICE_PROFILES,
+        "future_elevenlabs",
+        VoiceProfile(provider="elevenlabs", voice_id="configured-voice-id"),
+    )
+
+    result = validate_prerequisites(
+        creative_package=True,
+        voice_profile="future_elevenlabs",
+    )
+
+    assert result["required_secrets"] == "3"
+
+
 def test_smallest_preflight_rejects_missing_api_key(monkeypatch):
     _set_valid_environment(monkeypatch)
     monkeypatch.delenv("SMALLEST_API_KEY", raising=False)
@@ -79,15 +124,19 @@ def test_smallestai_preflight_only_needs_api_key_not_audio_settings(monkeypatch)
     assert result["smallest_api_key"] == "configured"
 
 
-def test_v2_workflow_defaults_to_smallest_ai_and_preserves_original_workflow():
+def test_v2_workflow_selects_configured_voice_profiles():
     workflow = Path(
         ".github/workflows/ritzz-creative-production-v2.yml"
     ).read_text(encoding="utf-8")
 
     assert "name: RITZZ Creative Package Production_V2" in workflow
-    assert "narration_provider:" in workflow
-    assert "default: smallestai" in workflow
-    assert "          - smallestai\n          - elevenlabs" in workflow
+    assert "voice_profile:" in workflow
+    assert "type: string" in workflow
+    assert "default: john_smallest.ai" in workflow
+    assert "narration_provider:" not in workflow
+    assert "RITZZ_VOICE_PROFILE: ${{ inputs.voice_profile }}" in workflow
+    assert "--voice-profile \"$RITZZ_VOICE_PROFILE\"" in workflow
+    assert "needs.validate.outputs.voice_provider == 'smallestai'" in workflow
     assert "secrets.smallestai_api_key" in workflow
     assert "smallest_model:" not in workflow
     assert "smallest_voice_id:" not in workflow

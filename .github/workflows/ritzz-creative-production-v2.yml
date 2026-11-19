@@ -1,4 +1,5 @@
 name: RITZZ Creative Package Production_V2
+run-name: RITZZ Creative Package Production_V2 - ${{ inputs.project_id || github.run_id }}
 
 on:
   workflow_dispatch:
@@ -11,14 +12,11 @@ on:
           - NEW
           - RESUME
         default: NEW
-      narration_provider:
-        description: TTS provider for narration generation
+      voice_profile:
+        description: Voice profile key from modules/project/config.py VOICE_PROFILES
         required: true
-        type: choice
-        options:
-          - smallestai
-          - elevenlabs
-        default: smallestai
+        type: string
+        default: john_smallest.ai
       youtube_channel:
         description: YouTube channel that will receive the private upload
         required: true
@@ -72,11 +70,13 @@ jobs:
   validate:
     name: Validate credentials, selected channel, and focused tests
     runs-on: ubuntu-latest
+    outputs:
+      voice_provider: ${{ steps.resolve_voice_profile.outputs.provider }}
     env:
-      ELEVENLABS_API_KEY: ${{ inputs.narration_provider == 'elevenlabs' && secrets.ELEVENLABS_API_KEY || '' }}
-      RITZZ_VOICE_ID: ${{ inputs.narration_provider == 'elevenlabs' && secrets.RITZZ_VOICE_ID || '' }}
-      SMALLEST_API_KEY: ${{ inputs.narration_provider == 'smallestai' && secrets.smallestai_api_key || '' }}
-      RITZZ_TTS_PROVIDER: ${{ inputs.narration_provider }}
+      ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+      RITZZ_VOICE_ID: ${{ secrets.RITZZ_VOICE_ID }}
+      SMALLEST_API_KEY: ${{ secrets.smallestai_api_key }}
+      RITZZ_VOICE_PROFILE: ${{ inputs.voice_profile }}
       GOOGLE_CLIENT_SECRETS_B64: ${{ secrets.GOOGLE_CLIENT_SECRETS_B64 }}
       GOOGLE_TOKEN_B64: ${{ inputs.youtube_channel == 'Ritzz-Explains' && secrets.GOOGLE_TOKEN_B64 || inputs.youtube_channel == 'RitzzHistory' && secrets.GOOGLE_TOKEN_RITZZ_HISTORY_B64 || inputs.youtube_channel == 'RitzzTech1' && secrets.GOOGLE_TOKEN_RITZZ_TECH_B64 || '' }}
       RITZZ_YOUTUBE_CHANNEL: ${{ inputs.youtube_channel }}
@@ -93,6 +93,19 @@ jobs:
 
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
+
+      - name: Resolve selected voice profile
+        id: resolve_voice_profile
+        run: |
+          python - <<'PY'
+          import os
+
+          from modules.project.config import get_voice_profile
+
+          profile = get_voice_profile(os.environ["RITZZ_VOICE_PROFILE"])
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"provider={profile.provider}\n")
+          PY
 
       - name: Validate optional image override inputs
         env:
@@ -121,7 +134,7 @@ jobs:
         run: >-
           python scripts/validate_pipeline_prerequisites.py
           --creative-package
-          --tts-provider "$RITZZ_TTS_PROVIDER"
+          --voice-profile "$RITZZ_VOICE_PROFILE"
 
       - name: Verify selected YouTube channel access
         env:
@@ -160,10 +173,10 @@ jobs:
     outputs:
       project_id: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
     env:
-      ELEVENLABS_API_KEY: ${{ inputs.narration_provider == 'elevenlabs' && secrets.ELEVENLABS_API_KEY || '' }}
-      RITZZ_VOICE_ID: ${{ inputs.narration_provider == 'elevenlabs' && secrets.RITZZ_VOICE_ID || '' }}
-      SMALLEST_API_KEY: ${{ inputs.narration_provider == 'smallestai' && secrets.smallestai_api_key || '' }}
-      RITZZ_TTS_PROVIDER: ${{ inputs.narration_provider }}
+      ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+      RITZZ_VOICE_ID: ${{ secrets.RITZZ_VOICE_ID }}
+      SMALLEST_API_KEY: ${{ secrets.smallestai_api_key }}
+      RITZZ_VOICE_PROFILE: ${{ inputs.voice_profile }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -200,7 +213,7 @@ jobs:
           key: ${{ runner.os }}-whisperx-align-${{ hashFiles('requirements-whisperx.txt') }}
 
       - name: Install WhisperX for Smallest.ai narration alignment
-        if: ${{ inputs.narration_provider == 'smallestai' && (inputs.mode == 'NEW' || inputs.rerun_from_stage != 'FINAL_PACKAGE') }}
+        if: ${{ needs.validate.outputs.voice_provider == 'smallestai' && (inputs.mode == 'NEW' || inputs.rerun_from_stage != 'FINAL_PACKAGE') }}
         run: |
           set -euo pipefail
           echo "TORCH_HOME=$RUNNER_TEMP/torch-cache" >> "$GITHUB_ENV"
@@ -271,6 +284,26 @@ jobs:
           python -c "import os; from modules.project.manager import ProjectManager; ProjectManager('projects').load_project(os.environ['PROJECT_ID'])"
           echo "project_id=$PROJECT_ID" >> "$GITHUB_OUTPUT"
 
+      - name: Save project ID cleanup marker
+        env:
+          PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$PROJECT_ID" =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$ ]]; then
+            echo "project_id is invalid; refusing to write cleanup marker." >&2
+            exit 1
+          fi
+          mkdir -p .pipeline-artifacts
+          printf '%s\n' "$PROJECT_ID" > .pipeline-artifacts/project-id.txt
+
+      - name: Upload project ID cleanup marker
+        uses: actions/upload-artifact@v4
+        with:
+          name: ritzz-project-${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}-cleanup-marker
+          path: .pipeline-artifacts/project-id.txt
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Download image override package
         if: ${{ inputs.mode == 'RESUME' && inputs.rerun_from_stage == 'RENDER' && inputs.image_override_release_tag != '' }}
         env:
@@ -298,7 +331,7 @@ jobs:
           RITZZ_PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
           RITZZ_RESUME: ${{ inputs.mode == 'RESUME' && inputs.rerun_from_stage != 'NARRATION' && 'true' || 'false' }}
           RITZZ_RERUN_FROM_STAGE: ${{ inputs.mode == 'RESUME' && inputs.rerun_from_stage || 'CONTINUE' }}
-          RITZZ_TTS_PROVIDER: ${{ inputs.narration_provider }}
+          RITZZ_VOICE_PROFILE: ${{ inputs.voice_profile }}
           RITZZ_WHISPERX_PYTHON: ${{ runner.temp }}/whisperx-env/bin/python
         run: python scripts/run_voice_stage.py
 

@@ -10,7 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from modules.project.config import ProductionConfig
+from modules.project.config import ProductionConfig, get_voice_profile
 from modules.project.manager import ProjectManager
 from modules.video.sync_engine import VideoSynchronizationEngine
 from modules.voice.elevenlabs import ElevenLabsProvider
@@ -32,18 +32,37 @@ def main() -> int:
 
     config = ProductionConfig.model_validate_json(config_file.read_text(encoding="utf-8"))
     voice_config = config
-    provider_name = os.environ.get(
-        "RITZZ_TTS_PROVIDER",
-        "smallestai",
-    ).strip().lower()
+    voice_profile_name = os.environ.get("RITZZ_VOICE_PROFILE", "").strip()
+    voice_profile = (
+        get_voice_profile(voice_profile_name) if voice_profile_name else None
+    )
+    provider_name = (
+        voice_profile.provider
+        if voice_profile
+        else os.environ.get("RITZZ_TTS_PROVIDER", "smallestai").strip().lower()
+    )
+    if voice_profile:
+        if voice_profile.voice_id is not None:
+            voice_id = voice_profile.voice_id
+        elif voice_profile.voice_id_env is not None:
+            voice_id = os.environ.get(voice_profile.voice_id_env, "").strip()
+            if not voice_id:
+                raise RuntimeError(
+                    f"{voice_profile.voice_id_env} is not configured for voice "
+                    f"profile {voice_profile_name!r}."
+                )
+        else:
+            voice_id = config.smallest_voice_id
     if provider_name == "elevenlabs":
-        voice_id = os.environ.get("RITZZ_VOICE_ID")
+        if not voice_profile:
+            voice_id = os.environ.get("RITZZ_VOICE_ID")
         if not voice_id:
             raise RuntimeError("RITZZ_VOICE_ID is not configured.")
         provider = ElevenLabsProvider()
         model_id = "eleven_v4_turbo"
     elif provider_name == "smallestai":
-        voice_id = config.smallest_voice_id
+        if not voice_profile:
+            voice_id = config.smallest_voice_id
         model_id = config.smallest_model
         provider = SmallestAIProvider(language=config.smallest_language)
         voice_config = config.model_copy(

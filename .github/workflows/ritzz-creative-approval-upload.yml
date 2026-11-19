@@ -1,4 +1,5 @@
 name: RITZZ Private Upload Approval
+run-name: RITZZ Private Upload Approval - ${{ inputs.project_id }}
 
 on:
   workflow_dispatch:

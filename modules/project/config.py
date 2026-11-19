@@ -81,3 +81,50 @@ class ProductionConfig(BaseModel):
     @property
     def maximum_acceptable_duration_seconds(self) -> int:
         return self.target_duration_seconds + DURATION_TOLERANCE_SECONDS
+
+
+class VoiceProfile(BaseModel):
+    provider: Literal["elevenlabs", "smallestai"]
+    voice_id: str | None = Field(default=None, min_length=1)
+    voice_id_env: str | None = Field(default=None, min_length=1)
+    use_project_smallest_voice: bool = False
+
+    @model_validator(mode="after")
+    def validate_voice_id_source(self):
+        source_count = sum(
+            (
+                self.voice_id is not None,
+                self.voice_id_env is not None,
+                self.use_project_smallest_voice,
+            )
+        )
+        if source_count != 1:
+            raise ValueError("A voice profile must define exactly one voice ID source.")
+        if self.use_project_smallest_voice and self.provider != "smallestai":
+            raise ValueError(
+                "Only Smallest.ai profiles can use the project Smallest.ai voice ID."
+            )
+        return self
+
+
+VOICE_PROFILES = {
+    "marcus_elevenlabs": VoiceProfile(
+        provider="elevenlabs",
+        voice_id_env="RITZZ_VOICE_ID",
+    ),
+    "john_smallest.ai": VoiceProfile(
+        provider="smallestai",
+        use_project_smallest_voice=True,
+    ),
+}
+
+
+def get_voice_profile(profile_name: str) -> VoiceProfile:
+    key = profile_name.strip().casefold()
+    try:
+        return VOICE_PROFILES[key]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unknown voice profile {profile_name!r}. Available profiles: "
+            + ", ".join(sorted(VOICE_PROFILES))
+        ) from exc

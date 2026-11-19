@@ -119,14 +119,24 @@ coverage, uses static stills and hard cuts, then renders and runs technical
 video QA. A technical failure blocks approval. The rendered video is the human
 check for image/narration relevance and image quality.
 
-The separate **RITZZ Creative Package Production_V2** workflow has one
-narration setting: select `smallestai` or `elevenlabs`. Smallest.ai audio
-settings are part of each project's `production_config.json`, not workflow
-inputs. The defaults are Lightning v3.1 Pro, voice ID `grant`, language `en`,
-and Smallest.ai speed `0.85`. Change `smallest_model`, `smallest_voice_id`,
-`smallest_language`, or `smallest_speed` in the project configuration as
-needed. The separate `voice_speed` setting remains the ElevenLabs default at
-`0.92`.
+The separate **RITZZ Creative Package Production_V2** workflow accepts a
+voice-profile key instead of a provider selector. Enter a key from
+`VOICE_PROFILES` in `modules/project/config.py`; the workflow resolves its
+provider for credential checks and Smallest.ai alignment setup. Current
+profiles are `marcus_elevenlabs` (uses the existing ElevenLabs voice ID secret)
+and `john_smallest.ai` (uses the project's configured Smallest.ai voice ID,
+currently `grant`). Profile keys are free text, so adding a profile to
+`VOICE_PROFILES` does not require changing the workflow input. A new profile
+can specify a direct `voice_id`, a `voice_id_env` secret name, or use the
+project's Smallest.ai voice ID. Keep provider-specific API credentials in
+GitHub Actions secrets.
+
+Smallest.ai audio settings remain part of each project's
+`production_config.json`, not workflow inputs. The defaults are Lightning v3.1
+Pro, voice ID `grant`, language `en`, and Smallest.ai speed `0.85`. Change
+`smallest_model`, `smallest_voice_id`, `smallest_language`, or
+`smallest_speed` in the project configuration as needed. The separate
+`voice_speed` setting remains the ElevenLabs default at `0.92`.
 Smallest's current API documents Lightning v3.1 and Lightning v3.1 Pro; it does
 not list Lightning 3.0, so the project config defaults to the supported v3.1
 Pro model. The provider sends text in chunks of at most 250 characters
@@ -156,9 +166,9 @@ and the
 [Lightning TTS quickstart](https://docs.smallest.ai/models/text-to-speech/quickstart).
 
 Smallest's synchronous TTS response does not provide character-level timing.
-V2 installs WhisperX for Smallest narration and aligns the completed audio to
-the supplied script before scene timing. Use `elevenlabs` if the existing
-RITZZ ElevenLabs voice is preferred.
+V2 installs WhisperX for a selected Smallest.ai profile and aligns the
+completed audio to the supplied script before scene timing. Select
+`marcus_elevenlabs` to use the existing RITZZ ElevenLabs voice.
 
 Smallest.ai uses `smallest_speed` (default `0.85`); ElevenLabs uses
 `voice_speed` (default `0.92`).
@@ -370,12 +380,12 @@ provider and shared secrets:
 - `GOOGLE_TOKEN_RITZZ_HISTORY_B64` for `RitzzHistory` (`@RitzzHistory`)
 - `GOOGLE_TOKEN_RITZZ_TECH_B64` for `RitzzTech1` (`@RitzzTech1`)
 
-The V2 workflow uses the same Google OAuth secrets. Its selected narration
-provider determines which additional secrets are required:
+The V2 workflow uses the same Google OAuth secrets. Its selected voice profile
+determines which additional secrets are required:
 
-- `smallestai` (the default): `smallestai_api_key` (mapped to
-  `SMALLEST_API_KEY` in the runner).
-- `elevenlabs`: `ELEVENLABS_API_KEY` and `RITZZ_VOICE_ID`
+- Smallest.ai profiles: `smallestai_api_key` (mapped to `SMALLEST_API_KEY`).
+- ElevenLabs profiles: `ELEVENLABS_API_KEY`, plus the profile's `voice_id_env`
+  secret when configured. `marcus_elevenlabs` uses `RITZZ_VOICE_ID`.
 
 Create a separate OAuth token for each channel by authorizing the YouTube API
 client while the corresponding channel is selected, then store each token file

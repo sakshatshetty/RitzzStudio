@@ -51,6 +51,13 @@ def test_windows_creative_builder_stops_tags_at_sources_heading():
     )
 
 
+def test_windows_creative_builder_stops_metadata_at_unrecognized_headings():
+    builder = Path("creative_work.ps1").read_text(encoding="utf-8")
+
+    assert "$currentSection -ne 'Description'" in builder
+    assert r"^\s*#\s*\S" in builder
+
+
 def test_windows_creative_builder_accepts_flow_image_id_suffixes():
     builder = Path("creative_work.ps1").read_text(encoding="utf-8")
 
@@ -164,9 +171,48 @@ def test_project_archive_steps_brace_ids_before_appending_wildcards():
 
 def test_checkpoint_uploads_include_hidden_artifact_directory_files():
     workflow = WORKFLOW.read_text(encoding="utf-8")
+    checkpoint_upload = workflow.split(
+        "      - name: Upload production checkpoint and final package\n", 1
+    )[1]
 
-    assert workflow.count("uses: actions/upload-artifact@v4") == 2
-    assert workflow.count("include-hidden-files: true") == 1
+    assert "uses: actions/upload-artifact@v4" in checkpoint_upload
+    assert "include-hidden-files: true" in checkpoint_upload
+
+
+def test_creative_production_workflows_publish_project_cleanup_markers():
+    workflows = [
+        (
+            Path(".github/workflows/ritzz-creative-production.yml"),
+            "RITZZ Creative Package Production",
+        ),
+        (
+            Path(".github/workflows/ritzz-creative-production-v2.yml"),
+            "RITZZ Creative Package Production_V2",
+        ),
+    ]
+
+    for path, run_name in workflows:
+        workflow = path.read_text(encoding="utf-8")
+        project_id_expression = (
+            "${{ steps.new-project.outputs.project_id || "
+            "steps.resume-project.outputs.project_id }}"
+        )
+
+        assert (
+            f"run-name: {run_name} - "
+            "${{ inputs.project_id || github.run_id }}"
+        ) in workflow
+        assert f"name: ritzz-project-{project_id_expression}-cleanup-marker" in workflow
+        assert "name: Save project ID cleanup marker" in workflow
+        assert "retention-days: 90" in workflow
+
+    approval_workflow = Path(
+        ".github/workflows/ritzz-creative-approval-upload.yml"
+    ).read_text(encoding="utf-8")
+    assert (
+        "run-name: RITZZ Private Upload Approval - "
+        "${{ inputs.project_id }}"
+    ) in approval_workflow
 
 
 def test_preapproval_review_artifact_contains_only_the_rendered_mp4():
