@@ -100,7 +100,10 @@ class SmallestAIProvider:
                     response.raise_for_status()
                 except requests.HTTPError as error:
                     raise requests.HTTPError(
-                        self._format_http_error(error),
+                        self._format_http_error(
+                            error,
+                            sensitive_values=(text_chunk, self.api_key),
+                        ),
                         response=error.response,
                     ) from error
                 audio_bytes = response.content
@@ -229,7 +232,11 @@ class SmallestAIProvider:
         return chunks
 
     @staticmethod
-    def _format_http_error(error: requests.HTTPError) -> str:
+    def _format_http_error(
+        error: requests.HTTPError,
+        *,
+        sensitive_values: tuple[str, ...] = (),
+    ) -> str:
         response = error.response
         if response is None:
             return str(error)
@@ -248,6 +255,17 @@ class SmallestAIProvider:
                     "Smallest AI API request failed with "
                     f"HTTP {response.status_code}: {detail.strip()}"
                 )
+
+        body = response.text.strip()
+        for value in sensitive_values:
+            if value:
+                body = body.replace(value, "[redacted]")
+        body = " ".join(body.split())[:500]
+        if body:
+            return (
+                "Smallest AI API request failed with "
+                f"HTTP {response.status_code}: {body}"
+            )
 
         return (
             "Smallest AI API request failed with "
