@@ -96,7 +96,13 @@ class SmallestAIProvider:
                     },
                     timeout=300,
                 )
-                response.raise_for_status()
+                try:
+                    response.raise_for_status()
+                except requests.HTTPError as error:
+                    raise requests.HTTPError(
+                        self._format_http_error(error),
+                        response=error.response,
+                    ) from error
                 audio_bytes = response.content
                 if (
                     len(audio_bytes) < 12
@@ -221,6 +227,32 @@ class SmallestAIProvider:
             chunks.append(text[start:end])
             start = end
         return chunks
+
+    @staticmethod
+    def _format_http_error(error: requests.HTTPError) -> str:
+        response = error.response
+        if response is None:
+            return str(error)
+
+        try:
+            data = response.json()
+        except ValueError:
+            data = None
+
+        if isinstance(data, dict):
+            detail = data.get("detail") or data.get("message") or data.get("error")
+            if isinstance(detail, dict):
+                detail = detail.get("message") or detail.get("detail")
+            if isinstance(detail, str) and detail.strip():
+                return (
+                    "Smallest AI API request failed with "
+                    f"HTTP {response.status_code}: {detail.strip()}"
+                )
+
+        return (
+            "Smallest AI API request failed with "
+            f"HTTP {response.status_code}."
+        )
 
     def _align_audio(
         self,

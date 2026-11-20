@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+import requests
 
 from modules.voice.models import VoiceAlignment, VoiceGenerationRequest
 from modules.voice.smallest_ai import SmallestAIProvider
@@ -26,6 +27,16 @@ class _FakeResponse:
 
     def raise_for_status(self) -> None:
         return None
+
+
+class _FakeErrorResponse:
+    status_code = 400
+
+    def raise_for_status(self) -> None:
+        raise requests.HTTPError("400 Client Error", response=self)
+
+    def json(self) -> dict[str, str]:
+        return {"message": "voice is not available for this model"}
 
 
 def _request(
@@ -236,6 +247,24 @@ def test_smallest_provider_requires_api_key(monkeypatch):
 
     with pytest.raises(ValueError, match="SMALLEST_API_KEY"):
         SmallestAIProvider()
+
+
+def test_smallest_provider_surfaces_safe_api_error_detail(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("SMALLEST_API_KEY", "test-api-key")
+    provider = SmallestAIProvider()
+    monkeypatch.setattr(
+        "modules.voice.smallest_ai.requests.post",
+        lambda *_args, **_kwargs: _FakeErrorResponse(),
+    )
+
+    with pytest.raises(
+        requests.HTTPError,
+        match="HTTP 400: voice is not available for this model",
+    ):
+        provider.generate(_request(tmp_path))
 
 
 def test_smallest_provider_rejects_unsupported_model(tmp_path, monkeypatch):
