@@ -97,7 +97,7 @@ def test_smallest_provider_synthesizes_wav_and_aligns(
     api_request = requests[0]
     assert api_request["url"] == "https://api.smallest.ai/waves/v1/tts"
     assert api_request["headers"] == {
-        "Authorization": "Bearer test-api-key",
+        "Authorization": "test-api-key",
         "Content-Type": "application/json",
         "Accept": "audio/wav",
     }
