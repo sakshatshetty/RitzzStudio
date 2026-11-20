@@ -39,6 +39,17 @@ class _FakeErrorResponse:
         return {"message": "voice is not available for this model"}
 
 
+class _FakePlainTextErrorResponse:
+    status_code = 400
+    text = "Bad request for input: Hello there."
+
+    def raise_for_status(self) -> None:
+        raise requests.HTTPError("400 Client Error", response=self)
+
+    def json(self) -> dict[str, str]:
+        raise ValueError("Response is not JSON.")
+
+
 def _request(
     tmp_path: Path,
     text: str = "Hello there.",
@@ -265,6 +276,24 @@ def test_smallest_provider_surfaces_safe_api_error_detail(
         match="HTTP 400: voice is not available for this model",
     ):
         provider.generate(_request(tmp_path))
+
+
+def test_smallest_provider_redacts_request_text_from_plain_error_body(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("SMALLEST_API_KEY", "test-api-key")
+    provider = SmallestAIProvider()
+    monkeypatch.setattr(
+        "modules.voice.smallest_ai.requests.post",
+        lambda *_args, **_kwargs: _FakePlainTextErrorResponse(),
+    )
+
+    with pytest.raises(requests.HTTPError) as error:
+        provider.generate(_request(tmp_path))
+
+    assert "Bad request for input: [redacted]" in str(error.value)
+    assert "Hello there." not in str(error.value)
 
 
 def test_smallest_provider_rejects_unsupported_model(tmp_path, monkeypatch):
