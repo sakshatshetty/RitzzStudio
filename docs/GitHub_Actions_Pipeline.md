@@ -387,6 +387,9 @@ determines which additional secrets are required:
 - ElevenLabs profiles: `ELEVENLABS_API_KEY`, plus the profile's `voice_id_env`
   secret when configured. `marcus_elevenlabs` uses `RITZZ_VOICE_ID`.
 
+Store the Smallest.ai secret as the raw API key, not Base64; the provider sends
+it as `Authorization: Bearer <key>`.
+
 Create a separate OAuth token for each channel by authorizing the YouTube API
 client while the corresponding channel is selected, then store each token file
 as Base64 JSON in its named GitHub Actions secret. The existing
