@@ -65,7 +65,6 @@ class SmallestAIProvider:
             raise ValueError(
                 f"SmallestAIProvider supports only these models: {supported}."
             )
-
         output_directory = Path(request.output_directory)
         output_directory.mkdir(parents=True, exist_ok=True)
         output_path = output_directory / request.output_filename
@@ -76,8 +75,16 @@ class SmallestAIProvider:
         ) as temporary_directory:
             temporary_path = Path(temporary_directory)
             part_files: list[Path] = []
+            synthesized_chunks: list[tuple[str, int, int, Path]] = []
             text_chunks = self._split_text(request.text)
+            character_offset = 0
             for index, text_chunk in enumerate(text_chunks):
+                start_character = character_offset
+                character_offset += len(text_chunk)
+                end_character = character_offset
+                if not text_chunk.strip():
+                    continue
+
                 response = requests.post(
                     f"{self.BASE_URL}/tts",
                     headers={
@@ -118,6 +125,9 @@ class SmallestAIProvider:
                 part_path = temporary_path / f"part-{index:04d}.wav"
                 part_path.write_bytes(audio_bytes)
                 part_files.append(part_path)
+                synthesized_chunks.append(
+                    (text_chunk, start_character, end_character, part_path)
+                )
 
             concat_file = temporary_path / "parts.ffconcat"
             concat_file.write_text(
@@ -155,11 +165,8 @@ class SmallestAIProvider:
                 )
             alignment_chunks: list[dict[str, Any]] = []
             audio_offset = 0.0
-            character_offset = 0
-            for text_chunk, part_path in zip(
-                text_chunks,
-                part_files,
-                strict=True,
+            for text_chunk, start_character, end_character, part_path in (
+                synthesized_chunks
             ):
                 chunk_duration = float(probe_audio_duration(part_path))
                 alignment_chunks.append(
@@ -167,13 +174,12 @@ class SmallestAIProvider:
                         "audio_file": str(part_path),
                         "audio_offset_seconds": audio_offset,
                         "duration_seconds": chunk_duration,
-                        "end_character": character_offset + len(text_chunk),
-                        "start_character": character_offset,
+                        "end_character": end_character,
+                        "start_character": start_character,
                         "text": text_chunk,
                     }
                 )
                 audio_offset += chunk_duration
-                character_offset += len(text_chunk)
             if character_offset != len(request.text):
                 raise ValueError(
                     "Smallest AI text chunks do not cover the supplied narration."

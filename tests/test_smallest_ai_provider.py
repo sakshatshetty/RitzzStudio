@@ -238,6 +238,59 @@ def test_text_chunking_handles_long_tokens_and_preserves_input():
     )
 
 
+def test_smallest_provider_skips_whitespace_only_chunks(
+    tmp_path,
+    monkeypatch,
+):
+    text = (
+        "Hello"
+        + " " * (SmallestAIProvider.MAX_INPUT_CHARACTERS * 2)
+        + "world."
+    )
+    expected_chunks = SmallestAIProvider._split_text(text)
+    expected_ranges = []
+    character_offset = 0
+    for chunk in expected_chunks:
+        start_character = character_offset
+        character_offset += len(chunk)
+        if chunk.strip():
+            expected_ranges.append((start_character, character_offset))
+
+    monkeypatch.setenv("SMALLEST_API_KEY", "test-api-key")
+    provider = SmallestAIProvider()
+    requested_text: list[str] = []
+    captured_alignment: dict[str, object] = {}
+    monkeypatch.setattr(
+        "modules.voice.smallest_ai.requests.post",
+        lambda _url, *, json, **_kwargs: (
+            requested_text.append(json["text"]) or _FakeResponse()
+        ),
+    )
+    _mock_local_audio_steps(monkeypatch, provider, text)
+
+    def capture_alignment(input_chunks, supplied_text, _duration, _directory):
+        captured_alignment["chunks"] = input_chunks
+        captured_alignment["text"] = supplied_text
+        return VoiceAlignment(
+            characters=list(supplied_text),
+            character_start_times_seconds=[0.0] * len(supplied_text),
+            character_end_times_seconds=[0.1] * len(supplied_text),
+        )
+
+    monkeypatch.setattr(provider, "_align_audio", capture_alignment)
+
+    result = provider.generate(_request(tmp_path, text=text))
+
+    assert result.status == "completed"
+    assert requested_text == [chunk for chunk in expected_chunks if chunk.strip()]
+    assert all(chunk.strip() for chunk in requested_text)
+    assert captured_alignment["text"] == text
+    assert [
+        (chunk["start_character"], chunk["end_character"])
+        for chunk in captured_alignment["chunks"]
+    ] == expected_ranges
+
+
 def test_smallest_provider_rejects_non_wav_response(
     tmp_path,
     monkeypatch,
