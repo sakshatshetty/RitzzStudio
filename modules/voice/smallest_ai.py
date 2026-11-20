@@ -81,7 +81,7 @@ class SmallestAIProvider:
                 response = requests.post(
                     f"{self.BASE_URL}/tts",
                     headers={
-                        "Authorization": self.api_key,
+                        "Authorization": f"Bearer {self.api_key}",
                         "Content-Type": "application/json",
                         "Accept": "audio/wav",
                     },
