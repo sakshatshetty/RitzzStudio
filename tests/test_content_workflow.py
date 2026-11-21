@@ -109,6 +109,16 @@ def test_selection_persists_duration_and_constraints(tmp_path):
     config = json.loads((result.project_path / "production_config.json").read_text())
     assert config["target_duration_seconds"] == 360
     assert config["minimum_duration_seconds"] == 300
+    assert config["editing_style"] == "hard_cut"
+
+
+def test_history_editing_style_is_persisted(tmp_path):
+    result = workflow(tmp_path, []).run(
+        "Why do owls hunt at night?",
+        editing_style="history",
+    )
+    config = json.loads((result.project_path / "production_config.json").read_text())
+    assert config["editing_style"] == "history"
 
 
 def test_duplicate_manual_topic_is_rejected(tmp_path):

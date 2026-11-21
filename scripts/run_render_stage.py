@@ -15,6 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from modules.image.image_overlays import create_thumbnail
 from modules.project.manager import ProjectManager
+from modules.project.config import EditingStyle, ProductionConfig
 from modules.project.packaging import PackagingArtifact
 from modules.storyboard.engine import StoryboardEngine
 from modules.video.image_asset_qa import inspect_image_asset
@@ -151,6 +152,21 @@ def main() -> int:
     project_manager = ProjectManager(Path("projects"))
     project = project_manager.load_project(project_id)
     project_directory = project_manager.get_project_path(project)
+    config_file = project_directory / "production_config.json"
+    production_config = (
+        ProductionConfig.model_validate_json(config_file.read_text(encoding="utf-8"))
+        if config_file.is_file()
+        else ProductionConfig()
+    )
+    requested_editing_style = (
+        os.environ.get("RITZZ_EDITING_STYLE") or production_config.editing_style
+    )
+    if requested_editing_style == "history":
+        editing_style: EditingStyle = "history"
+    elif requested_editing_style == "hard_cut":
+        editing_style = "hard_cut"
+    else:
+        raise ValueError(f"Unsupported editing style: {requested_editing_style}")
     storyboard_file = project_directory / "storyboard" / "storyboard_audio_timed.json"
     image_directory = project_directory / "images"
     narration_result_file = project_directory / "voice" / "narration_result.json"
@@ -175,6 +191,7 @@ def main() -> int:
         retry_from_stage=retry_from_stage,
         enable_image_ai_qa=False,
         require_no_editorial_text=False,
+        editing_style=editing_style,
     )
     result = pipeline.run(request)
     print(f"Render status: {result.status}")

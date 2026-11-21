@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from modules.project.config import EditingStyle
 from modules.storyboard.models import Storyboard
 
 from modules.video.engine import VideoAssemblyEngine
@@ -33,6 +34,7 @@ class VideoMotionEngine:
         self,
         storyboard_file: str | Path,
         assembly_plan_file: str | Path,
+        editing_style: EditingStyle = "hard_cut",
     ) -> VideoMotionRequest:
         """
         Create a typed motion request.
@@ -45,6 +47,7 @@ class VideoMotionEngine:
             assembly_plan_file=str(
                 assembly_plan_file
             ),
+            editing_style=editing_style,
         )
 
     def build_from_request(
@@ -69,12 +72,14 @@ class VideoMotionEngine:
         return self.create_plan(
             storyboard=storyboard,
             assembly_plan=assembly_plan,
+            editing_style=request.editing_style,
         )
 
     def create_plan(
         self,
         storyboard: Storyboard,
         assembly_plan: VideoAssemblyPlan,
+        editing_style: EditingStyle = "hard_cut",
     ) -> VideoMotionPlan:
         """
         Create motion instructions using the
@@ -99,6 +104,9 @@ class VideoMotionEngine:
                 "the assembly plan topic."
             )
 
+        if editing_style not in {"hard_cut", "history"}:
+            raise ValueError(f"Unsupported editing style: {editing_style}")
+
         if len(storyboard.scenes) != len(
             assembly_plan.clips
         ):
@@ -111,6 +119,7 @@ class VideoMotionEngine:
             MotionInstruction
         ] = []
 
+        history_zoom_index = 0
         for scene, clip in zip(
             storyboard.scenes,
             assembly_plan.clips,
@@ -121,12 +130,25 @@ class VideoMotionEngine:
                     "scene ordering does not match."
                 )
 
+            motion = scene.camera_motion
+            if editing_style == "history":
+                sentence_text = scene.sentence.strip() or scene.narration.strip()
+                if len(sentence_text.split()) >= 12:
+                    motion = (
+                        "slow_zoom_in"
+                        if history_zoom_index % 2 == 0
+                        else "slow_zoom_out"
+                    )
+                    history_zoom_index += 1
+                else:
+                    motion = "static"
+
             instruction = (
                 self._create_instruction(
                     scene.scene_id,
                     clip.start_seconds,
                     clip.duration_seconds,
-                    scene.camera_motion,
+                    motion,
                 )
             )
 
@@ -139,6 +161,7 @@ class VideoMotionEngine:
             width=assembly_plan.width,
             height=assembly_plan.height,
             fps=assembly_plan.fps,
+            editing_style=editing_style,
             instructions=instructions,
             total_duration_seconds=(
                 assembly_plan.total_duration_seconds

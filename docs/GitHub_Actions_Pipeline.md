@@ -119,6 +119,12 @@ coverage, uses static stills and hard cuts, then renders and runs technical
 video QA. A technical failure blocks approval. The rendered video is the human
 check for image/narration relevance and image quality.
 
+When dispatching a production workflow, choose **Hard cut** (the default) to
+keep the current edit, or **History** to add alternating slow zoom-ins and
+zoom-outs only to scenes with at least 12 narration words. Other scenes remain
+static, and all scene changes remain hard cuts. The interactive Studio workflow
+offers the same choice and saves it in `production_config.json`.
+
 The separate **RITZZ Creative Package Production_V2** workflow accepts a
 voice-profile key instead of a provider selector. Enter a key from
 `VOICE_PROFILES` in `modules/project/config.py`; the workflow resolves its

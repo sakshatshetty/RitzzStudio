@@ -4,6 +4,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -330,6 +331,31 @@ def test_create_request(
     assert request.output_directory == str(
         tmp_path / "output"
     )
+
+
+def test_cached_motion_plan_is_rebuilt_when_editing_style_changes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    pipeline = VideoProductionPipeline()
+    motion_plan_file = tmp_path / "motion_plan.json"
+    motion_plan_file.write_text("{}", encoding="utf-8")
+    cached_plan = SimpleNamespace(editing_style="hard_cut")
+    history_plan = SimpleNamespace(editing_style="history")
+    monkeypatch.setattr(pipeline.motion_engine, "load_plan", lambda _path: cached_plan)
+    monkeypatch.setattr(
+        pipeline,
+        "_build_motion_plan",
+        lambda _request, _synchronized_plan: history_plan,
+    )
+
+    plan = pipeline._load_or_build_motion(
+        SimpleNamespace(resume=True, editing_style="history"),
+        motion_plan_file,
+        None,
+    )
+
+    assert plan is history_plan
 
 
 def test_complete_three_scene_pipeline(

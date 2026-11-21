@@ -11,7 +11,7 @@ from typing import Any, ClassVar
 
 from modules.image.engine import ImageProviderProtocol
 from modules.image.models import ImageProvider
-from modules.project.config import ProductionConfig
+from modules.project.config import EditingStyle, ProductionConfig
 from modules.qa.engine import record_stage_qa
 from modules.qa.models import QAStageResult, QAStatus
 from modules.video.engine import (
@@ -144,6 +144,7 @@ class VideoProductionPipeline:
         retry_from_stage: PipelineStageName | None = None,
         enable_image_ai_qa: bool = False,
         require_no_editorial_text: bool = False,
+        editing_style: EditingStyle = "hard_cut",
     ) -> VideoProductionRequest:
         """
         Create a typed production request.
@@ -176,6 +177,7 @@ class VideoProductionPipeline:
             retry_from_stage=retry_from_stage,
             enable_image_ai_qa=enable_image_ai_qa,
             require_no_editorial_text=require_no_editorial_text,
+            editing_style=editing_style,
         )
 
     def run(
@@ -1444,7 +1446,9 @@ class VideoProductionPipeline:
 
     def _load_or_build_motion(self, request, path, synchronized_plan):
         if request.resume and Path(path).exists():
-            return self.motion_engine.load_plan(path)
+            plan = self.motion_engine.load_plan(path)
+            if plan.editing_style == request.editing_style:
+                return plan
         return self._build_motion_plan(request, synchronized_plan)
 
     @staticmethod
@@ -1580,6 +1584,7 @@ class VideoProductionPipeline:
         return self.motion_engine.create_plan(
             storyboard=storyboard,
             assembly_plan=synchronized_plan,
+            editing_style=request.editing_style,
         )
 
     # -----------------------------------------------------------------

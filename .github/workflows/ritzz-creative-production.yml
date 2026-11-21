@@ -12,6 +12,14 @@ on:
           - NEW
           - RESUME
         default: NEW
+      editing_style:
+        description: Hard cut is the current default; History adds occasional slow zooms to long narration scenes
+        required: true
+        type: choice
+        options:
+          - Hard cut
+          - History
+        default: Hard cut
       youtube_channel:
         description: YouTube channel that will receive the private upload
         required: true
@@ -296,6 +304,7 @@ jobs:
         env:
           RITZZ_PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
           RITZZ_RERUN_FROM_STAGE: ${{ inputs.mode == 'RESUME' && inputs.rerun_from_stage || 'CONTINUE' }}
+          RITZZ_EDITING_STYLE: ${{ inputs.editing_style == 'History' && 'history' || 'hard_cut' }}
         run: python scripts/run_render_stage.py
 
       - name: Create exact-input final review package

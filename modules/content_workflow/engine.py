@@ -5,7 +5,7 @@ from pathlib import Path
 
 from modules.outline.models import Outline
 from modules.project import Project, ProjectManager
-from modules.project.config import ProductionConfig
+from modules.project.config import EditingStyle, ProductionConfig
 from modules.project.packaging import PackagingArtifact, PackagingEngine
 from modules.qa.engine import record_stage_qa
 from modules.qa.models import QAStageResult
@@ -52,6 +52,7 @@ class ContentWorkflow:
             force_refresh: bool = False, target_duration_seconds: int = 480,
             minimum_duration_seconds: int = 480, constraints: list[str] | None = None,
             force_refresh_research: bool = False,
+            editing_style: EditingStyle = "hard_cut",
             ) -> ContentWorkflowResult:
         topic = topic.strip()
         if not topic:
@@ -66,6 +67,7 @@ class ContentWorkflow:
         project = self.manager.load_project(project_id) if project_id else self.manager.create_project(topic)
         project_path = self.manager.get_project_path(project)
         production_config = ProductionConfig(
+            editing_style=editing_style,
             target_duration_seconds=target_duration_seconds,
             minimum_duration_seconds=minimum_duration_seconds,
             constraints=constraints or [],

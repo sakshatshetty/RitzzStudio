@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from modules.project.config import EditingStyle
+
 PipelineStageName = Literal[
     "asset_validation",
     "assembly",
@@ -23,6 +25,7 @@ class VideoProductionRequest(BaseModel):
     audio_file: str | None = None
     output_directory: str
     output_video_file: str | None = None
+    editing_style: EditingStyle = "hard_cut"
     resume: bool = True
     retry_from_stage: PipelineStageName | None = None
     enable_image_ai_qa: bool = False

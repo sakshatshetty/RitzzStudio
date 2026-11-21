@@ -197,6 +197,15 @@ def main() -> None:
         print("Minimum duration cannot exceed target duration.")
         return
 
+    print("\nEditing style:")
+    print("1. Hard cut — current edit setting (default)")
+    print("2. History — occasional slow zoom in/out on long narration scenes; hard cuts remain")
+    editing_choice = input("> ").strip() or "1"
+    if editing_choice not in {"1", "2"}:
+        print("Invalid editing style selection.")
+        return
+    editing_style = "history" if editing_choice == "2" else "hard_cut"
+
     try:
         result = ContentWorkflow(Path(PROJECTS_DIR)).run(
             topic=topic,
@@ -205,6 +214,7 @@ def main() -> None:
             target_duration_seconds=target_duration_seconds,
             minimum_duration_seconds=minimum_duration_seconds,
             constraints=constraints,
+            editing_style=editing_style,
         )
     except (RuntimeError, ValueError) as exc:
         print(f"Content workflow failed: {exc}")

@@ -203,7 +203,12 @@ def test_main_generates_thumbnail_after_successful_render(tmp_path, monkeypatch)
         json.dumps({"selected_title": "Test Thumbnail Title"}),
         encoding="utf-8",
     )
+    (project_directory / "production_config.json").write_text(
+        json.dumps({"editing_style": "hard_cut"}),
+        encoding="utf-8",
+    )
     monkeypatch.setenv("RITZZ_PROJECT_ID", project.project_id)
+    monkeypatch.setenv("RITZZ_EDITING_STYLE", "history")
 
     class FakePipeline:
         def __init__(self, **_kwargs):
@@ -213,6 +218,7 @@ def test_main_generates_thumbnail_after_successful_render(tmp_path, monkeypatch)
 
         def create_request(self, **kwargs):
             assert kwargs["enable_image_ai_qa"] is False
+            assert kwargs["editing_style"] == "history"
             assert kwargs["require_no_editorial_text"] is False
             return object()
 

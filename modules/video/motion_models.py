@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from modules.project.config import EditingStyle
+
 
 MotionType = Literal[
     "static",
@@ -81,6 +83,8 @@ class VideoMotionPlan(BaseModel):
         gt=0
     )
 
+    editing_style: EditingStyle = "hard_cut"
+
     instructions: list[MotionInstruction] = Field(
         default_factory=list
     )
@@ -97,6 +101,7 @@ class VideoMotionRequest(BaseModel):
 
     storyboard_file: str
     assembly_plan_file: str
+    editing_style: EditingStyle = "hard_cut"
 
 
 class VideoMotionResult(BaseModel):

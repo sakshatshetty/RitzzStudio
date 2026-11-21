@@ -177,6 +177,42 @@ def test_motion_order_matches_storyboard() -> None:
     ]
 
 
+def test_history_style_zooms_only_on_long_sentences_and_keeps_cuts() -> None:
+    storyboard = create_storyboard()
+    storyboard.scenes[0].sentence = (
+        "This is a deliberately long sentence with enough words to trigger a slow zoom."
+    )
+    storyboard.scenes[2].sentence = (
+        "Here is another deliberately long sentence with enough words for the next zoom."
+    )
+    plan = VideoMotionEngine().create_plan(
+        storyboard,
+        create_assembly_plan(),
+        editing_style="history",
+    )
+
+    assert [instruction.motion for instruction in plan.instructions] == [
+        "slow_zoom_in",
+        "static",
+        "slow_zoom_out",
+    ]
+    assert all(scene.transition == "cut" for scene in storyboard.scenes)
+
+
+def test_hard_cut_style_preserves_existing_motion_behavior() -> None:
+    plan = VideoMotionEngine().create_plan(
+        create_storyboard(),
+        create_assembly_plan(),
+        editing_style="hard_cut",
+    )
+
+    assert [instruction.motion for instruction in plan.instructions] == [
+        "slow_zoom_in",
+        "pan_right",
+        "static",
+    ]
+
+
 def test_zoom_in_instruction() -> None:
     storyboard = create_storyboard()
     assembly_plan = create_assembly_plan()

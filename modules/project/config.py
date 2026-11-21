@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+EditingStyle = Literal["hard_cut", "history"]
+
 DURATION_TOLERANCE_SECONDS = 60
 DEFAULT_HOOK_QUALITY_WEIGHTS = {
     "curiosity": 0.12,
@@ -22,6 +24,7 @@ DEFAULT_HOOK_QUALITY_WEIGHTS = {
 
 
 class ProductionConfig(BaseModel):
+    editing_style: EditingStyle = "hard_cut"
     target_duration_seconds: int = Field(default=480, ge=1)
     minimum_duration_seconds: int = Field(default=480, ge=1)
     words_per_minute: int = Field(default=170, ge=80, le=220)
