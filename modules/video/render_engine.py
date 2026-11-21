@@ -46,16 +46,16 @@ class FFmpegVideoRenderer:
     # Approximate outline of the Gemini sparkle seen in the project's 16:9
     # images. A shaped mask avoids modifying the surrounding scene rectangle.
     GEMINI_WATERMARK_POLYGON = (
-        (0.9336, 0.8333),
-        (0.9414, 0.8611),
-        (0.9570, 0.8750),
-        (0.9414, 0.8889),
-        (0.9336, 0.9167),
-        (0.9232, 0.8889),
-        (0.9108, 0.8750),
-        (0.9232, 0.8611),
+        (0.9126, 0.7953),
+        (0.9204, 0.8231),
+        (0.9360, 0.8370),
+        (0.9204, 0.8509),
+        (0.9126, 0.8787),
+        (0.9022, 0.8509),
+        (0.8898, 0.8370),
+        (0.9022, 0.8231),
     )
-    GEMINI_WATERMARK_RECT = (0.9108, 0.8333, 0.0462, 0.0834)
+    GEMINI_WATERMARK_RECT = (0.8898, 0.7953, 0.0462, 0.0834)
 
     DURATION_TOLERANCE_SECONDS = 0.25
     _EBU_R128_SUMMARY_PATTERN = re.compile(
