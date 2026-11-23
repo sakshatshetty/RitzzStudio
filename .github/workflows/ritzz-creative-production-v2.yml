@@ -20,14 +20,6 @@ on:
           - marcus_elevenlabs
           - john_smallest.ai
         default: john_smallest.ai
-      editing_style:
-        description: Hard cut is the current default; History adds occasional slow zooms to long narration scenes
-        required: true
-        type: choice
-        options:
-          - Hard cut
-          - History
-        default: Hard cut
       youtube_channel:
         description: YouTube channel that will receive the private upload
         required: true
@@ -37,6 +29,14 @@ on:
           - RitzzHistory
           - RitzzTech1
         default: Ritzz-Explains
+      editing_style:
+        description: Hard cut is the current default; History adds occasional slow zooms to long narration scenes
+        required: true
+        type: choice
+        options:
+          - Hard cut
+          - History
+        default: Hard cut
       creative_package_release_tag:
         description: Published GitHub release tag with creative-package.zip (NEW only)
         required: false
