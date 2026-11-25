@@ -544,6 +544,9 @@ def test_filter_script_contains_zoompan() -> None:
     assert "fps=30" in (
         filter_script
     )
+    assert "format=yuv444p,scale=640:360:flags=lanczos" in filter_script
+    assert "scale=640:360:flags=lanczos" in filter_script
+    assert "on/29)*(on/29)*(3-2*(on/29))" in filter_script
 
 
 def test_static_scene_frames_use_cumulative_sentence_cut_timestamps() -> None:

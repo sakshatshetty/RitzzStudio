@@ -42,6 +42,7 @@ class FFmpegVideoRenderer:
     AUDIO_LOUDNESS_RANGE_LU = 11.0
     AUDIO_TRUE_PEAK_CODEC_HEADROOM_DB = 1.0
     VIDEO_BITRATE_TOLERANCE = 0.20
+    ZOOMPAN_SUPERSAMPLE = 2
 
     # Approximate outline of the Gemini sparkle seen in the project's 16:9
     # images. A shaped mask avoids modifying the surrounding scene rectangle.
@@ -817,13 +818,19 @@ class FFmpegVideoRenderer:
                 1,
             )
 
+            progress_expression = f"on/{denominator}"
+            eased_progress_expression = (
+                f"({progress_expression})*({progress_expression})"
+                f"*(3-2*({progress_expression}))"
+            )
+
             zoom_expression = (
                 f"{instruction.zoom_start:.6f}"
                 f"+("
                 f"{instruction.zoom_end:.6f}"
                 f"-"
                 f"{instruction.zoom_start:.6f}"
-                f")*on/{denominator}"
+                f")*{eased_progress_expression}"
             )
 
             x_expression = (
@@ -833,7 +840,7 @@ class FFmpegVideoRenderer:
                 f"{instruction.position_x_end:.6f}"
                 f"-"
                 f"{instruction.position_x_start:.6f}"
-                f")*on/{denominator}"
+                f")*{eased_progress_expression}"
                 f")"
             )
 
@@ -844,7 +851,7 @@ class FFmpegVideoRenderer:
                 f"{instruction.position_y_end:.6f}"
                 f"-"
                 f"{instruction.position_y_start:.6f}"
-                f")*on/{denominator}"
+                f")*{eased_progress_expression}"
                 f")"
             )
 
@@ -884,6 +891,11 @@ class FFmpegVideoRenderer:
                 f"(oh-ih)/2,"
                 f"{gemini_removal_filter}"
                 f"setsar=1,"
+                f"format=yuv444p,"
+                f"scale="
+                f"{assembly_plan.width * self.ZOOMPAN_SUPERSAMPLE}:"
+                f"{assembly_plan.height * self.ZOOMPAN_SUPERSAMPLE}:"
+                f"flags=lanczos,"
                 f"zoompan="
                 f"z='{zoom_expression}':"
                 f"x='{x_expression}':"
