@@ -196,6 +196,8 @@ def test_history_style_zooms_only_on_long_sentences_and_keeps_cuts() -> None:
         "static",
         "slow_zoom_out",
     ]
+    assert plan.instructions[0].zoom_end == 1.05
+    assert plan.instructions[2].zoom_start == 1.05
     assert all(scene.transition == "cut" for scene in storyboard.scenes)
 
 
@@ -211,6 +213,7 @@ def test_hard_cut_style_preserves_existing_motion_behavior() -> None:
         "pan_right",
         "static",
     ]
+    assert plan.instructions[0].zoom_end == 1.1
 
 
 def test_zoom_in_instruction() -> None:

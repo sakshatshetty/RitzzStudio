@@ -25,6 +25,7 @@ class VideoMotionEngine:
     """
 
     ZOOM_AMOUNT = 0.10
+    HISTORY_ZOOM_AMOUNT = 0.05
 
     PAN_CENTER = 0.50
     PAN_START = 0.40
@@ -149,6 +150,11 @@ class VideoMotionEngine:
                     clip.start_seconds,
                     clip.duration_seconds,
                     motion,
+                    zoom_amount=(
+                        self.HISTORY_ZOOM_AMOUNT
+                        if editing_style == "history"
+                        else self.ZOOM_AMOUNT
+                    ),
                 )
             )
 
@@ -227,6 +233,8 @@ class VideoMotionEngine:
         start_seconds: float,
         duration_seconds: float,
         motion: str,
+        *,
+        zoom_amount: float,
     ) -> MotionInstruction:
         """
         Convert storyboard camera motion into
@@ -254,7 +262,7 @@ class VideoMotionEngine:
                 duration_seconds=duration_seconds,
                 motion="slow_zoom_in",
                 zoom_start=1.0,
-                zoom_end=1.0 + self.ZOOM_AMOUNT,
+                zoom_end=1.0 + zoom_amount,
                 position_x_start=self.PAN_CENTER,
                 position_x_end=self.PAN_CENTER,
                 position_y_start=self.PAN_CENTER,
@@ -267,7 +275,7 @@ class VideoMotionEngine:
                 start_seconds=start_seconds,
                 duration_seconds=duration_seconds,
                 motion="slow_zoom_out",
-                zoom_start=1.0 + self.ZOOM_AMOUNT,
+                zoom_start=1.0 + zoom_amount,
                 zoom_end=1.0,
                 position_x_start=self.PAN_CENTER,
                 position_x_end=self.PAN_CENTER,
