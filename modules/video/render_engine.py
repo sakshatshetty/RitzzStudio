@@ -63,6 +63,13 @@ class FFmpegVideoRenderer:
         "JPEG": (0.0, 0.0),
         "PNG": (-0.0240, -0.0340),
     }
+    # The PNG Flow mark has a broader soft edge than the JPEG mark. Expand
+    # only its inpainting mask around the sparkle center so faint outer pixels
+    # are included without changing the JPEG cleanup region.
+    GEMINI_WATERMARK_PROFILE_MASK_SCALE = {
+        "JPEG": (1.0, 1.0),
+        "PNG": (1.4, 1.15),
+    }
 
     DURATION_TOLERANCE_SECONDS = 0.25
     _EBU_R128_SUMMARY_PATTERN = re.compile(
@@ -214,12 +221,33 @@ class FFmpegVideoRenderer:
         """Write an FFmpeg PGM mask for the Gemini sparkle in the render."""
 
         offset_x, offset_y = cls._watermark_profile_offset(profile)
+        normalized_profile = profile.strip().upper()
+        scale_x, scale_y = cls.GEMINI_WATERMARK_PROFILE_MASK_SCALE[
+            normalized_profile
+        ]
+        polygon = cls.GEMINI_WATERMARK_POLYGON
+        center_x = sum(x_ratio for x_ratio, _ in polygon) / len(polygon)
+        center_y = sum(y_ratio for _, y_ratio in polygon) / len(polygon)
         points = [
             (
-                round((x_ratio + offset_x) * width),
-                round((y_ratio + offset_y) * height),
+                round(
+                    (
+                        center_x
+                        + (x_ratio - center_x) * scale_x
+                        + offset_x
+                    )
+                    * width
+                ),
+                round(
+                    (
+                        center_y
+                        + (y_ratio - center_y) * scale_y
+                        + offset_y
+                    )
+                    * height
+                ),
             )
-            for x_ratio, y_ratio in cls.GEMINI_WATERMARK_POLYGON
+            for x_ratio, y_ratio in polygon
         ]
         x_min = max(0, min(x for x, _ in points))
         x_max = min(width - 1, max(x for x, _ in points))
