@@ -131,7 +131,7 @@ def test_v2_workflow_selects_configured_voice_profiles():
     ).read_text(encoding="utf-8")
     voice_profile_input = workflow.split(
         "      voice_profile:\n", 1
-    )[1].split("      youtube_channel:\n", 1)[0]
+    )[1].split("      image_type:\n", 1)[0]
     profile_options = [
         line.removeprefix("          - ")
         for line in voice_profile_input.splitlines()
