@@ -57,6 +57,12 @@ class FFmpegVideoRenderer:
         (0.9232, 0.8611),
     )
     GEMINI_WATERMARK_RECT = (0.9108, 0.8333, 0.0462, 0.0834)
+    # Offsets select the fixed Flow watermark anchor chosen in the workflow.
+    # Filenames and image extensions are not inspected.
+    GEMINI_WATERMARK_PROFILE_OFFSETS = {
+        "JPEG": (0.0, 0.0),
+        "PNG": (-0.0240, -0.0340),
+    }
 
     DURATION_TOLERANCE_SECONDS = 0.25
     _EBU_R128_SUMMARY_PATTERN = re.compile(
@@ -90,6 +96,7 @@ class FFmpegVideoRenderer:
             default=True,
             value=remove_gemini_watermark,
         )
+        self.gemini_watermark_profile = self._parse_gemini_watermark_profile()
         self.video_bitrate = os.getenv(
             "RITZZ_VIDEO_BITRATE",
             self.DEFAULT_VIDEO_BITRATE,
@@ -129,6 +136,24 @@ class FFmpegVideoRenderer:
             )
 
     @staticmethod
+    def _parse_gemini_watermark_profile() -> str:
+        value = os.getenv("RITZZ_GEMINI_WATERMARK_PROFILE", "JPEG")
+        normalized = value.strip().upper()
+        if normalized not in {"JPEG", "PNG"}:
+            raise ValueError(
+                "RITZZ_GEMINI_WATERMARK_PROFILE must be JPEG or PNG."
+            )
+        return normalized
+
+    @classmethod
+    def _watermark_profile_offset(cls, profile: str) -> tuple[float, float]:
+        normalized = profile.strip().upper()
+        try:
+            return cls.GEMINI_WATERMARK_PROFILE_OFFSETS[normalized]
+        except KeyError as exc:
+            raise ValueError("Watermark profile must be JPEG or PNG.") from exc
+
+    @staticmethod
     def _parse_bool_setting(
         name: str,
         *,
@@ -155,12 +180,16 @@ class FFmpegVideoRenderer:
         cls,
         width: int,
         height: int,
+        profile: str = "JPEG",
     ) -> str:
         """Build a proportional FFmpeg delogo filter for 16:9 Gemini art."""
 
         x_ratio, y_ratio, width_ratio, height_ratio = (
             cls.GEMINI_WATERMARK_RECT
         )
+        offset_x, offset_y = cls._watermark_profile_offset(profile)
+        x_ratio += offset_x
+        y_ratio += offset_y
 
         def even_coordinate(value: float) -> int:
             return max(0, int(round(value / 2.0) * 2))
@@ -180,11 +209,16 @@ class FFmpegVideoRenderer:
         cls,
         width: int,
         height: int,
+        profile: str = "JPEG",
     ) -> Path:
         """Write an FFmpeg PGM mask for the Gemini sparkle in the render."""
 
+        offset_x, offset_y = cls._watermark_profile_offset(profile)
         points = [
-            (round(x_ratio * width), round(y_ratio * height))
+            (
+                round((x_ratio + offset_x) * width),
+                round((y_ratio + offset_y) * height),
+            )
             for x_ratio, y_ratio in cls.GEMINI_WATERMARK_POLYGON
         ]
         x_min = max(0, min(x for x, _ in points))
@@ -259,7 +293,9 @@ class FFmpegVideoRenderer:
             raise ValueError(f"Thumbnail has invalid dimensions: {source_path}")
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        mask_file = self._create_gemini_watermark_mask(width, height)
+        mask_file = self._create_gemini_watermark_mask(
+            width, height, self.gemini_watermark_profile
+        )
         try:
             command = [
                 self.ffmpeg_path,
@@ -522,6 +558,7 @@ class FFmpegVideoRenderer:
             self._create_gemini_watermark_mask(
                 assembly_plan.width,
                 assembly_plan.height,
+                self.gemini_watermark_profile,
             )
             if self.remove_gemini_watermark
             else None
@@ -781,6 +818,7 @@ class FFmpegVideoRenderer:
                 self._build_gemini_delogo_filter(
                     assembly_plan.width,
                     assembly_plan.height,
+                    self.gemini_watermark_profile,
                 )
                 + ","
             )

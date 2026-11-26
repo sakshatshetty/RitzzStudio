@@ -320,8 +320,10 @@ def test_gemini_watermark_spot_reduction_is_on_by_default_and_can_be_disabled(
     )
 
     monkeypatch.delenv("RITZZ_REMOVE_GEMINI_WATERMARK", raising=False)
+    monkeypatch.delenv("RITZZ_GEMINI_WATERMARK_PROFILE", raising=False)
     default_renderer = FFmpegVideoRenderer()
     assert default_renderer.remove_gemini_watermark is True
+    assert default_renderer.gemini_watermark_profile == "JPEG"
     default_filter = default_renderer.build_filter_script(
         assembly_plan,
         motion_plan,
@@ -350,6 +352,41 @@ def test_gemini_watermark_setting_rejects_invalid_values(monkeypatch):
 
     with pytest.raises(ValueError, match="RITZZ_REMOVE_GEMINI_WATERMARK"):
         FFmpegVideoRenderer()
+
+
+def test_gemini_watermark_profile_selects_png_location(monkeypatch):
+    monkeypatch.setenv("RITZZ_GEMINI_WATERMARK_PROFILE", "PNG")
+    renderer = FFmpegVideoRenderer()
+
+    assert renderer.gemini_watermark_profile == "PNG"
+    assert renderer._build_gemini_delogo_filter(320, 180, "PNG") == (
+        "delogo=x=284:y=144:w=14:h=16:show=0"
+    )
+
+
+def test_gemini_watermark_profile_rejects_unknown_value(monkeypatch):
+    monkeypatch.setenv("RITZZ_GEMINI_WATERMARK_PROFILE", "WEBP")
+
+    with pytest.raises(ValueError, match="RITZZ_GEMINI_WATERMARK_PROFILE"):
+        FFmpegVideoRenderer()
+
+
+def test_gemini_png_mask_is_shifted_from_the_jpeg_anchor():
+    mask_file = FFmpegVideoRenderer._create_gemini_watermark_mask(320, 180, "PNG")
+
+    try:
+        content = mask_file.read_bytes()
+        pixels = content[len(b"P5\n320 180\n255\n") :]
+        png_anchor = (
+            round((0.9336 - 0.0240) * 320),
+            round((0.875 - 0.0340) * 180),
+        )
+        jpeg_anchor = (round(0.9336 * 320), round(0.875 * 180))
+
+        assert pixels[png_anchor[1] * 320 + png_anchor[0]] > 0
+        assert pixels[jpeg_anchor[1] * 320 + jpeg_anchor[0]] == 0
+    finally:
+        mask_file.unlink(missing_ok=True)
 
 
 def test_gemini_mask_is_a_valid_pgm_and_contains_a_localized_shape():

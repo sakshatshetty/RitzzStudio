@@ -20,6 +20,14 @@ on:
           - marcus_elevenlabs
           - john_smallest.ai
         default: john_smallest.ai
+      image_type:
+        description: Select the Flow image type profile; filenames are ignored
+        required: true
+        type: choice
+        options:
+          - JPEG
+          - PNG
+        default: JPEG
       youtube_channel:
         description: YouTube channel that will receive the private upload
         required: true
@@ -188,6 +196,7 @@ jobs:
       RITZZ_VOICE_ID: ${{ secrets.RITZZ_VOICE_ID }}
       SMALLEST_API_KEY: ${{ secrets.smallestai_api_key }}
       RITZZ_VOICE_PROFILE: ${{ inputs.voice_profile }}
+      RITZZ_GEMINI_WATERMARK_PROFILE: ${{ inputs.image_type }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
