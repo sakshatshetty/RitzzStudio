@@ -241,3 +241,18 @@ def test_main_generates_thumbnail_after_successful_render(tmp_path, monkeypatch)
 
     assert run_render_stage.main() == 0
     assert (project_directory / "video" / "thumbnail.jpg").read_bytes() == b"thumbnail"
+
+
+def test_pro_render_requires_prepared_sound_effect_directory(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.chdir(tmp_path)
+    project_manager = ProjectManager(tmp_path / "projects")
+    project = project_manager.create_project("Pro render input validation")
+    monkeypatch.setenv("RITZZ_PROJECT_ID", project.project_id)
+    monkeypatch.setenv("RITZZ_EDITING_STYLE", "pro")
+    monkeypatch.delenv("RITZZ_PRO_SOUND_EFFECTS_DIR", raising=False)
+
+    with pytest.raises(FileNotFoundError, match="RITZZ_PRO_SOUND_EFFECTS_DIR"):
+        run_render_stage.main()

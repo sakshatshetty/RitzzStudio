@@ -54,12 +54,13 @@ on:
         type: number
         default: 8
       editing_style:
-        description: Hard cut is the current default; History adds occasional slow zooms to long narration scenes
+        description: Hard cut uses cuts; History adds slow zooms; Pro adds directed transitions, overlays, and sound effects
         required: true
         type: choice
         options:
           - Hard cut
           - History
+          - Pro
         default: Hard cut
 
 permissions:
@@ -1187,11 +1188,37 @@ jobs:
           project_id=$(python -c "import json; print(json.load(open('.pipeline-artifacts/content_workflow_result.json'))['project_id'])")
           echo "project_id=$project_id" >> "$GITHUB_OUTPUT"
 
+      - name: Prepare Pro overlay font
+        if: ${{ inputs.editing_style == 'Pro' }}
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/ritzz-fonts"
+          curl --fail --location --retry 2 --connect-timeout 10 --max-time 60 \
+            "https://raw.githubusercontent.com/google/fonts/45e3d5269e4a17d823f6d84470bc084dc5ae46f6/ofl/comicneue/ComicNeue-Bold.ttf" \
+            --output "$RUNNER_TEMP/ritzz-fonts/ComicNeue-Bold.ttf"
+          echo "RITZZ_FONT_PATH=$RUNNER_TEMP/ritzz-fonts/ComicNeue-Bold.ttf" >> "$GITHUB_ENV"
+
+      - name: Download and prepare Pro sound-effects library
+        if: ${{ inputs.editing_style == 'Pro' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          mkdir -p .pipeline-artifacts
+          gh release download pro-sound-effects \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern ritzz-pro-sound-effects.zip \
+            --dir .pipeline-artifacts
+          python scripts/prepare_pro_sound_effects.py \
+            --archive .pipeline-artifacts/ritzz-pro-sound-effects.zip \
+            --output .pipeline-artifacts/pro-sound-effects
+
       - name: Render test video and run technical QA
         shell: bash
         env:
           RITZZ_PROJECT_ID: ${{ steps.project.outputs.project_id }}
-          RITZZ_EDITING_STYLE: ${{ inputs.editing_style == 'History' && 'history' || 'hard_cut' }}
+          RITZZ_EDITING_STYLE: ${{ inputs.editing_style == 'History' && 'history' || inputs.editing_style == 'Pro' && 'pro' || 'hard_cut' }}
+          RITZZ_PRO_SOUND_EFFECTS_DIR: ${{ inputs.editing_style == 'Pro' && '.pipeline-artifacts/pro-sound-effects' || '' }}
         run: |
           set -euo pipefail
           stage=render_video

@@ -216,6 +216,20 @@ def test_hard_cut_style_preserves_existing_motion_behavior() -> None:
     assert plan.instructions[0].zoom_end == 1.1
 
 
+def test_pro_style_keeps_camera_static_for_directed_transitions() -> None:
+    plan = VideoMotionEngine().create_plan(
+        create_storyboard(),
+        create_assembly_plan(),
+        editing_style="pro",
+    )
+
+    assert [instruction.motion for instruction in plan.instructions] == [
+        "static",
+        "static",
+        "static",
+    ]
+
+
 def test_zoom_in_instruction() -> None:
     storyboard = create_storyboard()
     assembly_plan = create_assembly_plan()

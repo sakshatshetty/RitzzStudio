@@ -165,8 +165,16 @@ def main() -> int:
         editing_style: EditingStyle = "history"
     elif requested_editing_style == "hard_cut":
         editing_style = "hard_cut"
+    elif requested_editing_style == "pro":
+        editing_style = "pro"
     else:
         raise ValueError(f"Unsupported editing style: {requested_editing_style}")
+    sound_effects_directory = os.environ.get("RITZZ_PRO_SOUND_EFFECTS_DIR")
+    if editing_style == "pro" and not sound_effects_directory:
+        raise FileNotFoundError(
+            "Pro editing requires RITZZ_PRO_SOUND_EFFECTS_DIR to point "
+            "to the prepared sound-effects library."
+        )
     storyboard_file = project_directory / "storyboard" / "storyboard_audio_timed.json"
     image_directory = project_directory / "images"
     narration_result_file = project_directory / "voice" / "narration_result.json"
@@ -192,6 +200,9 @@ def main() -> int:
         enable_image_ai_qa=False,
         require_no_editorial_text=False,
         editing_style=editing_style,
+        sound_effects_directory=(
+            sound_effects_directory if editing_style == "pro" else None
+        ),
     )
     result = pipeline.run(request)
     print(f"Render status: {result.status}")

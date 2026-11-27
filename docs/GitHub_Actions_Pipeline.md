@@ -122,8 +122,36 @@ check for image/narration relevance and image quality.
 When dispatching a production workflow, choose **Hard cut** (the default) to
 keep the current edit, or **History** to add alternating slow zoom-ins and
 zoom-outs only to scenes with at least 12 narration words. Other scenes remain
-static, and all scene changes remain hard cuts. The interactive Studio workflow
-offers the same choice and saves it in `production_config.json`.
+static, and all scene changes remain hard cuts. These two modes do not download
+or use the Pro sound-effects library.
+
+Choose **Pro** to run the deterministic Python editing director immediately
+before FFmpeg rendering. It reads the audio-timed storyboard and render timeline,
+adds short dissolves at section changes, places any storyboard editorial
+callouts as timed overlays only when image OCR confirms the text is missing,
+and mixes tagged sound effects when the narration matches a cue. Pro keeps
+camera motion static. Hard cut and History do not run the Pro director or use
+its effects.
+
+Pro requires a permanent same-repository GitHub release with tag
+`pro-sound-effects` and asset `ritzz-pro-sound-effects.zip`. The ZIP must contain
+a root `manifest.json` and the referenced `.wav`, `.mp3`, `.m4a`, or `.ogg`
+files. Example manifest:
+
+```json
+{
+  "effects": [
+    { "file": "whoosh.wav", "tags": ["transition", "whoosh"] },
+    { "file": "impact.wav", "tags": ["impact"] }
+  ]
+}
+```
+
+The director uses the `transition`, `reveal`, `impact`, `click`, and `water`
+tags when those cues are relevant; if the library has no matching tag, it
+doesn't invent or substitute an effect. The workflow validates and safely
+extracts this ZIP only when Pro is selected. Pro runs will fail clearly until
+the release and asset are published.
 
 The separate **RITZZ Creative Package Production_V2** workflow accepts a
 voice-profile key instead of a provider selector. Enter a key from

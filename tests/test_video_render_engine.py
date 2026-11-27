@@ -10,6 +10,11 @@ from modules.video.motion_models import (
     MotionInstruction,
     VideoMotionPlan,
 )
+from modules.video.pro_director import (
+    ProEditPlan,
+    ProSceneDirection,
+    ProSoundEffectEvent,
+)
 from modules.video.render_engine import (
     FFmpegVideoRenderer,
 )
@@ -524,6 +529,154 @@ def test_filter_script_contains_concat() -> None:
 
     assert "zoompan" not in filter_script
     assert "loop=loop=-1" in filter_script
+
+
+def test_pro_filter_script_applies_fade_overlay_and_sound_effect_mix(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("RITZZ_FONT_PATH", "C:/Windows/Fonts/arial.ttf")
+    images = create_test_images(tmp_path)
+    assembly_plan = create_assembly_plan(images)
+    motion_plan = create_motion_plan().model_copy(
+        update={"editing_style": "pro"}
+    )
+    pro_plan = ProEditPlan(
+        topic=assembly_plan.topic,
+        total_duration_seconds=assembly_plan.total_duration_seconds,
+        scenes=[
+            ProSceneDirection(
+                scene_id="scene_001",
+                start_seconds=0,
+                duration_seconds=1,
+            ),
+            ProSceneDirection(
+                scene_id="scene_002",
+                start_seconds=1,
+                duration_seconds=1,
+                incoming_transition="fade",
+                transition_duration_seconds=0.3,
+                overlay_text="REVEAL",
+                overlay_position="top_center",
+            ),
+            ProSceneDirection(
+                scene_id="scene_003",
+                start_seconds=2,
+                duration_seconds=1,
+            ),
+        ],
+        sound_effects=[
+            ProSoundEffectEvent(
+                file_path=str(tmp_path / "whoosh.wav"),
+                start_seconds=1,
+                cue="transition",
+            )
+        ],
+    )
+
+    filter_script = FFmpegVideoRenderer().build_filter_script(
+        assembly_plan,
+        motion_plan,
+        pro_edit_plan=pro_plan,
+    )
+
+    assert "xfade=transition=fade:duration=0.300000:offset=0.700000" in filter_script
+    assert "drawtext=fontfile=" in filter_script
+    assert "text='REVEAL'" in filter_script
+    assert "amix=inputs=2:duration=first" in filter_script
+    assert "adelay=1000:all=1" in filter_script
+    assert "[aout]" in filter_script
+
+
+def test_hard_cut_filter_script_does_not_add_pro_processing(tmp_path):
+    images = create_test_images(tmp_path)
+    filter_script = FFmpegVideoRenderer().build_filter_script(
+        create_assembly_plan(images),
+        create_motion_plan(),
+    )
+
+    assert "xfade=" not in filter_script
+    assert "drawtext=" not in filter_script
+    assert "amix=" not in filter_script
+
+
+def test_pro_render_keeps_audio_duration_with_transition_and_sound_effect(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("RITZZ_FONT_PATH", "C:/Windows/Fonts/arial.ttf")
+    images = create_test_images(tmp_path)
+    assembly_plan = create_assembly_plan(images)
+    motion_plan = create_motion_plan().model_copy(
+        update={"editing_style": "pro"}
+    )
+    narration = create_test_audio(tmp_path, duration_seconds=3.0)
+    sound_effect = tmp_path / "whoosh.wav"
+    ffmpeg = shutil.which("ffmpeg")
+    assert ffmpeg is not None
+    completed = subprocess.run(
+        [
+            ffmpeg,
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=880:sample_rate=48000:duration=0.25",
+            "-ac",
+            "1",
+            "-c:a",
+            "pcm_s16le",
+            str(sound_effect),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    pro_plan = ProEditPlan(
+        topic=assembly_plan.topic,
+        total_duration_seconds=assembly_plan.total_duration_seconds,
+        scenes=[
+            ProSceneDirection(
+                scene_id="scene_001",
+                start_seconds=0,
+                duration_seconds=1,
+            ),
+            ProSceneDirection(
+                scene_id="scene_002",
+                start_seconds=1,
+                duration_seconds=1,
+                incoming_transition="fade",
+                transition_duration_seconds=0.3,
+                overlay_text="REVEAL",
+            ),
+            ProSceneDirection(
+                scene_id="scene_003",
+                start_seconds=2,
+                duration_seconds=1,
+            ),
+        ],
+        sound_effects=[
+            ProSoundEffectEvent(
+                file_path=str(sound_effect),
+                start_seconds=1,
+                cue="transition",
+            )
+        ],
+    )
+    output = tmp_path / "pro-render.mp4"
+
+    FFmpegVideoRenderer().render(
+        assembly_plan,
+        motion_plan,
+        narration,
+        output,
+        pro_edit_plan=pro_plan,
+    )
+
+    probe = FFmpegVideoRenderer()._probe_media(output)
+    assert probe["duration_seconds"] == pytest.approx(3.0, abs=0.1)
+    assert output.stat().st_size > 0
 
 
 def test_filter_script_contains_zoompan() -> None:

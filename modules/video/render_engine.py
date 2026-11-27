@@ -12,6 +12,7 @@ from modules.video.engine import VideoAssemblyEngine
 from modules.video.models import VideoAssemblyPlan
 from modules.video.motion_engine import VideoMotionEngine
 from modules.video.motion_models import VideoMotionPlan
+from modules.video.pro_director import ProEditPlan
 from modules.video.render_models import (
     AudioLoudnessMeasurement,
     VideoRenderRequest,
@@ -515,6 +516,8 @@ class FFmpegVideoRenderer:
         motion_plan: VideoMotionPlan,
         audio_file: str | Path,
         output_file: str | Path,
+        *,
+        pro_edit_plan: ProEditPlan | None = None,
     ) -> Path:
         """
         Render the synchronized plan to MP4.
@@ -524,6 +527,12 @@ class FFmpegVideoRenderer:
             assembly_plan,
             motion_plan,
         )
+        if motion_plan.editing_style == "pro" and pro_edit_plan is None:
+            raise ValueError("Pro rendering requires a Pro edit plan.")
+        if motion_plan.editing_style != "pro" and pro_edit_plan is not None:
+            raise ValueError("A Pro edit plan can only be used with Pro editing style.")
+        if pro_edit_plan is not None:
+            self._validate_pro_edit_plan(assembly_plan, pro_edit_plan)
 
         audio_path = Path(
             audio_file
@@ -573,6 +582,20 @@ class FFmpegVideoRenderer:
                 image_path
             )
 
+        sound_effect_paths = (
+            [Path(event.file_path) for event in pro_edit_plan.sound_effects]
+            if pro_edit_plan is not None
+            else []
+        )
+        for sound_effect_path in sound_effect_paths:
+            if (
+                not sound_effect_path.is_file()
+                or sound_effect_path.stat().st_size <= 0
+            ):
+                raise FileNotFoundError(
+                    f"Pro sound effect is missing or empty: {sound_effect_path}"
+                )
+
         output_path = Path(
             output_file
         )
@@ -596,6 +619,9 @@ class FFmpegVideoRenderer:
                 assembly_plan,
                 motion_plan,
                 gemini_mask_file=gemini_mask_file,
+                pro_edit_plan=pro_edit_plan,
+                audio_input_index=len(image_paths),
+                first_sound_effect_input_index=len(image_paths) + 1,
             )
         except Exception:
             if gemini_mask_file is not None:
@@ -623,55 +649,57 @@ class FFmpegVideoRenderer:
             [
                 "-i",
                 str(audio_path),
+            ]
+        )
+        for sound_effect_path in sound_effect_paths:
+            command.extend(["-i", str(sound_effect_path)])
 
+        command.extend(
+            [
                 "-filter_complex",
                 filter_script,
 
                 "-map",
                 "[vout]",
-
-                "-map",
-                f"{audio_input_index}:a:0",
-
-                "-af",
-                self.build_audio_filter(),
-
+            ]
+        )
+        if pro_edit_plan is None:
+            command.extend(
+                [
+                    "-map",
+                    f"{audio_input_index}:a:0",
+                    "-af",
+                    self.build_audio_filter(),
+                ]
+            )
+        else:
+            command.extend(["-map", "[aout]"])
+        command.extend(
+            [
                 "-t",
                 f"{assembly_plan.total_duration_seconds:.3f}",
-
                 "-c:v",
                 self.DEFAULT_CODEC,
-
                 "-preset",
                 self.DEFAULT_PRESET,
-
                 "-b:v",
                 self.video_bitrate,
-
                 "-minrate",
                 self.video_bitrate,
-
                 "-maxrate",
                 self.video_bitrate,
-
                 "-bufsize",
                 str(self.video_bitrate_bps * 2),
-
                 "-x264-params",
                 "nal-hrd=cbr",
-
                 "-pix_fmt",
                 "yuv420p",
-
                 "-c:a",
                 self.DEFAULT_AUDIO_CODEC,
-
                 "-b:a",
                 self.DEFAULT_AUDIO_BITRATE,
-
                 "-movflags",
                 "+faststart",
-
                 str(output_path),
             ]
         )
@@ -820,6 +848,9 @@ class FFmpegVideoRenderer:
         motion_plan: VideoMotionPlan,
         *,
         gemini_mask_file: str | Path | None = None,
+        pro_edit_plan: ProEditPlan | None = None,
+        audio_input_index: int | None = None,
+        first_sound_effect_input_index: int | None = None,
     ) -> str:
         """
         Build the FFmpeg filter graph.
@@ -832,8 +863,19 @@ class FFmpegVideoRenderer:
             assembly_plan,
             motion_plan,
         )
+        if pro_edit_plan is not None:
+            self._validate_pro_edit_plan(assembly_plan, pro_edit_plan)
+            if motion_plan.editing_style != "pro":
+                raise ValueError("A Pro edit plan requires Pro editing style.")
+        elif motion_plan.editing_style == "pro":
+            raise ValueError("Pro rendering requires a Pro edit plan.")
 
         filters: list[str] = []
+        directions = (
+            {scene.scene_id: scene for scene in pro_edit_plan.scenes}
+            if pro_edit_plan is not None
+            else {}
+        )
 
         video_labels: list[str] = []
         if not self.remove_gemini_watermark:
@@ -872,12 +914,24 @@ class FFmpegVideoRenderer:
                 output_label
             )
 
+            direction = directions.get(clip.scene_id)
             start_frame = round(clip.start_seconds * assembly_plan.fps)
             end_frame = round(
                 (clip.start_seconds + clip.duration_seconds)
                 * assembly_plan.fps
             )
             frames = max(1, end_frame - start_frame)
+            if (
+                direction is not None
+                and direction.incoming_transition == "fade"
+            ):
+                frames += max(
+                    1,
+                    round(
+                        direction.transition_duration_seconds
+                        * assembly_plan.fps
+                    ),
+                )
 
             denominator = max(
                 frames - 1,
@@ -922,6 +976,11 @@ class FFmpegVideoRenderer:
             )
 
             if instruction.motion == "static":
+                pro_output_filter = (
+                    ",format=yuv444p,settb=AVTB"
+                    if pro_edit_plan is not None
+                    else ""
+                )
                 filter_expression = (
                     f"{input_label}"
                     f"loop=loop=-1:size=1:start=0,"
@@ -939,6 +998,7 @@ class FFmpegVideoRenderer:
                     f"fps={assembly_plan.fps},"
                     f"trim=end_frame={frames},"
                     f"setpts=PTS-STARTPTS"
+                    f"{pro_output_filter}"
                     f"{output_label}"
                 )
                 filters.append(filter_expression)
@@ -973,6 +1033,7 @@ class FFmpegVideoRenderer:
                 f"fps={assembly_plan.fps},"
                 f"trim=end_frame={frames},"
                 f"setpts=PTS-STARTPTS"
+                f"{',format=yuv444p,settb=AVTB' if pro_edit_plan is not None else ''}"
                 f"{output_label}"
             )
 
@@ -980,28 +1041,225 @@ class FFmpegVideoRenderer:
                 filter_expression
             )
 
-        concat_inputs = "".join(
-            video_labels
-        )
+        if pro_edit_plan is None:
+            concat_inputs = "".join(video_labels)
+            filters.append(
+                f"{concat_inputs}"
+                f"concat=n={len(video_labels)}:v=1:a=0[vconcat]"
+            )
+            filters.append("[vconcat]format=yuv420p[vout]")
+            return ";\n".join(filters) + ";\n"
 
-        filters.append(
-            f"{concat_inputs}"
-            f"concat="
-            f"n={len(video_labels)}:"
-            f"v=1:"
-            f"a=0"
-            f"[vconcat]"
+        combined_label = video_labels[0]
+        combined_frames = max(
+            1,
+            round(
+                (
+                    assembly_plan.clips[0].start_seconds
+                    + assembly_plan.clips[0].duration_seconds
+                )
+                * assembly_plan.fps
+            )
+            - round(
+                assembly_plan.clips[0].start_seconds * assembly_plan.fps
+            ),
         )
+        for index in range(1, len(video_labels)):
+            direction = directions[assembly_plan.clips[index].scene_id]
+            next_label = f"[vpro{index}]"
+            scene_frames = max(
+                1,
+                round(
+                    (
+                        assembly_plan.clips[index].start_seconds
+                        + assembly_plan.clips[index].duration_seconds
+                    )
+                    * assembly_plan.fps
+                )
+                - round(
+                    assembly_plan.clips[index].start_seconds
+                    * assembly_plan.fps
+                ),
+            )
+            if direction.incoming_transition == "fade":
+                transition_frames = max(
+                    1,
+                    round(
+                        direction.transition_duration_seconds
+                        * assembly_plan.fps
+                    ),
+                )
+                transition_duration = transition_frames / assembly_plan.fps
+                offset = (combined_frames - transition_frames) / assembly_plan.fps
+                filters.append(
+                    f"{combined_label}{video_labels[index]}"
+                    f"xfade=transition=fade:duration={transition_duration:.6f}:"
+                    f"offset={offset:.6f}{next_label}"
+                )
+                combined_frames += scene_frames - transition_frames
+            else:
+                filters.append(
+                    f"{combined_label}{video_labels[index]}"
+                    f"concat=n=2:v=1:a=0{next_label}"
+                )
+                combined_frames += scene_frames
+            combined_label = next_label
 
-        filters.append(
-            "[vconcat]"
-            "format=yuv420p"
-            "[vout]"
+        for direction in pro_edit_plan.scenes:
+            if not direction.overlay_text:
+                continue
+            start = direction.start_seconds
+            end = start + direction.duration_seconds
+            x_position, y_position = self._overlay_position(
+                direction.overlay_position,
+            )
+            text = self._escape_drawtext(direction.overlay_text)
+            font_file = self._pro_font_file()
+            next_label = f"[vtext{len(filters)}]"
+            filters.append(
+                f"{combined_label}drawtext=fontfile='{font_file}':"
+                f"text='{text}':"
+                f"fontcolor=white:fontsize=48:box=1:"
+                f"boxcolor=black@0.55:boxborderw=18:"
+                f"x={x_position}:y={y_position}:"
+                f"enable='between(t\\,{start:.3f}\\,{end:.3f})'{next_label}"
+            )
+            combined_label = next_label
+
+        filters.append(f"{combined_label}format=yuv420p[vout]")
+        filters.extend(
+            self._build_pro_audio_filters(
+                pro_edit_plan,
+                audio_input_index=(
+                    len(assembly_plan.clips)
+                    if audio_input_index is None
+                    else audio_input_index
+                ),
+                first_sound_effect_input_index=(
+                    len(assembly_plan.clips) + 1
+                    if first_sound_effect_input_index is None
+                    else first_sound_effect_input_index
+                ),
+            )
         )
 
         return ";\n".join(
             filters
         ) + ";\n"
+
+    @staticmethod
+    def _escape_drawtext(value: str) -> str:
+        return (
+            value.replace("\\", "\\\\")
+            .replace("'", "\\'")
+            .replace(":", "\\:")
+            .replace(",", "\\,")
+            .replace("%", "\\%")
+            .replace("[", "\\[")
+            .replace("]", "\\]")
+        )
+
+    @staticmethod
+    def _pro_font_file() -> str:
+        configured = os.getenv("RITZZ_FONT_PATH")
+        candidates = [
+            Path(configured) if configured else None,
+            Path("C:/Windows/Fonts/arial.ttf"),
+            Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+        ]
+        font_file = next(
+            (candidate for candidate in candidates if candidate and candidate.is_file()),
+            None,
+        )
+        if font_file is None:
+            raise FileNotFoundError(
+                "Pro text overlays require a readable font file. Set "
+                "RITZZ_FONT_PATH to the approved render font."
+            )
+        return font_file.resolve().as_posix().replace(":", "\\:")
+
+    @staticmethod
+    def _overlay_position(
+        position: str,
+    ) -> tuple[str, str]:
+        vertical, _, horizontal = position.partition("_")
+        x = {
+            "left": "80",
+            "center": "(w-text_w)/2",
+            "right": "w-text_w-80",
+        }[horizontal]
+        y = {
+            "top": "80",
+            "middle": "(h-text_h)/2",
+            "lower": "h-text_h-80",
+        }[vertical]
+        return x, y
+
+    def _build_pro_audio_filters(
+        self,
+        plan: ProEditPlan,
+        *,
+        audio_input_index: int,
+        first_sound_effect_input_index: int,
+    ) -> list[str]:
+        filters: list[str] = []
+        narration_label = "[pro_narration]"
+        filters.append(
+            f"[{audio_input_index}:a:0]"
+            "aresample=48000,aformat=sample_rates=48000:channel_layouts=stereo"
+            f"{narration_label}"
+        )
+        audio_labels = [narration_label]
+        for index, event in enumerate(plan.sound_effects):
+            input_index = first_sound_effect_input_index + index
+            output_label = f"[pro_sfx{index}]"
+            delay_milliseconds = round(event.start_seconds * 1000)
+            filters.append(
+                f"[{input_index}:a:0]"
+                "aresample=48000,aformat=sample_rates=48000:channel_layouts=stereo,"
+                f"volume={event.volume:.3f},"
+                f"adelay={delay_milliseconds}:all=1"
+                f"{output_label}"
+            )
+            audio_labels.append(output_label)
+
+        filters.append(
+            f"{''.join(audio_labels)}"
+            f"amix=inputs={len(audio_labels)}:duration=first:"
+            f"dropout_transition=0:normalize=0,"
+            f"{self.build_audio_filter()}[aout]"
+        )
+        return filters
+
+    @staticmethod
+    def _validate_pro_edit_plan(
+        assembly_plan: VideoAssemblyPlan,
+        plan: ProEditPlan,
+    ) -> None:
+        if plan.topic != assembly_plan.topic:
+            raise ValueError("Pro edit plan topic does not match the render timeline.")
+        if abs(
+            plan.total_duration_seconds - assembly_plan.total_duration_seconds
+        ) > FFmpegVideoRenderer.DURATION_TOLERANCE_SECONDS:
+            raise ValueError("Pro edit plan duration does not match the render timeline.")
+        if len(plan.scenes) != len(assembly_plan.clips):
+            raise ValueError("Pro edit plan scene count does not match the render timeline.")
+        for direction, clip in zip(plan.scenes, assembly_plan.clips, strict=True):
+            if (
+                direction.scene_id != clip.scene_id
+                or abs(direction.start_seconds - clip.start_seconds) > 0.01
+                or abs(direction.duration_seconds - clip.duration_seconds) > 0.01
+            ):
+                raise ValueError(
+                    f"Pro edit direction does not match the timeline for {clip.scene_id}."
+                )
+            if (
+                direction.incoming_transition == "fade"
+                and direction.transition_duration_seconds <= 0
+            ):
+                raise ValueError(
+                    f"Fade transition for {clip.scene_id} requires a positive duration."
+                )
 
     # -----------------------------------------------------------------
     # Validation
