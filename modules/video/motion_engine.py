@@ -105,7 +105,7 @@ class VideoMotionEngine:
                 "the assembly plan topic."
             )
 
-        if editing_style not in {"hard_cut", "history"}:
+        if editing_style not in {"hard_cut", "history", "pro"}:
             raise ValueError(f"Unsupported editing style: {editing_style}")
 
         if len(storyboard.scenes) != len(
@@ -132,7 +132,9 @@ class VideoMotionEngine:
                 )
 
             motion = scene.camera_motion
-            if editing_style == "history":
+            if editing_style == "pro":
+                motion = "static"
+            elif editing_style == "history":
                 sentence_text = scene.sentence.strip() or scene.narration.strip()
                 if len(sentence_text.split()) >= 12:
                     motion = (

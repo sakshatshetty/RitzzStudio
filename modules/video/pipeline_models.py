@@ -30,6 +30,7 @@ class VideoProductionRequest(BaseModel):
     retry_from_stage: PipelineStageName | None = None
     enable_image_ai_qa: bool = False
     require_no_editorial_text: bool = False
+    sound_effects_directory: str | None = None
 
 
 class VideoProductionResult(BaseModel):

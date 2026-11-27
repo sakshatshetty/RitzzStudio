@@ -87,13 +87,21 @@ def test_primary_workflow_selects_a_channel_and_uses_its_oauth_token():
     assert "python scripts/verify_youtube_channel.py" in workflow
 
 
-def test_workflow_avoids_apt_and_verifies_ffmpeg_download():
+def test_workflow_uses_apt_only_for_pro_ocr_and_verifies_ffmpeg_download():
     workflow = WORKFLOW.read_text(encoding="utf-8")
     ffmpeg_action = Path(".github/actions/setup-ffmpeg/action.yml").read_text(
         encoding="utf-8"
     )
 
-    assert "sudo apt-get" not in workflow
+    pro_step = workflow.split(
+        "- name: Download and prepare Pro sound-effects library\n", 1
+    )[1].split("- name: Render supplied stills and run technical QA\n", 1)[0]
+    workflow_without_pro_step = workflow.replace(pro_step, "", 1)
+
+    assert "sudo apt-get update" in pro_step
+    assert "sudo apt-get install --yes tesseract-ocr" in pro_step
+    assert "sudo apt-get" not in workflow_without_pro_step
+    assert "if: ${{ inputs.editing_style == 'Pro'" in pro_step
     assert workflow.count("uses: ./.github/actions/setup-ffmpeg") == 2
     approval_workflow = Path(
         ".github/workflows/ritzz-creative-approval-upload.yml"
@@ -330,7 +338,7 @@ def test_resume_workflow_exposes_only_remaining_local_production_stages():
         "inputs.rerun_from_stage != 'NARRATION'"
     ) in workflow
     assert "inputs.rerun_from_stage == 'STORYBOARD'" in workflow
-    assert workflow.count("inputs.rerun_from_stage != 'FINAL_PACKAGE'") == 2
+    assert workflow.count("inputs.rerun_from_stage != 'FINAL_PACKAGE'") == 3
 
 
 def test_optional_image_override_supports_multiple_scenes_only_for_render_resume():

@@ -37,6 +37,9 @@ from modules.video.qa_models import SceneQAResult, TechnicalQAResult
 from modules.video.render_engine import (
     FFmpegVideoRenderer,
 )
+from modules.video.pro_director import (
+    ProEditingDirector,
+)
 from modules.video.sync_engine import (
     VideoSynchronizationEngine,
 )
@@ -104,6 +107,7 @@ class VideoProductionPipeline:
         image_reviewer=None,
         image_provider: ImageProviderProtocol | None = None,
         image_provider_name: ImageProvider | None = None,
+        pro_director: ProEditingDirector | None = None,
     ) -> None:
         self.assembly_engine = (
             assembly_engine
@@ -127,6 +131,7 @@ class VideoProductionPipeline:
         self.image_reviewer = image_reviewer
         self.image_provider = image_provider
         self.image_provider_name = image_provider_name
+        self.pro_director = pro_director or ProEditingDirector()
 
     # -----------------------------------------------------------------
     # Public API
@@ -145,6 +150,7 @@ class VideoProductionPipeline:
         enable_image_ai_qa: bool = False,
         require_no_editorial_text: bool = False,
         editing_style: EditingStyle = "hard_cut",
+        sound_effects_directory: str | Path | None = None,
     ) -> VideoProductionRequest:
         """
         Create a typed production request.
@@ -178,6 +184,11 @@ class VideoProductionPipeline:
             enable_image_ai_qa=enable_image_ai_qa,
             require_no_editorial_text=require_no_editorial_text,
             editing_style=editing_style,
+            sound_effects_directory=(
+                str(sound_effects_directory)
+                if sound_effects_directory is not None
+                else None
+            ),
         )
 
     def run(
@@ -307,11 +318,12 @@ class VideoProductionPipeline:
                 )
                 state.start(current_stage)
                 save_pipeline_state(state, state_file)
-                rendered_file = self.renderer.render(
-                    assembly_plan=synchronized_plan,
+                rendered_file = self._render_video(
+                    request=request,
+                    synchronized_plan=synchronized_plan,
                     motion_plan=motion_plan,
-                    audio_file=audio_path,
-                    output_file=output_video_file,
+                    audio_path=audio_path,
+                    output_video_file=output_video_file,
                 )
                 self._save_usage(usage, usage_file, "render")
 
@@ -1451,6 +1463,47 @@ class VideoProductionPipeline:
                 return plan
         return self._build_motion_plan(request, synchronized_plan)
 
+    def _render_video(
+        self,
+        *,
+        request: VideoProductionRequest,
+        synchronized_plan: VideoAssemblyPlan,
+        motion_plan: VideoMotionPlan,
+        audio_path: Path,
+        output_video_file: Path,
+    ) -> Path:
+        if request.editing_style != "pro":
+            return self.renderer.render(
+                assembly_plan=synchronized_plan,
+                motion_plan=motion_plan,
+                audio_file=audio_path,
+                output_file=output_video_file,
+            )
+
+        if not request.sound_effects_directory:
+            raise ValueError(
+                "Pro editing requires RITZZ_PRO_SOUND_EFFECTS_DIR to point "
+                "to the prepared sound-effects library."
+            )
+
+        storyboard = self.assembly_engine.load_storyboard(request.storyboard_file)
+        pro_edit_plan = self.pro_director.create_plan(
+            storyboard=storyboard,
+            assembly_plan=synchronized_plan,
+            sound_effects_directory=request.sound_effects_directory,
+        )
+        self.pro_director.save_plan(
+            pro_edit_plan,
+            Path(request.output_directory) / "pro_edit_plan.json",
+        )
+        return self.renderer.render(
+            assembly_plan=synchronized_plan,
+            motion_plan=motion_plan,
+            audio_file=audio_path,
+            output_file=output_video_file,
+            pro_edit_plan=pro_edit_plan,
+        )
+
     @staticmethod
     def _validate_assets(
         request: VideoProductionRequest,
@@ -1490,10 +1543,10 @@ class VideoProductionPipeline:
     @staticmethod
     def _remove_downstream_artifacts(output_directory: Path, stage: str) -> None:
         files = {
-            "assembly": ["video_plan.json", "synced_video_plan.json", "motion_plan.json", "ritzz_final.mp4"],
-            "synchronization": ["synced_video_plan.json", "motion_plan.json", "ritzz_final.mp4"],
-            "motion": ["motion_plan.json", "ritzz_final.mp4"],
-            "render": ["ritzz_final.mp4"],
+            "assembly": ["video_plan.json", "synced_video_plan.json", "motion_plan.json", "pro_edit_plan.json", "ritzz_final.mp4"],
+            "synchronization": ["synced_video_plan.json", "motion_plan.json", "pro_edit_plan.json", "ritzz_final.mp4"],
+            "motion": ["motion_plan.json", "pro_edit_plan.json", "ritzz_final.mp4"],
+            "render": ["pro_edit_plan.json", "ritzz_final.mp4"],
             "technical_qa": [],
             "asset_validation": [],
         }

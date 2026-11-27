@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-EditingStyle = Literal["hard_cut", "history"]
+EditingStyle = Literal["hard_cut", "history", "pro"]
 
 DURATION_TOLERANCE_SECONDS = 60
 DEFAULT_HOOK_QUALITY_WEIGHTS = {

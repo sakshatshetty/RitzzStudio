@@ -38,12 +38,13 @@ on:
           - RitzzTech1
         default: Ritzz-Explains
       editing_style:
-        description: Hard cut is the current default; History adds occasional slow zooms to long narration scenes
+        description: Hard cut uses cuts; History adds slow zooms; Pro adds directed transitions, overlays, and sound effects
         required: true
         type: choice
         options:
           - Hard cut
           - History
+          - Pro
         default: Hard cut
       creative_package_release_tag:
         description: Published GitHub release tag with creative-package.zip (NEW only)
@@ -361,12 +362,29 @@ jobs:
           RITZZ_PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
         run: python scripts/run_storyboard_stage.py
 
+      - name: Download and prepare Pro sound-effects library
+        if: ${{ inputs.editing_style == 'Pro' && (inputs.mode == 'NEW' || inputs.rerun_from_stage != 'FINAL_PACKAGE') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes tesseract-ocr
+          mkdir -p .pipeline-artifacts
+          gh release download pro-sound-effects \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern ritzz-pro-sound-effects.zip \
+            --dir .pipeline-artifacts
+          python scripts/prepare_pro_sound_effects.py \
+            --archive .pipeline-artifacts/ritzz-pro-sound-effects.zip \
+            --output .pipeline-artifacts/pro-sound-effects
+
       - name: Render supplied stills and run technical QA
         if: ${{ inputs.mode == 'NEW' || inputs.rerun_from_stage != 'FINAL_PACKAGE' }}
         env:
           RITZZ_PROJECT_ID: ${{ steps.new-project.outputs.project_id || steps.resume-project.outputs.project_id }}
           RITZZ_RERUN_FROM_STAGE: ${{ inputs.mode == 'RESUME' && inputs.rerun_from_stage || 'CONTINUE' }}
-          RITZZ_EDITING_STYLE: ${{ inputs.editing_style == 'History' && 'history' || 'hard_cut' }}
+          RITZZ_EDITING_STYLE: ${{ inputs.editing_style == 'History' && 'history' || inputs.editing_style == 'Pro' && 'pro' || 'hard_cut' }}
+          RITZZ_PRO_SOUND_EFFECTS_DIR: ${{ inputs.editing_style == 'Pro' && '.pipeline-artifacts/pro-sound-effects' || '' }}
         run: python scripts/run_render_stage.py
 
       - name: Create exact-input final review package
