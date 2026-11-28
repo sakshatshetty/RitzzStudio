@@ -149,6 +149,28 @@ def test_sound_effect_archive_is_validated_and_extracted_safely(tmp_path):
     assert (output / "sfx" / "whoosh.wav").read_bytes() == b"audio bytes"
 
 
+def test_sound_effect_archive_accepts_more_than_256_files(tmp_path):
+    archive = tmp_path / "large-library.zip"
+    effects = [
+        {"file": f"sfx/effect_{index:03d}.wav", "tags": ["transition"]}
+        for index in range(300)
+    ]
+    with zipfile.ZipFile(archive, "w") as sound_archive:
+        sound_archive.writestr(
+            "manifest.json",
+            json.dumps({"effects": effects}),
+        )
+        for effect in effects:
+            sound_archive.writestr(effect["file"], b"audio bytes")
+
+    output = prepare_sound_effects_archive(
+        archive,
+        tmp_path / "prepared",
+    )
+
+    assert len(list((output / "sfx").glob("*.wav"))) == 300
+
+
 def test_sound_effect_archive_rejects_path_traversal(tmp_path):
     archive = tmp_path / "unsafe.zip"
     with zipfile.ZipFile(archive, "w") as sound_archive:

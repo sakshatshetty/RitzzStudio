@@ -34,6 +34,12 @@ try {
     if ($ProjectId -notmatch '^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$') {
         throw 'Project ID must contain 1-80 letters, numbers, underscores, or hyphens.'
     }
+    if (
+        $GitHubRepository -ieq 'sakshatshetty/RitzzStudio' -and
+        $ProjectId -ceq 'pro-sound-effects'
+    ) {
+        throw "Refusing to delete the protected Pro sound-effects release/tag '$ProjectId'."
+    }
     if ($GitHubRepository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
         throw "Invalid GitHub repository name: $GitHubRepository"
     }
