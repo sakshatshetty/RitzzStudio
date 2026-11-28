@@ -20,7 +20,7 @@ Transition = Literal["cut", "fade"]
 SUPPORTED_AUDIO_SUFFIXES = {".mp3", ".m4a", ".ogg", ".wav"}
 MAX_SOUND_EFFECT_ARCHIVE_BYTES = 250 * 1024 * 1024
 MAX_SOUND_EFFECT_UNPACKED_BYTES = 500 * 1024 * 1024
-MAX_SOUND_EFFECT_ARCHIVE_FILES = 256
+MAX_SOUND_EFFECT_ARCHIVE_FILES = 512
 
 
 class SoundEffectDefinition(BaseModel):

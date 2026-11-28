@@ -136,7 +136,9 @@ its effects.
 Pro requires a permanent same-repository GitHub release with tag
 `pro-sound-effects` and asset `ritzz-pro-sound-effects.zip`. The ZIP must contain
 a root `manifest.json` and the referenced `.wav`, `.mp3`, `.m4a`, or `.ogg`
-files. Example manifest:
+files. It may contain at most 512 files, 500 MiB unpacked, and 250 MiB
+compressed. The repository cleanup utility refuses to delete this protected
+release or tag. Example manifest:
 
 ```json
 {
